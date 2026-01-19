@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MOE - One - ผู้ช่วยดิจิทัล ศทส.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap"
+    rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* ═══════════════════════════════════════════════════════════════════
+       🍎 APPLE 2026 DESIGN SYSTEM - visionOS Inspired
+       ═══════════════════════════════════════════════════════════════════ */
+
+    :root {
+      /* Core Surfaces */
+      --apple-surface-primary: rgba(255, 255, 255, 0.78);
+      --apple-surface-secondary: rgba(255, 255, 255, 0.55);
+      --apple-surface-tertiary: rgba(255, 255, 255, 0.35);
+
+      /* Blur & Vibrancy (visionOS 2026) */
+      --apple-blur-standard: 40px;
+      --apple-blur-heavy: 80px;
+      --apple-vibrancy: saturate(200%) contrast(1.05);
+
+      /* Liquid Metal Gradients */
+      --gradient-titanium: linear-gradient(135deg, #E8E8ED 0%, #D1D1D6 30%, #F5F5F7 50%, #D1D1D6 70%, #E8E8ED 100%);
+      --gradient-ocean: linear-gradient(135deg, #007AFF 0%, #5856D6 35%, #AF52DE 65%, #FF2D55 100%);
+      --gradient-aurora: linear-gradient(135deg, #32D74B 0%, #00C7BE 30%, #007AFF 60%, #5856D6 100%);
+      --gradient-sunset: linear-gradient(135deg, #FF9500 0%, #FF3B30 40%, #FF2D55 70%, #AF52DE 100%);
+
+      /* Depth Shadows (Spatial Design) */
+      --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.04);
+      --shadow-medium: 0 8px 30px rgba(0, 0, 0, 0.08);
+      --shadow-deep: 0 20px 60px rgba(0, 0, 0, 0.15);
+      --shadow-glow-blue: 0 0 40px rgba(0, 122, 255, 0.3);
+      --shadow-glow-purple: 0 0 40px rgba(175, 82, 222, 0.3);
+
+      /* Text Colors (High Contrast for 2026) */
+      --text-primary: #1D1D1F;
+      --text-secondary: #86868B;
+      --text-tertiary: #AEAEB2;
+
+      /* Apple System Colors 2026 */
+      --system-blue: #007AFF;
+      --system-purple: #AF52DE;
+      --system-pink: #FF2D55;
+      --system-orange: #FF9500;
+      --system-green: #32D74B;
+      --system-teal: #00C7BE;
+
+      /* Safe Area */
+      --safe-area-top: env(safe-area-inset-top, 0px);
+      --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Sukhumvit Set", "Inter", "IBM Plex Sans Thai", "Sarabun", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+      background-color: #F2F2F7;
+      -webkit-font-smoothing: antialiased;
+      -webkit-tap-highlight-color: transparent;
+      margin: 0;
+      padding-top: var(--safe-area-top);
+      padding-bottom: var(--safe-area-bottom);
+    }
+
+    /* Mobile-First Touch Optimization */
+    @media (max-width: 768px) {
+
+      button,
+      a,
+      [role="button"] {
+        min-height: 44px;
+        min-width: 44px;
+      }
+
+      /* Hide admin elements on mobile */
+      .admin-desktop-only {
+        display: none !important;
+      }
+    }
+
+    .mesh-gradient {
+      position: fixed;
+      bottom: -15%;
+      /* Reduce area */
+      left: -5%;
+      width: 110%;
+      height: 60%;
+      z-index: 0;
+      background:
+        radial-gradient(at 15% 100%, #fde047 0px, transparent 55%),
+        radial-gradient(at 40% 100%, #f43f5e 0px, transparent 55%),
+        radial-gradient(at 70% 100%, #38bdf8 0px, transparent 55%),
+        radial-gradient(at 95% 90%, #a855f7 0px, transparent 55%);
+      filter: blur(60px);
+      /* Slightly lower blur for performance */
+      opacity: 0.5;
+      /* Lower opacity */
+      pointer-events: none;
+      will-change: opacity;
+      /* GPU Hint */
+      transform: translateZ(0);
+      /* Force GPU Layer */
+      backface-visibility: hidden;
+      transition: opacity 1s ease;
+    }
+
+    /* Modern Apple Iridescent Gradient (Siri/Intelligence Vibe) */
+    @keyframes iridescent-flow {
+      0% {
+        background-position: 0% 50%;
+      }
+
+      50% {
+        background-position: 100% 50%;
+      }
+
+      100% {
+        background-position: 0% 50%;
+      }
+    }
+
+    .text-gradient-apple {
+      background: linear-gradient(135deg,
+          #111827 0%,
+          /* Deep Charcoal */
+          #374151 25%,
+          /* Gunmetal */
+          #6B7280 50%,
+          /* Metallic Silver Highlight */
+          #374151 75%,
+          /* Gunmetal */
+          #111827 100%
+          /* Deep Charcoal */
+        );
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      animation: iridescent-flow 8s linear infinite;
+      display: inline-block;
+      padding-bottom: 0.1em;
+      filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1));
+      /* เงาสีดำจางๆ นุ่มๆ แบบ Apple Clean style */
+    }
+
+    .text-gradient-warm {
+      background: linear-gradient(135deg, #A78BFA 0%, #7C3AED 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      display: inline-block;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      filter: drop-shadow(0 2px 4px rgba(124, 58, 237, 0.15));
+    }
+
+    /* Soft Purple Selection */
+    ::selection {
+      background-color: rgba(167, 139, 250, 0.2);
+      color: #7C3AED;
+    }
+
+    /* --- CORE TRANSITIONS (High-End Smooth) --- */
+
+    @keyframes apple-fade-in {
+      from {
+        opacity: 0;
+        transform: scale(0.96) translateY(20px);
+        filter: blur(12px);
+      }
+
+      to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+        filter: blur(0);
+      }
+    }
+
+    /* Apple Pro Floating Animation */
+    @keyframes floating {
+      0% {
+        transform: translateY(0px);
+      }
+
+      50% {
+        transform: translateY(-15px);
+      }
+
+      100% {
+        transform: translateY(0px);
+      }
+    }
+
+    .animate-floating {
+      animation: floating 4s ease-in-out infinite;
+    }
+
+    /* Soft Glow Pulse */
+    @keyframes soft-glow-pulse {
+      0% {
+        box-shadow: 0 0 15px rgba(255, 255, 255, 0.4);
+      }
+
+      50% {
+        box-shadow: 0 0 45px rgba(255, 255, 255, 0.8);
+      }
+
+      100% {
+        box-shadow: 0 0 15px rgba(255, 255, 255, 0.4);
+      }
+    }
+
+    .animate-soft-glow {
+      animation: soft-glow-pulse 3s ease-in-out infinite;
+    }
+
+    /* 🍎 Apple 2026 Spring Physics Animation */
+    @keyframes spring-bounce {
+      0% {
+        transform: scale(0.92) translateY(8px);
+        opacity: 0;
+      }
+
+      40% {
+        transform: scale(1.03) translateY(-2px);
+        opacity: 0.8;
+      }
+
+      60% {
+        transform: scale(0.98) translateY(1px);
+        opacity: 0.95;
+      }
+
+      80% {
+        transform: scale(1.01) translateY(-0.5px);
+        opacity: 1;
+      }
+
+      100% {
+        transform: scale(1) translateY(0);
+        opacity: 1;
+      }
+    }
+
+    .animate-spring {
+      animation: spring-bounce 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    /* visionOS 2026 Glow Ring */
+    @keyframes glow-ring {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 rgba(0, 122, 255, 0), 0 0 20px rgba(0, 122, 255, 0.1);
+      }
+
+      50% {
+        box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.15), 0 0 30px rgba(0, 122, 255, 0.2);
+      }
+    }
+
+    .animate-glow-ring {
+      animation: glow-ring 2s ease-in-out infinite;
+    }
+
+    /* Mobile Horizontal Scroll Container */
+    .mobile-scroll-x {
+      display: flex;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+
+    .mobile-scroll-x::-webkit-scrollbar {
+      display: none;
+    }
+
+    .mobile-scroll-x>* {
+      scroll-snap-align: center;
+      flex-shrink: 0;
+    }
+
+    /* Grain Texture */
+    .grain-overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      background-image: url("https://grainy-gradients.vercel.app/noise.svg");
+      background-repeat: repeat;
+      mix-blend-mode: overlay;
+      opacity: 0.15;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* Ambient Blob Animation */
+    @keyframes blob-float {
+      0% {
+        transform: translate(0, 0) scale(1);
+      }
+
+      33% {
+        transform: translate(30px, -50px) scale(1.1);
+      }
+
+      66% {
+        transform: translate(-20px, 20px) scale(0.9);
+      }
+
+      100% {
+        transform: translate(0, 0) scale(1);
+      }
+    }
+
+    .animate-blob-slow {
+      animation: blob-float 15s ease-in-out infinite;
+    }
+
+    @keyframes apple-fade-out {
+      from {
+        opacity: 1;
+        transform: scale(1);
+        filter: blur(0);
+      }
+
+      to {
+        opacity: 0;
+        transform: scale(1.04) translateY(-20px);
+        filter: blur(12px);
+      }
+    }
+
+    @keyframes simple-fade-in {
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
+    }
+
+    .simple-fade {
+      animation: simple-fade-in 1.2s ease-in-out both;
+    }
+
+    .fluid-entrance {
+      animation: apple-fade-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+      will-change: transform, opacity, filter;
+    }
+
+    .fluid-exit {
+      animation: apple-fade-out 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+      will-change: transform, opacity, filter;
+    }
+
+    .stagger-1 {
+      animation-delay: 60ms;
+    }
+
+    .stagger-2 {
+      animation-delay: 120ms;
+    }
+
+    .stagger-3 {
+      animation-delay: 180ms;
+    }
+
+    .stagger-4 {
+      animation-delay: 240ms;
+    }
+
+    .stagger-5 {
+      animation-delay: 300ms;
+    }
+
+    .stagger-6 {
+      animation-delay: 360ms;
+    }
+
+    .stagger-7 {
+      animation-delay: 420ms;
+    }
+
+    .stagger-8 {
+      animation-delay: 480ms;
+    }
+
+    .slide-up-content {
+      animation: apple-slide-up 0.8s cubic-bezier(0.165, 0.84, 0.44, 1) both;
+    }
+
+    .slide-right-sidebar {
+      animation: apple-slide-right 0.8s cubic-bezier(0.165, 0.84, 0.44, 1) both;
+    }
+
+    /* Message Entrance - Smoother & Subtle Blur */
+    @keyframes message-appear {
+      0% {
+        opacity: 0;
+        transform: translateY(12px) scale(0.985);
+        filter: blur(2px);
+      }
+
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+      }
+    }
+
+    .animate-message {
+      animation: message-appear 0.6s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+      will-change: transform, opacity, filter;
+      transform: translateZ(0);
+    }
+
+    @keyframes fluid-wave {
+
+      0%,
+      100% {
+        opacity: 0.3;
+        transform: scale(0.85);
+      }
+
+      50% {
+        opacity: 1;
+        transform: scale(1.05);
+      }
+    }
+
+    .animate-fluid-wave {
+      animation: fluid-wave 1.6s ease-in-out infinite;
+    }
+
+    /* AI text shimmer effect */
+    @keyframes shimmer {
+      0% {
+        background-position: 0% 50%;
+        filter: drop-shadow(0 0 8px rgba(102, 126, 234, 0.5));
+      }
+
+      25% {
+        background-position: 100% 50%;
+        filter: drop-shadow(0 0 12px rgba(118, 75, 162, 0.7));
+      }
+
+      50% {
+        background-position: 200% 50%;
+        filter: drop-shadow(0 0 16px rgba(240, 147, 251, 0.9));
+      }
+
+      75% {
+        background-position: 100% 50%;
+        filter: drop-shadow(0 0 12px rgba(118, 75, 162, 0.7));
+      }
+
+      100% {
+        background-position: 0% 50%;
+        filter: drop-shadow(0 0 8px rgba(102, 126, 234, 0.5));
+      }
+    }
+
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.05);
+      border-radius: 20px;
+    }
+
+    /* Modern Glassmorphism & Shadow Tokens */
+    .glass-pill {
+      background: rgba(255, 255, 255, 0.75);
+      backdrop-filter: blur(25px) saturate(180%);
+      -webkit-backdrop-filter: blur(25px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.04);
+    }
+
+    .glass-morphism {
+      background: rgba(255, 255, 255, 0.65);
+      backdrop-filter: blur(20px) saturate(160%);
+      -webkit-backdrop-filter: blur(20px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+
+    .iphone-shadow {
+      box-shadow:
+        0 4px 6px -1px rgba(0, 0, 0, 0.02),
+        0 2px 4px -1px rgba(0, 0, 0, 0.01),
+        0 20px 25px -5px rgba(0, 0, 0, 0.03),
+        0 10px 10px -5px rgba(0, 0, 0, 0.02);
+    }
+
+    .iphone-shadow-hover {
+      box-shadow:
+        0 20px 25px -5px rgba(0, 0, 0, 0.05),
+        0 10px 10px -5px rgba(0, 0, 0, 0.04),
+        0 40px 50px -10px rgba(0, 0, 0, 0.08);
+    }
+
+    .fade-mask-t {
+      mask-image: linear-gradient(to top, black 80%, transparent 100%);
+    }
+
+    .fade-mask-b {
+      mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+    }
+
+    /* --- MARKDOWN COMPACT OVERRIDES (ULTRA DENSE) --- */
+    .markdown-content p {
+      margin: 0 !important;
+      padding: 0 !important;
+      margin-bottom: 2px !important;
+      line-height: 1.4 !important;
+    }
+
+    .markdown-content ul,
+    .markdown-content ol {
+      margin: 0 !important;
+      padding: 0 !important;
+      margin-top: 1px !important;
+      margin-bottom: 1px !important;
+    }
+
+    .markdown-content li {
+      margin: 0 !important;
+      padding: 0 !important;
+      margin-bottom: 0 !important;
+    }
+
+    .markdown-content li>p {
+      margin: 0 !important;
+      display: inline !important;
+    }
+
+    .markdown-content br {
+      display: none !important;
+    }
+
+    .markdown-content p:empty {
+      display: none !important;
+    }
+
+    /* Mesh Gradient Animations - Premium Apple Style */
+    @keyframes mesh-float-1 {
+
+      0%,
+      100% {
+        transform: translate(0, 0) scale(1) rotate(0deg);
+      }
+
+      25% {
+        transform: translate(3%, 8%) scale(1.05) rotate(2deg);
+      }
+
+      50% {
+        transform: translate(-2%, 5%) scale(0.98) rotate(-1deg);
+      }
+
+      75% {
+        transform: translate(5%, -3%) scale(1.02) rotate(1deg);
+      }
+    }
+
+    @keyframes mesh-float-2 {
+
+      0%,
+      100% {
+        transform: translate(0, 0) scale(1) rotate(0deg);
+      }
+
+      25% {
+        transform: translate(-5%, 4%) scale(0.97) rotate(-2deg);
+      }
+
+      50% {
+        transform: translate(4%, 7%) scale(1.04) rotate(1deg);
+      }
+
+      75% {
+        transform: translate(-3%, -5%) scale(1.01) rotate(-1deg);
+      }
+    }
+
+    @keyframes mesh-float-3 {
+
+      0%,
+      100% {
+        transform: translate(0, 0) scale(1);
+      }
+
+      33% {
+        transform: translate(6%, -4%) scale(1.03);
+      }
+
+      66% {
+        transform: translate(-4%, 6%) scale(0.96);
+      }
+    }
+
+    @keyframes mesh-pulse {
+
+      0%,
+      100% {
+        opacity: 0.7;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.85;
+        transform: scale(1.02);
+      }
+    }
+
+    .animate-mesh-1 {
+      animation: mesh-float-1 8s ease-in-out infinite;
+    }
+
+    .animate-mesh-2 {
+      animation: mesh-float-2 10s ease-in-out infinite;
+    }
+
+    .animate-mesh-3 {
+      animation: mesh-float-3 7s ease-in-out infinite;
+    }
+
+    .animate-mesh-pulse {
+      animation: mesh-pulse 4s ease-in-out infinite;
+    }
+
+    .animation-delay-2000 {
+      animation-delay: 2s;
+    }
+
+    .animation-delay-4000 {
+      animation-delay: 4s;
+    }
+
+    .animation-delay-6000 {
+      animation-delay: 6s;
+    }
+
+    .animation-delay-8000 {
+      animation-delay: 8s;
+    }
+
+    /* Grain/Noise Effect */
+    .grain-overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0.04;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
+        "uuid": "https://esm.sh/uuid@^13.0.0",
+        "react/": "https://esm.sh/react@^19.2.3/",
+        "react": "https://esm.sh/react@^19.2.3",
+        "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+        "recharts": "https://esm.sh/recharts@2.15.0"
+      }
+    }
+    </script>
+  <link rel="stylesheet" href="/index.css">
+</head>
+
+<body>
+  <div class="mesh-gradient"></div>
+  <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+
+</html>

@@ -1,0 +1,1342 @@
+"""
+Education Chatbot Core
+Main EducationChatbot class that orchestrates all components
+
+📄 ชื่อไฟล์: chatbot_core.py
+📝 คำอธิบาย:
+   หัวใจหลักของระบบ Chatbot (Core Logic)
+   ทำหน้าที่ควบคุมการทำงานของ AI และการค้นหาข้อมูลทั้งหมด
+
+🛠 หน้าที่หลัก:
+   1. Intent Classification: วิเคราะห์เจตนาของผู้ใช้ (ถามทั่วไป vs ถามข้อมูลการศึกษา)
+   2. Search Orchestration: สั่งค้นหาข้อมูลด้วย SearchEngine และ Qdrant
+   3. RAG System: นำข้อมูลที่ได้มาประกอบ Prompt ส่งให้ AI ตอบ
+   4. Response Synthesizer: เรียบเรียงคำตอบให้อยู่ในรูปแบบที่สวยงาม (ตาราง, อันดับ, กราฟ)
+"""
+
+import re
+import os
+import time
+import logging
+from typing import List, Dict, Generator, Tuple, Optional, Any
+
+import google.generativeai as genai
+from qdrant_client import QdrantClient
+
+from .types import (
+    QueryIntent, QueryLevel, ParsedQuery, SearchResult
+)
+from .constants import COLLECTIONS, REGIONS, THAI_PROVINCES
+from .security import input_sanitizer
+from .llm import MultiProviderLLM
+from .cache import HybridCache
+from .query_parser import SmartQueryParser, ResponseSynthesizer
+from .search_engine import SearchEngine
+from .school_search import SchoolSearchEngine
+from .aggregators import ResultAggregator
+from .formatters import ResponseFormatter
+from .memory import ConversationMemory
+
+logger = logging.getLogger(__name__)
+
+# Model configuration
+GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')
+GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
+
+
+class EducationChatbot:
+    """Production-ready Education Chatbot"""
+    
+    def __init__(self, qdrant_client: QdrantClient, model_name: str = 'gemini-2.0-flash-exp'):
+        logger.info("🚀 Initializing Education Chatbot v5.0...")
+        
+        self.qdrant_client = qdrant_client
+        self.parser = SmartQueryParser(qdrant_client=qdrant_client)
+        self.search_engine = SearchEngine(qdrant_client, parser=self.parser)
+        self.aggregator = ResultAggregator()
+        self.memory = ConversationMemory()
+        self.cache = HybridCache(qdrant_client)
+        self.model = self._init_model(model_name)
+        self.formatter = ResponseFormatter(model=self.model, model_name=model_name)
+        self.collections = self._get_collections()
+        self._current_category = 'general'
+        
+        logger.info(f"✅ Chatbot ready with {len(self.collections)} collections")
+    
+    def _init_model(self, model_name: str):
+        """Initialize LLM with Groq → Gemini fallback"""
+        try:
+            llm = MultiProviderLLM(gemini_model=model_name)
+            self.model_name = f"Groq:{GROQ_MODEL} → Gemini:{model_name}" if GROQ_API_KEY else f"Gemini:{model_name}"
+            logger.info(f"✅ Using model: {self.model_name}")
+            return llm
+        except Exception as e:
+            logger.error(f"Failed to initialize LLM: {e}")
+            return None
+    
+    def _get_collections(self) -> Dict[str, str]:
+        """Get available collections"""
+        available = {}
+        try:
+            all_collections = self.qdrant_client.get_collections()
+            for level, name in COLLECTIONS.items():
+                if any(c.name == name for c in all_collections.collections):
+                    available[level] = name
+                    logger.info(f"   ✅ {level}: {name}")
+        except Exception as e:
+            logger.error(f"Failed to get collections: {e}")
+        return available
+
+    def _classify_intent_with_llm(self, query: str) -> str:
+        """Use LLM to classify query intent: 'GENERAL' or 'EDUCATION'"""
+        try:
+            if len(query) < 4:
+                return "GENERAL"
+                
+            prompt = f"""
+            Classify this query into one category:
+            1. GENERAL: Greetings, small talk, asking "who are you", "what can you do", "eating?", "where are you going?", jokes, weather, generic questions NOT related to education.
+            2. EDUCATION: Questions about schools, students, teachers, stats, locations, rankings, comparisons, finding schools, educational data.
+            
+            Query: "{query}"
+            
+            Return ONLY the word "GENERAL" or "EDUCATION".
+            """
+            response = self.model.generate_content(prompt)
+            return response.text.strip().upper()
+        except Exception as e:
+            logger.error(f"LLM Classification failed: {e}")
+            return "EDUCATION"
+
+    def _rag_fallback(self, query: str) -> str:
+        """Universal Fallback: Use RAG to answer unstructured queries"""
+        try:
+            intent_type = self._classify_intent_with_llm(query)
+            current_category = getattr(self, '_current_category', 'general')
+            
+            if "GENERAL" in intent_type and current_category in ['school', 'student']:
+                category_name = 'โรงเรียน' if current_category == 'school' else 'นักเรียน'
+                return (
+                    f"😊 สวัสดีครับ! น้องดีโอเห็นว่าคำถาม \"{query}\" ดูเหมือนจะเป็นเรื่องทั่วไปนะครับ\n\n"
+                    f"ขณะนี้คุณอยู่ในโหมด **{category_name}** ซึ่งเน้นข้อมูลการศึกษาโดยเฉพาะครับ\n\n"
+                    f"💡 **แนะนำ:** กรุณาสลับไปยังหมวด **\"ทั่วไป\"** ในแถบด้านซ้าย "
+                    f"เพื่อให้น้องดีโอช่วยเหลือได้เต็มที่ครับ! ✨"
+                )
+            
+            logger.info(f"🧠 RAG Fallback: Searching context for '{query}'...")
+            
+            context_items = []
+            
+            # Search Schools
+            if 'schools' in self.collections:
+                schools = self.search_engine._semantic_search(query, self.collections['schools'], top_k=3)
+                for s in schools:
+                    m = s.payload.get('metadata', {})
+                    context_items.append(f"School: {m.get('school_name')} (จ.{m.get('province')}) - สังกัด: {m.get('agency')}")
+                    
+            # Search Province Stats
+            if 'province' in self.collections:
+                stats = self.search_engine._semantic_search(query, self.collections['province'], top_k=3)
+                for s in stats:
+                    m = s.payload.get('metadata', {})
+                    context_items.append(f"Stat (จ.{m.get('province')}): {m.get('total_schools')} Schools, {m.get('total_teachers')} Teachers")
+
+            context_str = "\n".join(context_items)
+            
+            prompt = f"""
+            Role: You are DO-MOE (น้องดีโอ), a friendly education assistant from Thailand's Ministry of Education.
+            Goal: Answer the user's question using the provided context.
+            
+            Context from Database:
+            {context_str}
+            
+            User Question: "{query}"
+            
+            Instructions:
+            - Answer naturally in Thai with a friendly tone.
+            - If context contains the answer, use it.
+            - If context is irrelevant or you cannot answer, suggest the user switch to "หมวดทั่วไป" (General category) for better assistance.
+            - Be helpful, friendly, and speak as "น้องดีโอ".
+            """
+            
+            response = self.model.generate_content(prompt)
+            return response.text
+            
+        except Exception as e:
+            logger.error(f"RAG Fallback failed: {e}")
+            return (
+                "😊 ขออภัยครับ น้องดีโอไม่พบข้อมูลที่ตรงกับคำถามนี้ในฐานข้อมูลการศึกษาครับ\n\n"
+                "💡 **แนะนำ:** ลองสลับไปหมวด **\"ทั่วไป\"** ในแถบด้านซ้าย น้องดีโออาจช่วยเหลือได้มากกว่าครับ! ✨"
+            )
+
+    def chat(self, message: str, history: List[Dict[str, str]] = None) -> Generator[Tuple[List[Dict[str, str]], str], None, None]:
+        """Main chat interface"""
+        if history is None:
+            history = []
+            
+        history.append({"role": "user", "content": message})
+        history.append({"role": "assistant", "content": ""})
+        
+        # Input Sanitization
+        sanitized_message, error = input_sanitizer.sanitize(message)
+        if error:
+            history[-1]["content"] = error
+            yield history, ""
+            return
+        message = sanitized_message
+        
+        # Check reset command
+        if message.lower() in ['reset', 'clear', 'ล้าง', 'เริ่มใหม่']:
+            self.memory.clear()
+            history[-1]["content"] = "ล้างความจำเรียบร้อยครับ เริ่มต้นใหม่ได้เลย! ✨"
+            yield history, ""
+            return
+        
+        logger.info(f"💬 User: {message}")
+        
+        # ⚠️ DEBUG: Disable cache for testing - set to False to re-enable
+        DEBUG_DISABLE_CACHE = True
+        
+        # Check if this is a school-specific query (bypass cache for fresh results)
+        is_school_specific_query = hasattr(self.memory, 'last_school_name') and self.memory.last_school_name
+        
+        if is_school_specific_query:
+            logger.info(f"🏫 School-specific query detected (school_name: {self.memory.last_school_name}) - skipping cache")
+        
+        # Check Semantic Cache (disabled for testing)
+        if DEBUG_DISABLE_CACHE:
+            logger.info("🔧 DEBUG: Cache DISABLED for testing")
+        elif not is_school_specific_query:
+            cached_response = self.cache.check(message)
+            if cached_response:
+                history[-1]["content"] = cached_response
+                yield history, ""
+                return
+
+        # Parse query intent
+        parsed = self.parser.parse(message)
+        parsed = self.memory.apply_context(parsed, message)
+        
+        # NEW: Check if frontend injected a school_name via memory
+        if hasattr(self.memory, 'last_school_name') and self.memory.last_school_name:
+            logger.info(f"🏫 Frontend injected school_name: {self.memory.last_school_name}")
+            parsed.intent = QueryIntent.SCHOOL_DETAIL
+            parsed.school_name = self.memory.last_school_name
+            # Clear it after use to prevent stale data
+            self.memory.last_school_name = None
+        
+        # NEW: Override parsed.level with frontend-provided level for correct collection routing
+        if hasattr(self.memory, 'frontend_level') and self.memory.frontend_level:
+            # QueryLevel is already imported at module level (line 27)
+            level_map = {
+                'province': QueryLevel.PROVINCE,
+                'district': QueryLevel.DISTRICT,
+                'subdistrict': QueryLevel.SUBDISTRICT,
+                'agency': QueryLevel.AGENCY,
+                # Note: 'school' is not a valid QueryLevel - school queries use SCHOOL_DETAIL intent instead
+            }
+            if self.memory.frontend_level in level_map:
+                old_level = parsed.level.value if hasattr(parsed.level, 'value') else parsed.level
+                parsed.level = level_map[self.memory.frontend_level]
+                logger.info(f"📊 Frontend overrode level: {old_level} → {self.memory.frontend_level}")
+            self.memory.frontend_level = None  # Clear after use
+        
+        self.memory.update(parsed)
+        
+        logger.info(f"🎯 Intent: {parsed.intent.value}, Level: {parsed.level.value}")
+        logger.info(f"   Region: {parsed.region}, Province: {parsed.province}, School: {getattr(parsed, 'school_name', None)}")
+        
+        # Check for general queries in non-general categories
+        current_category = getattr(self, '_current_category', 'general')
+        is_non_general_category = current_category in ['school', 'student']
+        
+        if is_non_general_category:
+            intent_type = self._classify_intent_with_llm(message)
+            logger.info(f"🧠 LLM Classified Intent: {intent_type}")
+            
+            EDUCATION_KEYWORDS = ['โรงเรียน', 'นักเรียน', 'ครู', 'การศึกษา', 'สพฐ', 'สช']
+            has_strong_edu_keyword = any(kw in message for kw in EDUCATION_KEYWORDS)
+            
+            if "GENERAL" in intent_type and not has_strong_edu_keyword:
+                suggestion_response = f"😊 สวัสดีครับ! น้องดีโอยินดีต้อนรับครับ\n\n" \
+                                      f"ขณะนี้คุณอยู่ในโหมด **{'โรงเรียน' if current_category == 'school' else 'นักเรียน'}** " \
+                                      f"ซึ่งเหมาะสำหรับถามข้อมูลเฉพาะทาง\n\n" \
+                                      f"💡 **แนะนำ**: จากคำถาม \"{message}\" ดูเหมือนจะเป็นการพูดคุยทั่วไป รบกวนสลับไปยังหมวด **\"ทั่วไป\"** ในแถบด้านซ้ายนะครับ " \
+                                      f"เพื่อให้น้องดีโอช่วยเหลือได้เต็มที่ครับ! ✨"
+                history[-1]["content"] = suggestion_response
+                self.cache.save(message, suggestion_response)
+                yield history, ""
+                return
+
+        # Handle School Queries
+        is_school_query = parsed.intent in [
+            QueryIntent.SCHOOL_SEARCH, QueryIntent.SCHOOL_LIST, 
+            QueryIntent.SCHOOL_DETAIL, QueryIntent.SCHOOL_COUNT
+        ]
+        
+        if is_school_query:
+            response_text = self._handle_school_query(parsed, message, history)
+            if response_text:
+                history[-1]["content"] = response_text
+                self.cache.save(message, response_text)
+                yield history, ""
+                return
+        
+        # Handle Load More
+        if parsed.intent == QueryIntent.LOAD_MORE:
+            response_text = self._handle_load_more()
+            history[-1]["content"] = response_text
+            yield history, ""
+            return
+        
+        # Handle Ranking/Compare/Normal queries
+        results = self._execute_search(parsed, message, history)
+        if results is None:
+            yield history, ""
+            return
+        
+        # Aggregate results
+        aggregated = self._aggregate_results(results, parsed, message)
+        
+        # Use ResponseSynthesizer for RANKING queries
+        if parsed.intent in [QueryIntent.RANKING_MOST, QueryIntent.RANKING_LEAST]:
+            import json
+            synthesizer = ResponseSynthesizer()
+            
+            # Prepare data for synthesizer
+            ranking_data = {
+                "query_type": "ranking",
+                "intent": parsed.intent.value,
+                "location_level": parsed.level.value,
+                "data": []
+            }
+            
+            chart_data = [] # For <chart> widget
+            
+            num_items = min(10, len(aggregated.data))
+            for i, (name, data) in enumerate(aggregated.data[:num_items], 1):
+                # Format name for display
+                display_name = name
+                if '|' in name:
+                    parts = name.split('|')
+                    if parsed.level == QueryLevel.DISTRICT and len(parts) >= 2:
+                        display_name = f"{parts[1]} ({parts[0]})"
+                    elif parsed.level == QueryLevel.SUBDISTRICT and len(parts) >= 3:
+                        display_name = f"{parts[2]} ({parts[1]})"
+                
+                ranking_data["data"].append({
+                   "rank": i,
+                   "name": display_name,
+                   "count": data['total'],
+                   "agencies": data.get('agencies', {})
+                })
+                
+                # Chart data
+                chart_data.append({"name": display_name, "value": data['total']})
+                
+            # Synthesize
+            llm_response = synthesizer.synthesize("RANKING", ranking_data, message)
+            
+            if llm_response:
+                # Add Chart Widget
+                if chart_data:
+                    title = "น้อยที่สุด" if parsed.intent == QueryIntent.RANKING_LEAST else "มากที่สุด"
+                    chart_json = json.dumps({
+                        "type": "bar",
+                        "data": chart_data,
+                        "title": f"สถิติ{title}"
+                    }, ensure_ascii=False)
+                    llm_response += f"\n\n<chart>{chart_json}</chart>"
+                
+                history[-1]["content"] = llm_response
+                self.cache.save(message, llm_response)
+                yield history, ""
+                return
+        
+        # =====================================================================
+        # Use ResponseSynthesizer for FILTER queries (e.g., "น้อยกว่า 50 แห่ง")
+        # =====================================================================
+        if parsed.intent in [QueryIntent.FILTER_LESS_THAN, QueryIntent.FILTER_GREATER_THAN, QueryIntent.FILTER_EQUALS]:
+            import json
+            
+            threshold = parsed.threshold
+            operator = parsed.threshold_operator or "<"
+            
+            if threshold is None:
+                # Fallback if threshold wasn't detected
+                history[-1]["content"] = "❌ ไม่สามารถระบุจำนวนที่ต้องการกรองได้ กรุณาระบุตัวเลข เช่น 'น้อยกว่า 50 แห่ง'"
+                yield history, ""
+                return
+            
+            # Filter data based on threshold
+            filtered_data = []
+            for name, data in aggregated.data:
+                count = data.get('total', 0)
+                if operator == "<" and count < threshold:
+                    filtered_data.append((name, data))
+                elif operator == ">" and count > threshold:
+                    filtered_data.append((name, data))
+                elif operator == "=" and count == threshold:
+                    filtered_data.append((name, data))
+            
+            if not filtered_data:
+                # ✨ Instead of just returning "not found", show the CLOSEST data
+                op_text = "น้อยกว่า" if operator == "<" else ("มากกว่า" if operator == ">" else "เท่ากับ")
+                level_text = "อำเภอ" if parsed.level == QueryLevel.DISTRICT else ("ตำบล" if parsed.level == QueryLevel.SUBDISTRICT else "จังหวัด")
+                province_text = f"ใน{parsed.province}" if parsed.province else ""
+                
+                # Sort to find closest (for < get minimum, for > get maximum)
+                if operator == "<":
+                    sorted_data = sorted(aggregated.data, key=lambda x: x[1].get('total', 0))
+                else:
+                    sorted_data = sorted(aggregated.data, key=lambda x: x[1].get('total', 0), reverse=True)
+                
+                if sorted_data:
+                    closest_name, closest_data = sorted_data[0]
+                    closest_count = closest_data.get('total', 0)
+                    
+                    # Format name
+                    display_name = closest_name
+                    if '|' in closest_name:
+                        parts = closest_name.split('|')
+                        if len(parts) >= 2:
+                            display_name = f"{parts[1]} ({parts[0]})"
+                    
+                    import json
+                    response = f"### 🔍 {level_text}ที่มีโรงเรียน{op_text} {threshold} แห่ง{province_text}\n\n"
+                    response += f"ไม่มี{level_text}ที่มีโรงเรียน{op_text} **{threshold}** แห่งครับ 🤔\n\n"
+                    response += f"**แต่ผมมีข้อมูลใกล้เคียงให้ครับ:**\n"
+                    
+                    if operator == "<":
+                        response += f"• {level_text}ที่มีโรงเรียน**น้อยที่สุด**คือ **{display_name}** มี **{closest_count}** แห่ง\n"
+                    else:
+                        response += f"• {level_text}ที่มีโรงเรียน**มากที่สุด**คือ **{display_name}** มี **{closest_count}** แห่ง\n"
+                    
+                    # Show top 3 for context
+                    if len(sorted_data) >= 3:
+                        response += f"\n📊 **ลำดับ{level_text}ที่มีโรงเรียน{'น้อยสุด' if operator == '<' else 'มากสุด'}:**\n"
+                        chart_data = []
+                        for i, (name, data) in enumerate(sorted_data[:5], 1):
+                            cnt = data.get('total', 0)
+                            dn = name
+                            if '|' in name:
+                                parts = name.split('|')
+                                if len(parts) >= 2:
+                                    dn = f"{parts[1]} ({parts[0]})"
+                            response += f"• {dn}: **{cnt}** แห่ง\n"
+                            chart_data.append({"name": dn, "value": cnt})
+                        
+                        chart_json = json.dumps({
+                            "type": "bar",
+                            "data": chart_data,
+                            "title": f"สถิติ{'น้อยที่สุด' if operator == '<' else 'มากที่สุด'}"
+                        }, ensure_ascii=False)
+                        response += f"\n\n<chart>{chart_json}</chart>"
+                    
+                    new_threshold = closest_count + 10 if operator == "<" else max(1, closest_count - 10)
+                    response += f"\n\n💡 **ลองถาม:** \"{level_text}ที่มีโรงเรียน{op_text} {new_threshold} แห่ง{province_text}\" หรือ \"{level_text}ไหนมีโรงเรียนน้อยที่สุด{province_text}\" ครับ 😊"
+                    
+                    history[-1]["content"] = response
+                    self.cache.save(message, response)
+                    yield history, ""
+                    return
+                else:
+                    history[-1]["content"] = f"❌ ไม่พบข้อมูล{level_text}{province_text}"
+                    yield history, ""
+                    return
+            
+            # Sort by count
+            if operator == "<":
+                filtered_data.sort(key=lambda x: x[1].get('total', 0))  # Ascending
+            else:
+                filtered_data.sort(key=lambda x: x[1].get('total', 0), reverse=True)  # Descending
+            
+            # Build response
+            op_text = "น้อยกว่า" if operator == "<" else ("มากกว่า" if operator == ">" else "เท่ากับ")
+            level_text = "อำเภอ" if parsed.level == QueryLevel.DISTRICT else ("ตำบล" if parsed.level == QueryLevel.SUBDISTRICT else "จังหวัด")
+            province_text = f"ใน{parsed.province}" if parsed.province else ""
+            
+            response = f"### 🔍 {level_text}ที่มีโรงเรียน{op_text} {threshold} แห่ง{province_text}\n\n"
+            response += f"พบทั้งหมด **{len(filtered_data)} รายการ**:\n\n"
+            
+            chart_data = []
+            for i, (name, data) in enumerate(filtered_data[:15], 1):
+                display_name = name
+                if '|' in name:
+                    parts = name.split('|')
+                    if len(parts) >= 2:
+                        display_name = f"{parts[1]} ({parts[0]})"
+                
+                count = data.get('total', 0)
+                response += f"{i}. **{display_name}**: {count} แห่ง\n"
+                chart_data.append({"name": display_name, "value": count})
+            
+            response += f"\n✨ *พบข้อมูลทั้งหมด {len(filtered_data)} รายการ ครับ*"
+            
+            # Add chart
+            if chart_data:
+                chart_json = json.dumps({
+                    "type": "bar",
+                    "data": chart_data[:10],
+                    "title": f"โรงเรียน{op_text} {threshold} แห่ง"
+                }, ensure_ascii=False)
+                response += f"\n\n<chart>{chart_json}</chart>"
+            
+            history[-1]["content"] = response
+            self.cache.save(message, response)
+            yield history, ""
+            return
+        
+        # Format response
+        history[-1]["content"] = ""
+        full_response = ""
+        for chunk in self.formatter.format(aggregated, parsed):
+            full_response += chunk
+            history[-1]["content"] = full_response
+            yield history, ""
+        
+        # Add source info
+        if results:
+            collection_name = self.collections.get(parsed.level.value, "unknown")
+            source_info = f"\n\n---\n*ข้อมูลจาก: {collection_name} ({len(results)} รายการ)*"
+            history[-1]["content"] += source_info
+            full_response += source_info
+            
+        self.cache.save(message, full_response)
+        yield history, ""
+
+    def _handle_school_query(self, parsed: ParsedQuery, message: str, history: List) -> Optional[str]:
+        """Handle school-related queries"""
+        school_engine = SchoolSearchEngine(self.qdrant_client)
+        synthesizer = ResponseSynthesizer()
+        response_text = ""
+        
+        if parsed.intent == QueryIntent.SCHOOL_DETAIL:
+            school_name = parsed.school_name
+            
+            if not school_name:
+                query_lower = message.lower()
+                phrases_to_remove = [
+                    'ข้อมูลโรงเรียน', 'รายละเอียดโรงเรียน', 'เบอร์โทรโรงเรียน',
+                    'ที่อยู่โรงเรียน', 'ติดต่อโรงเรียน', 'โรงเรียน', 'ร.ร.', 'รร.',
+                    'อยู่ที่ไหน', 'อยู่ตรงไหน', 'อยู่ไหน', 'ตั้งอยู่ที่ไหน',
+                    'ขอข้อมูล', 'ขอรายละเอียด', 'ขอดู', 'หา', 'ค้นหา',
+                    'ครับ', 'ค่ะ', 'หน่อย', 'ได้ไหม', 'มั้ย', 'บ้าง',
+                    'ที่ตั้ง', 'ที่อยู่', 'ของ', 'ที่', 'ขอ',
+                    # Additional phrases to remove
+                    'รายละเอียด', 'ข้อมูล', 'เบอร์โทร', 'เบอร์', 'โทรศัพท์',
+                    'ติดต่อ', 'สอบถาม', 'ดู', 'แสดง', 'บอก', 'ช่วย'
+                ]
+                school_name = query_lower
+                for phrase in phrases_to_remove:
+                    school_name = school_name.replace(phrase, '')
+                school_name = ' '.join(school_name.split()).strip()
+            
+            if school_name:
+                details = school_engine.get_school_details(school_name)
+                if details:
+                    data = {
+                        "query_type": "school_detail",
+                        "school": {
+                            "name": details.get('school_name'),
+                            "address": {
+                                "subdistrict": details.get('subdistrict'),
+                                "district": details.get('district'),
+                                "province": details.get('province'),
+                                "postcode": details.get('postcode')
+                            },
+                            "agency": details.get('agency'),
+                            "phone": details.get('phone1') or details.get('phone2'),
+                            "school_code": details.get('school_code'),
+                        }
+                    }
+                    
+                    llm_response = synthesizer.synthesize("SCHOOL_DETAIL", data, message)
+                    
+                    if llm_response:
+                        response_text = llm_response
+                    else:
+                        # Fallback template with น้องดีโอ personality
+                        address = f"ต.{details.get('subdistrict', '-')} อ.{details.get('district', '-')} จ.{details.get('province', '-')}"
+                        response_text = f"📍 **ข้อมูลโรงเรียน{details.get('school_name')}**\n\n"
+                        response_text += f"สวัสดีครับพี่! น้องดีโอหาข้อมูลมาให้แล้วนะครับ 😊\n\n"
+                        response_text += f"🏫 **ชื่อ**: {details.get('school_name')}\n"
+                        response_text += f"📌 **ที่ตั้ง**: {address}\n"
+                        response_text += f"🏛️ **สังกัด**: {details.get('agency')}\n"
+                        if details.get('phone1'):
+                            response_text += f"📞 **โทรศัพท์**: {details.get('phone1')}\n"
+                    
+                    # Add map if coordinates available
+                    lat = details.get('latitude')
+                    lng = details.get('longitude')
+                    if lat and lng:
+                        try:
+                            import json
+                            address = f"ต.{details.get('subdistrict', '-')} อ.{details.get('district', '-')} จ.{details.get('province', '-')}"
+                            map_json = json.dumps({
+                                "latitude": float(lat),
+                                "longitude": float(lng), 
+                                "schoolName": details.get('school_name', school_name),
+                                "address": address
+                            }, ensure_ascii=False)
+                            response_text += f"\n<map>{map_json}</map>"
+                        except:
+                            pass
+                    
+                    response_text += f"\n\n💡 **คำถามที่น่าสนใจ**\n"
+                    response_text += f"• รายชื่อโรงเรียนในอำเภอ{details.get('district', '')}?\n"
+                    response_text += f"• จังหวัด{details.get('province', '')}มีโรงเรียนกี่แห่ง?\n"
+                else:
+                    response_text = f"❌ ไม่พบข้อมูลโรงเรียน \"{school_name}\" ในฐานข้อมูล\n\n💡 ลองค้นหาด้วยชื่ออื่น"
+            else:
+                response_text = "❓ กรุณาระบุชื่อโรงเรียนที่ต้องการค้นหา"
+                
+        elif parsed.intent == QueryIntent.SCHOOL_COUNT:
+            response_text = self._handle_school_count(parsed, message, school_engine, synthesizer)
+            
+        elif parsed.intent == QueryIntent.SCHOOL_LIST:
+            response_text = self._handle_school_list(parsed, message, school_engine, synthesizer, history)
+            
+        elif parsed.intent == QueryIntent.SCHOOL_SEARCH:
+            response_text = self._handle_school_search(parsed, message, school_engine, history)
+        
+        return response_text
+
+    def _handle_school_count(self, parsed: ParsedQuery, message: str, school_engine: SchoolSearchEngine, synthesizer: ResponseSynthesizer) -> str:
+        """Handle school count queries"""
+        data = {"query_type": "school_count", "location": {}, "counts": {}, "sample_schools": []}
+        
+        # DEBUG: Log parsed entities
+        logger.info(f"🔍 Parsed: agency={parsed.agency}, province={parsed.province}, district={parsed.district}, region={parsed.region}")
+        
+        # Handle subdistrict-level queries (search in statistics collection)
+        if parsed.subdistrict:
+            # Search for subdistrict in statistics
+            try:
+                from qdrant_client.models import Filter, FieldCondition, MatchValue
+                
+                # Filter by metadata.subdistrict
+                search_result = school_engine.client.scroll(
+                    collection_name="education_statistics_subdistrict",
+                    scroll_filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="metadata.subdistrict",
+                                match=MatchValue(value=parsed.subdistrict)
+                            )
+                        ]
+                    ),
+                    limit=20,
+                    with_payload=True
+                )
+                
+                total_count = 0
+                province = None
+                district = None
+                subdistrict = parsed.subdistrict
+                agencies_breakdown = {}
+                
+                for point in search_result[0]:
+                    meta = point.payload.get('metadata', {})
+                    if not province:
+                        province = meta.get('province')
+                        district = meta.get('district')
+                    
+                    # Get count from metadata
+                    count = meta.get('count', 0)
+                    agency = meta.get('agency')
+                    
+                    if agency:
+                        # This is agency breakdown record
+                        agencies_breakdown[agency] = agencies_breakdown.get(agency, 0) + count
+                    elif meta.get('stat_type') == 'subdistrict_total':
+                        # This is total count record
+                        total_count = count
+                
+                # Calculate total from agencies if not set
+                if total_count == 0 and agencies_breakdown:
+                    total_count = sum(agencies_breakdown.values())
+                
+                if total_count > 0:
+                    data["location"] = {"province": province, "district": district, "subdistrict": subdistrict}
+                    data["counts"] = {"total": int(total_count), "agencies": agencies_breakdown}
+                    
+                    # Get sample schools from education_schools
+                    sample_results = school_engine.client.scroll(
+                        collection_name="education_schools",
+                        scroll_filter=Filter(
+                            must=[
+                                FieldCondition(
+                                    key="metadata.subdistrict",
+                                    match=MatchValue(value=subdistrict)
+                                )
+                            ]
+                        ),
+                        limit=10,
+                        with_payload=True
+                    )
+                    
+                    sample_schools = []
+                    for s in sample_results[0]:
+                        meta = s.payload.get('metadata', {})
+                        sample_schools.append({
+                            "name": meta.get('school_name'),
+                            "district": meta.get('district'),
+                            "subdistrict": meta.get('subdistrict')
+                        })
+                    data["sample_schools"] = sample_schools
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Subdistrict search error: {e}")
+        
+        elif parsed.province:
+            count = school_engine.count_schools(
+                province=parsed.province,
+                district=parsed.district,
+                agency=parsed.agency
+            )
+            
+            if parsed.district:
+                sample_results = school_engine.search_by_district(parsed.province, parsed.district, parsed.agency, limit=10)
+            else:
+                sample_results = school_engine.search_by_province(parsed.province, parsed.agency, limit=10)
+            
+            sample_schools = []
+            for s in sample_results:
+                meta = s.payload.get('metadata', {})
+                sample_schools.append({
+                    "name": meta.get('school_name'),
+                    "district": meta.get('district'),
+                    "subdistrict": meta.get('subdistrict'),
+                    "agency": meta.get('agency')  # Add agency to sample
+                })
+            
+            # Get agency breakdown for the province
+            agency_breakdown = {}
+            subdistrict_breakdown = {}  # New: breakdown by subdistrict for district-level queries
+            
+            try:
+                from qdrant_client.models import Filter, FieldCondition, MatchValue
+                
+                # Build filter conditions
+                filter_conditions = [
+                    FieldCondition(key="metadata.province", match=MatchValue(value=parsed.province))
+                ]
+                if parsed.district:
+                    filter_conditions.append(
+                        FieldCondition(key="metadata.district", match=MatchValue(value=parsed.district))
+                    )
+                
+                scroll_result = school_engine.client.scroll(
+                    collection_name="education_schools",
+                    scroll_filter=Filter(must=filter_conditions),
+                    limit=2000,
+                    with_payload=["metadata.agency", "metadata.subdistrict", "metadata.school_name"]
+                )
+                
+                seen_schools = set()
+                for point in scroll_result[0]:
+                    meta = point.payload.get('metadata', {})
+                    school_name = meta.get('school_name', '')
+                    
+                    if school_name not in seen_schools:
+                        seen_schools.add(school_name)
+                        
+                        # Agency breakdown
+                        agency = meta.get('agency')
+                        if agency:
+                            agency_breakdown[agency] = agency_breakdown.get(agency, 0) + 1
+                        
+                        # Subdistrict breakdown (only for district-level queries)
+                        if parsed.district:
+                            subdistrict = meta.get('subdistrict')
+                            if subdistrict:
+                                subdistrict_breakdown[subdistrict] = subdistrict_breakdown.get(subdistrict, 0) + 1
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Breakdown error: {e}")
+            
+            data["location"] = {"province": parsed.province, "district": parsed.district, "agency": parsed.agency}
+            counts_data = {"total": count, "agency_breakdown": agency_breakdown}
+            
+            # Add subdistrict breakdown for district-level queries
+            if parsed.district and subdistrict_breakdown:
+                # Sort by count descending
+                sorted_subdistricts = sorted(subdistrict_breakdown.items(), key=lambda x: x[1], reverse=True)
+                counts_data["subdistrict_breakdown"] = [{"subdistrict": s, "count": c} for s, c in sorted_subdistricts]
+            
+            data["counts"] = counts_data
+            data["sample_schools"] = sample_schools
+            
+        elif parsed.region and parsed.region != "each_region":
+            provinces_in_region = REGIONS.get(parsed.region, [])
+            total_count = 0
+            province_breakdown = []
+            agency_breakdown = {}
+            sample_schools = []
+            
+            for province in provinces_in_region:
+                count = school_engine.count_schools(province=province, agency=parsed.agency)
+                total_count += count
+                if count > 0:
+                    province_breakdown.append({"province": province, "count": count})
+                
+                # Collect agency counts from this province
+                try:
+                    from qdrant_client.models import Filter, FieldCondition, MatchValue
+                    agency_scroll = school_engine.client.scroll(
+                        collection_name="education_schools",
+                        scroll_filter=Filter(must=[
+                            FieldCondition(key="metadata.province", match=MatchValue(value=province))
+                        ]),
+                        limit=500,
+                        with_payload=["metadata.agency"]
+                    )
+                    for point in agency_scroll[0]:
+                        agency = point.payload.get('metadata', {}).get('agency')
+                        if agency:
+                            agency_breakdown[agency] = agency_breakdown.get(agency, 0) + 1
+                except:
+                    pass
+            
+            # Get sample schools from first province with data
+            for province in provinces_in_region:
+                if not sample_schools:
+                    samples = school_engine.search_by_province(province, parsed.agency, limit=10)
+                    for s in samples:
+                        meta = s.payload.get('metadata', {})
+                        sample_schools.append({
+                            "name": meta.get('school_name'),
+                            "district": meta.get('district'),
+                            "province": meta.get('province'),
+                            "agency": meta.get('agency')
+                        })
+                    if sample_schools:
+                        break
+            
+            data["location"] = {"region": parsed.region, "agency": parsed.agency}
+            data["counts"] = {
+                "total": total_count,
+                "province_breakdown": sorted(province_breakdown, key=lambda x: x['count'], reverse=True)[:10],
+                "agency_breakdown": agency_breakdown
+            }
+            data["sample_schools"] = sample_schools
+        
+        # Handle national/country-wide queries (ทั้งประเทศ, ประเทศไทย) - NOT agency-only
+        elif not parsed.province and not parsed.district and not parsed.region and not parsed.agency:
+            # Check if this looks like a national query
+            national_keywords = ['ประเทศ', 'ทั้งประเทศ', 'ทั่วประเทศ', 'ไทย']
+            is_national = any(kw in message for kw in national_keywords)
+            
+            if is_national:
+                total_count = 0
+                agency_breakdown = {}
+                sample_schools = []
+                
+                # Aggregate across all regions
+                for region_name, provinces in REGIONS.items():
+                    if region_name in ['ภาคอีสาน', 'ภาคอีสาน']:  # Skip aliases
+                        continue
+                    for province in provinces:
+                        count = school_engine.count_schools(province=province)
+                        total_count += count
+                        
+                        # Get agency breakdown
+                        try:
+                            from qdrant_client.models import Filter, FieldCondition, MatchValue
+                            agency_scroll = school_engine.client.scroll(
+                                collection_name="education_schools",
+                                scroll_filter=Filter(must=[
+                                    FieldCondition(key="metadata.province", match=MatchValue(value=province))
+                                ]),
+                                limit=200,
+                                with_payload=["metadata.agency"]
+                            )
+                            for point in agency_scroll[0]:
+                                agency = point.payload.get('metadata', {}).get('agency')
+                                if agency:
+                                    agency_breakdown[agency] = agency_breakdown.get(agency, 0) + 1
+                        except:
+                            pass
+                
+                # Get sample schools from one province
+                samples = school_engine.search_by_province("กรุงเทพมหานคร", limit=10)
+                for s in samples:
+                    meta = s.payload.get('metadata', {})
+                    sample_schools.append({
+                        "name": meta.get('school_name'),
+                        "district": meta.get('district'),
+                        "province": meta.get('province'),
+                        "agency": meta.get('agency')
+                    })
+                
+                data["location"] = {"country": "ประเทศไทย"}
+                data["counts"] = {"total": total_count, "agency_breakdown": agency_breakdown}
+                data["sample_schools"] = sample_schools
+        
+        # Handle agency-only queries (e.g., "สพฐ มีกี่โรงเรียน")
+        elif parsed.agency and not parsed.province and not parsed.region:
+            # Count schools by agency nationwide
+            from qdrant_client.models import Filter, FieldCondition, MatchValue
+            
+            total_count = 0
+            sample_schools = []
+            province_breakdown = {}
+            
+            # Count all schools with this agency
+            scroll_result = school_engine.client.scroll(
+                collection_name="education_schools",
+                scroll_filter=Filter(must=[
+                    FieldCondition(key="metadata.agency", match=MatchValue(value=parsed.agency))
+                ]),
+                limit=5000,
+                with_payload=["metadata.province", "metadata.school_name", "metadata.district"]
+            )
+            
+            seen_schools = set()
+            for point in scroll_result[0]:
+                meta = point.payload.get('metadata', {})
+                school_name = meta.get('school_name', '')
+                if school_name not in seen_schools:
+                    seen_schools.add(school_name)
+                    total_count += 1
+                    
+                    # Province breakdown
+                    province = meta.get('province', 'ไม่ระบุ')
+                    province_breakdown[province] = province_breakdown.get(province, 0) + 1
+                    
+                    # Collect samples
+                    if len(sample_schools) < 10:
+                        sample_schools.append({
+                            "name": school_name,
+                            "district": meta.get('district'),
+                            "province": province
+                        })
+            
+            # Sort province breakdown by count
+            sorted_provinces = sorted(province_breakdown.items(), key=lambda x: x[1], reverse=True)[:10]
+            
+            data["location"] = {"agency": parsed.agency}
+            data["counts"] = {"total": total_count, "province_breakdown": [{"province": p, "count": c} for p, c in sorted_provinces]}
+            data["sample_schools"] = sample_schools
+        
+        # DEBUG: Log data before synthesize
+        import json as debug_json
+        logger.info(f"📦 Data for synthesize: total={data['counts'].get('total', 0)}, samples={len(data.get('sample_schools', []))}")
+        
+        llm_response = synthesizer.synthesize("SCHOOL_COUNT", data, message)
+        
+        if llm_response:
+            return llm_response
+        else:
+            # Smart fallback template - context-aware and natural
+            total_count = data['counts'].get('total', 0)
+            
+            # Build location description
+            if parsed.region:
+                location_desc = f"ภาค{parsed.region.replace('ภาค', '')}"
+            elif parsed.district and parsed.province:
+                location_desc = f"เขต/อำเภอ{parsed.district} จังหวัด{parsed.province}"
+            elif parsed.province:
+                location_desc = f"จังหวัด{parsed.province}"
+            else:
+                location_desc = "ทั่วประเทศไทย"
+            
+            # Add agency context
+            if parsed.agency:
+                location_desc += f" สังกัด{parsed.agency}"
+            
+            # Natural intro based on context
+            response = f"📊 **ข้อมูลโรงเรียนใน{location_desc}**\n\n"
+            response += f"พบโรงเรียนทั้งหมด **{total_count:,}** แห่ง"
+            
+            # Add context-specific observation
+            if total_count > 1000:
+                response += " ซึ่งถือว่าเป็นพื้นที่ที่มีโรงเรียนจำนวนมาก"
+            elif total_count > 100:
+                response += " ครอบคลุมหลายพื้นที่ในเขตนี้"
+            elif total_count > 0:
+                response += ""
+            response += "\n\n"
+            
+            # Add agency breakdown if available
+            if data['counts'].get('agency_breakdown'):
+                response += "🏛️ **แยกตามสังกัด**\n"
+                sorted_agencies = sorted(data['counts']['agency_breakdown'].items(), key=lambda x: x[1], reverse=True)
+                for agency, count in sorted_agencies[:5]:
+                    response += f"• {agency}: {count:,} แห่ง\n"
+                response += "\n"
+            
+            # Add subdistrict breakdown for district queries
+            if data['counts'].get('subdistrict_breakdown'):
+                response += "🗺️ **แยกตามตำบล/แขวง**\n"
+                for item in data['counts']['subdistrict_breakdown'][:8]:
+                    response += f"• {item['subdistrict']}: {item['count']:,} แห่ง\n"
+                response += "\n"
+            
+            # Add province breakdown for region queries
+            if data['counts'].get('province_breakdown'):
+                response += "📈 **แยกตามจังหวัด**\n"
+                for i, p in enumerate(data['counts']['province_breakdown'][:5], 1):
+                    response += f"{i}. {p['province']}: {p['count']:,} แห่ง\n"
+                response += "\n"
+            
+            # Add sample schools if available
+            if data.get("sample_schools"):
+                response += "🏫 **ตัวอย่างโรงเรียน**\n"
+                for school in data["sample_schools"][:5]:
+                    name = school.get("name", "-")
+                    district = school.get("district", "")
+                    subdistrict = school.get("subdistrict", "")
+                    loc_part = subdistrict or district
+                    response += f"• {name}"
+                    if loc_part:
+                        response += f" ({loc_part})"
+                    response += "\n"
+                response += "\n"
+            
+            # Smart follow-up suggestions
+            response += "💡 **สามารถถามต่อได้**\n"
+            if parsed.district:
+                response += f"• ตำบลไหนใน{parsed.district}มีโรงเรียนมากที่สุด?\n"
+                response += f"• โรงเรียนเอกชนใน{parsed.district}มีกี่แห่ง?\n"
+            elif parsed.province:
+                response += f"• อำเภอไหนใน{parsed.province}มีโรงเรียนมากที่สุด?\n"
+                response += f"• โรงเรียนสังกัด สพฐ ใน{parsed.province}มีกี่แห่ง?\n"
+            elif parsed.region:
+                response += f"• จังหวัดไหนใน{parsed.region}มีโรงเรียนน้อยที่สุด?\n"
+                response += f"• โรงเรียนเอกชนใน{parsed.region}มีกี่แห่ง?\n"
+            elif parsed.agency:
+                response += f"• จังหวัดไหนมี{parsed.agency}มากที่สุด?\n"
+                response += "• ภาคไหนมีโรงเรียนสังกัดนี้มากที่สุด?\n"
+            
+            return response
+
+    def _handle_school_list(self, parsed: ParsedQuery, message: str, school_engine: SchoolSearchEngine, synthesizer: ResponseSynthesizer, history: List) -> str:
+        """Handle school list queries"""
+        data = {"query_type": "school_list", "location": {}, "total": 0, "schools": [], "district_breakdown": []}
+        results = []
+        location = ""
+        total = 0
+        
+        if parsed.district and parsed.province:
+            results = school_engine.search_by_district(parsed.province, parsed.district, parsed.agency, limit=15)
+            location = f"อ.{parsed.district} จ.{parsed.province}"
+            total = school_engine.count_schools(parsed.province, parsed.district, parsed.agency)
+            data["location"] = {"province": parsed.province, "district": parsed.district, "agency": parsed.agency}
+            
+        elif parsed.province:
+            results = school_engine.search_by_province(parsed.province, parsed.agency, limit=15)
+            location = f"จ.{parsed.province}"
+            total = school_engine.count_schools(parsed.province, agency=parsed.agency)
+            data["location"] = {"province": parsed.province, "agency": parsed.agency}
+            
+        elif parsed.region and parsed.region != "each_region":
+            provinces_in_region = REGIONS.get(parsed.region, [])
+            all_results = []
+            province_stats = []
+            for province in provinces_in_region:
+                province_results = school_engine.search_by_province(province, parsed.agency, limit=5)
+                count = school_engine.count_schools(province=province, agency=parsed.agency)
+                all_results.extend(province_results)
+                total += count
+                if count > 0:
+                    province_stats.append({"province": province, "count": count})
+            results = all_results[:15]
+            location = parsed.region
+            data["location"] = {"region": parsed.region, "agency": parsed.agency}
+            data["district_breakdown"] = sorted(province_stats, key=lambda x: x['count'], reverse=True)[:8]
+        else:
+            return "❓ กรุณาระบุจังหวัด อำเภอ หรือภูมิภาคที่ต้องการค้นหา"
+        
+        data["total"] = total
+        for hit in results[:15]:
+            meta = hit.payload.get('metadata', {})
+            data["schools"].append({
+                "name": meta.get('school_name'),
+                "district": meta.get('district'),
+                "subdistrict": meta.get('subdistrict'),
+                "agency": meta.get('agency')
+            })
+        
+        if results:
+            llm_response = synthesizer.synthesize("SCHOOL_LIST", data, message)
+            
+            if llm_response:
+                response_text = llm_response
+                if total > 15:
+                    response_text += f"\n\n💡 **พิมพ์ \"ดูเพิ่มเติม\" เพื่อดูโรงเรียนต่อไป** (เหลืออีก {total - 15:,} แห่ง)"
+            else:
+                response_text = f"📊 **{location}** มีโรงเรียนทั้งหมด **{total:,}** แห่ง\n\n📚 **รายชื่อ:**\n"
+                for i, hit in enumerate(results[:15], 1):
+                    meta = hit.payload.get('metadata', {})
+                    response_text += f"{i}. **{meta.get('school_name')}** (อ.{meta.get('district')})\n"
+            
+            # Save pagination context
+            if total > 15:
+                self.memory.last_school_list_offset = 15
+                self.memory.last_school_list_query = {
+                    'province': parsed.province,
+                    'district': parsed.district,
+                    'agency': parsed.agency,
+                    'region': parsed.region,
+                    'total': total
+                }
+            
+            return response_text
+        else:
+            return f"❌ ไม่พบโรงเรียนใน{location}"
+
+    def _handle_school_search(self, parsed: ParsedQuery, message: str, school_engine: SchoolSearchEngine, history: List) -> str:
+        """Handle school search by name"""
+        # If region or province specified without school name, redirect to list
+        if (parsed.region or parsed.province) and not parsed.school_name:
+            synthesizer = ResponseSynthesizer()
+            return self._handle_school_list(parsed, message, school_engine, synthesizer, history)
+        
+        # Clean school name
+        clean_name = message
+        remove_phrases = [
+            'หาโรงเรียน', 'ค้นหาโรงเรียน', 'โรงเรียน', 
+            'ขอรายละเอียด', 'รายละเอียด', 'ขอข้อมูล', 'ข้อมูล', 
+            'ขอเบอร์โทร', 'เบอร์โทร', 'ที่อยู่', 'รบกวนขอ', 'ขอ',
+            'ช่วยหา', 'หา', 'ให้หน่อย', 'หน่อย', 'ครับ', 'ค่ะ',
+            'สพฐ', 'อปท', 'เอกชน', 'กทม', 'ภาคใต้', 'ภาคเหนือ', 'ภาคอีสาน', 'ภาคกลาง', 'ภาคตะวันออก'
+        ]
+        for phrase in remove_phrases:
+            clean_name = clean_name.replace(phrase, '')
+        
+        clean_name = re.sub(r'[\(\[].*?[\)\]]', '', clean_name).strip()
+        school_name = clean_name
+        
+        if school_name and len(school_name) > 2:
+            results = school_engine.search_by_name(school_name, limit=10)
+            if results:
+                response_text = f"🔍 **ผลการค้นหา \"{school_name}\"**\n\n"
+                for i, hit in enumerate(results[:10], 1):
+                    meta = hit.payload.get('metadata', {})
+                    name = meta.get('school_name', 'ไม่ระบุ')
+                    province = meta.get('province', '-')
+                    district = meta.get('district', '-')
+                    agency = meta.get('agency', '-')
+                    response_text += f"{i}. **{name}**\n   📍 อ.{district} จ.{province}\n   🏢 {agency[:20]}...\n\n"
+                return response_text
+            else:
+                # Try fuzzy matching
+                similar_schools = school_engine.find_similar_schools(school_name, province=parsed.province, top_k=5)
+                
+                if similar_schools:
+                    response_text = f"🤔 **คุณหมายถึง...?** (ไม่พบ \"{school_name}\" ตรงๆ)\n\n"
+                    response_text += "📋 **โรงเรียนที่ใกล้เคียง:**\n"
+                    for i, school in enumerate(similar_schools, 1):
+                        score_pct = int(school['score'] * 100)
+                        response_text += f"{i}. **{school['name']}** ({score_pct}% ตรงกัน)\n"
+                        response_text += f"   📍 อ.{school['district']} จ.{school['province']}\n\n"
+                    response_text += "\n💡 *ลองคลิกหรือพิมพ์ชื่อที่ถูกต้องอีกครั้งนะครับ*"
+                    return response_text
+                else:
+                    return self._rag_fallback(message)
+        else:
+            return self._rag_fallback(message)
+
+    def _handle_load_more(self) -> str:
+        """Handle load more pagination"""
+        last_query = getattr(self.memory, 'last_school_list_query', None)
+        current_offset = getattr(self.memory, 'last_school_list_offset', 0)
+        
+        if last_query and current_offset > 0:
+            school_engine = SchoolSearchEngine(self.qdrant_client)
+            province = last_query.get('province')
+            district = last_query.get('district')
+            agency = last_query.get('agency')
+            total = last_query.get('total', 0)
+            
+            if district and province:
+                all_results = school_engine.search_by_district(province, district, agency, limit=total)
+            elif province:
+                all_results = school_engine.search_by_province(province, agency, limit=total)
+            else:
+                all_results = []
+            
+            results = all_results[current_offset:current_offset + 15]
+            
+            if results:
+                location = f"จ.{province}" if not district else f"อ.{district} จ.{province}"
+                agency_text = f" สังกัด{agency}" if agency else ""
+                
+                response_text = f"📚 **รายชื่อโรงเรียนต่อ** ({location}{agency_text}):\n\n"
+                
+                for i, hit in enumerate(results, current_offset + 1):
+                    meta = hit.payload.get('metadata', {})
+                    school_name = meta.get('school_name', 'ไม่ระบุ')
+                    dist = meta.get('district', '-')
+                    subdistrict = meta.get('subdistrict', '-')
+                    response_text += f"{i}. **{school_name}** (ต.{subdistrict}, อ.{dist})\n"
+                
+                new_offset = current_offset + len(results)
+                remaining = total - new_offset
+                
+                if remaining > 0:
+                    response_text += f"\n*...และอีก {remaining:,} แห่ง*"
+                    response_text += f"\n\n💡 **พิมพ์ \"ดูเพิ่มเติม\" เพื่อดูโรงเรียนต่อไป**"
+                    self.memory.last_school_list_offset = new_offset
+                else:
+                    response_text += f"\n\n✅ **แสดงครบทั้งหมดแล้ว!**"
+                    self.memory.last_school_list_offset = 0
+                    self.memory.last_school_list_query = None
+                
+                return response_text
+            else:
+                self.memory.last_school_list_offset = 0
+                return "✅ **แสดงครบทั้งหมดแล้ว!**"
+        else:
+            return "❓ ไม่มีข้อมูลให้แสดงเพิ่มเติม กรุณาค้นหารายชื่อโรงเรียนใหม่ก่อน"
+
+    def _execute_search(self, parsed: ParsedQuery, message: str, history: List) -> Optional[List]:
+        """Execute search based on intent"""
+        query_lower = message.lower()
+        
+        # Ranking queries (includes FILTER intents as they need same search approach)
+        is_ranking_or_filter = parsed.intent in [
+            QueryIntent.RANKING_MOST, QueryIntent.RANKING_LEAST,
+            QueryIntent.FILTER_LESS_THAN, QueryIntent.FILTER_GREATER_THAN, QueryIntent.FILTER_EQUALS
+        ]
+        
+        if is_ranking_or_filter:
+            # Determine search level
+            agency_ranking_kw = ['สังกัดไหน', 'สังกัดใด', 'สังกัดอะไร', 'สังกัดที่มี', 
+                                 'หน่วยงานไหน', 'หน่วยงานใด', 'หน่วยงานอะไร', 'สังกัดการศึกษา']
+            
+            if any(kw in query_lower for kw in agency_ranking_kw):
+                if parsed.province or parsed.region:
+                    search_level = QueryLevel.PROVINCE
+                else:
+                    search_level = QueryLevel.AGENCY
+            elif 'จังหวัดไหน' in query_lower or 'จังหวัดใด' in query_lower:
+                search_level = QueryLevel.PROVINCE
+            elif 'อำเภอไหน' in query_lower or 'อำเภอใด' in query_lower or 'เขตไหน' in query_lower:
+                search_level = QueryLevel.DISTRICT
+            elif 'ตำบลไหน' in query_lower or 'ตำบลใด' in query_lower or 'แขวงไหน' in query_lower:
+                search_level = QueryLevel.SUBDISTRICT
+            else:
+                search_level = parsed.level
+            
+            parsed.level = search_level
+            
+            collection_name = self.collections.get(search_level.value)
+            if not collection_name:
+                history[-1]["content"] = f"❌ ไม่พบฐานข้อมูลระดับ {search_level.value}"
+                return None
+            
+            return self.search_engine.ranking_search(parsed, collection_name)
+        
+        # Comparison queries - use SchoolSearchEngine for accurate counts
+        elif parsed.intent == QueryIntent.COMPARE:
+            provinces_found = []
+            for province in THAI_PROVINCES:
+                if province.lower() in query_lower:
+                    provinces_found.append(province)
+            
+            if len(provinces_found) >= 2:
+                # Use SchoolSearchEngine for accurate school counts
+                school_engine = SchoolSearchEngine(self.qdrant_client)
+                synthesizer = ResponseSynthesizer()
+                
+                comparison_data = {
+                    "query_type": "compare",
+                    "provinces": []
+                }
+                
+                for prov in provinces_found:
+                    count = school_engine.count_schools(province=prov, agency=parsed.agency)
+                    comparison_data["provinces"].append({
+                        "province": prov,
+                        "count": count
+                    })
+                
+                # Sort by count descending
+                comparison_data["provinces"] = sorted(
+                    comparison_data["provinces"], 
+                    key=lambda x: x['count'], 
+                    reverse=True
+                )
+                
+                # Generate response using LLM
+                llm_response = synthesizer.synthesize("COMPARE", comparison_data, message)
+                
+                if llm_response:
+                    history[-1]["content"] = llm_response
+                else:
+                    # Fallback response
+                    response_text = "📊 **ผลการเปรียบเทียบจำนวนโรงเรียน**\n\n"
+                    for i, p in enumerate(comparison_data["provinces"], 1):
+                        response_text += f"{i}. **{p['province']}**: {p['count']:,} โรง\n"
+                    
+                    if len(comparison_data["provinces"]) >= 2:
+                        first = comparison_data["provinces"][0]
+                        second = comparison_data["provinces"][1]
+                        diff = first['count'] - second['count']
+                        if diff > 0:
+                            response_text += f"\n✨ **{first['province']}** มีมากกว่า **{second['province']}** อยู่ {diff:,} โรง"
+                    
+                    history[-1]["content"] = response_text
+                
+                self.cache.save(message, history[-1]["content"])
+                return None  # Already handled
+            else:
+                collection_name = self.collections.get(parsed.level.value)
+                if not collection_name:
+                    history[-1]["content"] = f"❌ ไม่พบฐานข้อมูลระดับ {parsed.level.value}"
+                    return None
+                return self.search_engine.search(parsed, collection_name)
+        
+        # Normal search
+        else:
+            collection_name = self.collections.get(parsed.level.value)
+            
+            if not collection_name or parsed.intent == QueryIntent.UNKNOWN:
+                fallback_resp = self._rag_fallback(message)
+                history[-1]["content"] = fallback_resp
+                self.cache.save(message, fallback_resp)
+                return None
+            
+            # Each region query
+            if parsed.region == "each_region":
+                parsed.province = None
+                parsed.district = None
+                parsed.subdistrict = None
+                results = self.search_engine.search(parsed, self.collections.get('province'), top_k=200)
+            else:
+                results = self.search_engine.search(parsed, collection_name)
+                
+            if not results:
+                fallback_resp = self._rag_fallback(message)
+                history[-1]["content"] = fallback_resp
+                self.cache.save(message, fallback_resp)
+                return None
+            
+            return results
+
+    def _aggregate_results(self, results: List, parsed: ParsedQuery, message: str) -> SearchResult:
+        """Aggregate search results"""
+        is_least = parsed.intent == QueryIntent.RANKING_LEAST
+        query_lower = message.lower()
+        
+        agency_ranking_kw = ['สังกัดไหน', 'สังกัดใด', 'สังกัดอะไร', 'สังกัดที่มี', 
+                             'หน่วยงานไหน', 'หน่วยงานใด', 'หน่วยงานอะไร', 'สังกัดการศึกษา']
+        is_agency_ranking = (
+            parsed.intent in [QueryIntent.RANKING_MOST, QueryIntent.RANKING_LEAST] and
+            any(kw in query_lower for kw in agency_ranking_kw)
+        )
+        
+        if is_agency_ranking:
+            if parsed.province:
+                return self.aggregator.aggregate_by_agency(results, province=parsed.province, is_least=is_least)
+            elif parsed.region and parsed.region != "each_region":
+                return self.aggregator.aggregate_by_agency(results, region=parsed.region, is_least=is_least)
+            else:
+                return self.aggregator.aggregate_by_agency(results, is_least=is_least)
+        elif parsed.region == "each_region":
+            return self.aggregator.aggregate_by_region(results, is_least)
+        else:
+            return self.aggregator.aggregate(results, parsed.level, is_least)

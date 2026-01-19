@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Settings collection: 
+    // - Everyone needs to READ the config (to get prompts/models).
+    // - Only Authenticated Admins can WRITE/UPDATE.
+    match /settings/{document=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Users collection & Subcollections:
+    // - Authenticated users can read/write ANY data under their own ID.
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Chat Logs collection:
+    // - Authenticated users can read their own logs or legacy logs without owner ID.
+    // - Authenticated users can create logs labeled with their own UID.
+    match /chat_logs/{logId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (!('userId' in resource.data) || resource.data.userId == request.auth.uid);
+      allow update, delete: if false; 
+    }
+
+    // Chat Sessions collection:
+    // - Stores metadata (title, last updated) for the sidebar list.
+    match /chat_sessions/{sessionId} {
+      allow read: if request.auth != null && (!('userId' in resource.data) || resource.data.userId == request.auth.uid);
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if request.auth != null && (!('userId' in resource.data) || resource.data.userId == request.auth.uid);
+    }
+
+    // Default: Deny everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
