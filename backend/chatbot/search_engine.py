@@ -1,3 +1,4 @@
+
 """
 Search Engine for Education Chatbot
 Handles vector search, metadata filtering, and query expansion
