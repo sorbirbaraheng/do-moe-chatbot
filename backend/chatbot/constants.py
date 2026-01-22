@@ -88,15 +88,76 @@ REGIONS = {
 REGIONS["ภาคอีสาน"] = REGIONS["ภาคตะวันออกเฉียงเหนือ"]
 
 # =====================================================================
-# COLLECTION NAMES
+# COLLECTION NAMES (v5 - Rich Data)
 # =====================================================================
 COLLECTIONS = {
+    # Primary v5 collections (recommended)
+    "schools": "edu_schools_v5",      # โรงเรียน + GPS + นักเรียนรวม + ครู
+    "students": "edu_students_v5",    # นักเรียน แยกระดับชั้น + เพศ
+    "teachers": "edu_teachers_v5",    # ครู แยกเพศ
+    
+    # Additional v5 collections
+    "areas": "edu_areas_v5",          # เขตพื้นที่
+    "systems": "edu_systems_v5",      # ระบบสังกัด
+    "grades": "edu_grade_summary_v5", # สรุประดับชั้น
+    "gender": "edu_gender_overview_v5", # สรุปเพศ
+    "ratios": "edu_ratios_v5",        # อัตราส่วน
+    
+    # Unified collection (fallback)
+    "unified": "thailand_education",
+    "thailand_education": "thailand_education",
+    
+    # Legacy (deprecated)
     "province": "education_statistics_province",
     "district": "education_statistics_district",
-    "subdistrict": "education_statistics_subdistrict",
-    "agency": "education_statistics_agency",
-    "schools": "education_schools"
 }
+
+# Primary collection for RAG queries
+PRIMARY_COLLECTION = "edu_schools_v5"
+
+# =====================================================================
+# SMART COLLECTION ROUTING
+# Keywords -> Collection mapping for automatic selection
+# =====================================================================
+COLLECTION_KEYWORDS = {
+    "edu_students_v5": [
+        "นักเรียน", "นร", "เด็ก", "ระดับชั้น", "ชั้น", "เกรด",
+        "ม.1", "ม.2", "ม.3", "ม.4", "ม.5", "ม.6",
+        "ป.1", "ป.2", "ป.3", "ป.4", "ป.5", "ป.6",
+        "ประถม", "มัธยม", "อนุบาล",
+        "เพศชาย", "เพศหญิง", "ชาย", "หญิง",
+        "student", "students", "grade"
+    ],
+    "edu_teachers_v5": [
+        "ครู", "อาจารย์", "บุคลากร", "พนักงาน",
+        "ครูชาย", "ครูหญิง",
+        "teacher", "teachers"
+    ],
+    "edu_schools_v5": [
+        "โรงเรียน", "ร.ร.", "รร", "สถานศึกษา",
+        "ที่ตั้ง", "ที่อยู่", "อยู่ที่", "ตั้งอยู่",
+        "พิกัด", "แผนที่", "GPS",
+        "สังกัด", "สพฐ", "สช", "กทม",
+        "school", "schools", "location"
+    ],
+    "edu_areas_v5": [
+        "เขตพื้นที่", "พื้นที่การศึกษา", "สพม", "สพป"
+    ],
+    "edu_grade_summary_v5": [
+        "สรุประดับชั้น", "จำนวนชั้นเรียน"
+    ],
+    "edu_gender_overview_v5": [
+        "สรุปเพศ", "อัตราส่วนชาย-หญิง"
+    ]
+}
+
+# Default search order when no specific keywords match
+COLLECTION_SEARCH_ORDER = [
+    "edu_schools_v5",
+    "edu_students_v5", 
+    "edu_teachers_v5",
+    "thailand_education"
+]
 
 # =====================================================================
 # POPULAR DISTRICTS (for bare district detection like "หาดใหญ่")

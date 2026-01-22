@@ -19,7 +19,10 @@ from .constants import (
     PROVINCE_ALIASES,
     REGIONS,
     COLLECTIONS,
-    AGENCY_ALIASES
+    AGENCY_ALIASES,
+    COLLECTION_KEYWORDS,
+    COLLECTION_SEARCH_ORDER,
+    PRIMARY_COLLECTION
 )
 
 # Security
@@ -46,7 +49,7 @@ from .query_parser import (
 )
 
 # Search Engines
-from .search_engine import SearchEngine
+from .search_engine import SearchEngine, route_to_collection
 from .school_search import SchoolSearchEngine
 
 # Aggregators
@@ -80,6 +83,9 @@ __all__ = [
     'REGIONS',
     'COLLECTIONS',
     'AGENCY_ALIASES',
+    'COLLECTION_KEYWORDS',
+    'COLLECTION_SEARCH_ORDER',
+    'PRIMARY_COLLECTION',
     'INTENT_KEYWORDS',
     # Security
     'InputSanitizer',
@@ -95,6 +101,7 @@ __all__ = [
     'ResponseSynthesizer',
     # Search Engines
     'SearchEngine',
+    'route_to_collection',
     'SchoolSearchEngine',
     # Aggregators
     'ResultAggregator',

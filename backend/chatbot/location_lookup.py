@@ -54,7 +54,7 @@ class LocationLookup:
             
             for _ in range(50):  # Max 50 iterations to avoid infinite loop
                 response = self.client.scroll(
-                    collection_name="education_schools",
+                    collection_name="edu_schools_v5",
                     limit=1000,
                     offset=offset,
                     with_payload=["metadata.province"]
@@ -191,7 +191,7 @@ class LocationLookup:
             # Get unique districts
             districts = set()
             response = self.client.scroll(
-                collection_name="education_schools",
+                collection_name="edu_schools_v5",
                 scroll_filter=scroll_filter,
                 limit=500,
                 with_payload=["metadata.district"]
@@ -252,7 +252,7 @@ class LocationLookup:
             # Get unique subdistricts
             subdistricts = set()
             response = self.client.scroll(
-                collection_name="education_schools",
+                collection_name="edu_schools_v5",
                 scroll_filter=scroll_filter,
                 limit=500,
                 with_payload=["metadata.subdistrict"]

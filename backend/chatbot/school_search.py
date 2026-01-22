@@ -11,17 +11,18 @@ import google.generativeai as genai
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-from .constants import COLLECTIONS
+from .constants import COLLECTIONS, PRIMARY_COLLECTION
 
 logger = logging.getLogger(__name__)
 
 
 class SchoolSearchEngine:
-    """Search engine for education_schools collection"""
+    """Search engine for education data collection"""
     
     def __init__(self, client: QdrantClient):
         self.client = client
-        self.collection = COLLECTIONS["schools"]
+        # Use unified collection (thailand_education) for all queries
+        self.collection = PRIMARY_COLLECTION
     
     def search_by_name(self, name: str, limit: int = 10) -> List:
         """Search schools by name - try text match first, then semantic search (deduplicated by school_code)"""

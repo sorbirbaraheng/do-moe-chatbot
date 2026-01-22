@@ -492,161 +492,186 @@ const aiQueryNormalizer = async (
 
 /**
  * AI Response Summarizer - แปลงข้อมูลดิบ → คำตอบสไตล์ "น้อง DO"
+ * มี Gemini fallback เมื่อ Groq ล้มเหลว
  */
 const aiResponseSummarizer = async (
   originalQuestion: string,
   rawData: string,
   groqKey: string,
   parsedQuery?: ParsedQuery | null,
-  conversationHistory?: ChatHistoryItem[]
+  conversationHistory?: ChatHistoryItem[],
+  geminiKey?: string  // Optional Gemini key for fallback
 ): Promise<string | null> => {
-  try {
-    console.log('[AI Layer 2] Summarizing response with น้อง DO style...');
+  const intent = parsedQuery?.intent || 'general';
+  const comparisonType = parsedQuery?.comparisonType;
 
-    const intent = parsedQuery?.intent || 'general';
-    const comparisonType = parsedQuery?.comparisonType;
-
-    let formatGuide = '';
-    if (intent === 'ranking' && comparisonType === 'most') {
-      formatGuide = `
+  let formatGuide = '';
+  if (intent === 'ranking' && comparisonType === 'most') {
+    formatGuide = `
 • เน้นอันดับ 1 ด้วย **ตัวหนา** และ 🏆
 • บอก Top 3 รองลงมา
 • ใส่ตัวเลขเป็น **ตัวหนา**`;
-    } else if (intent === 'compare') {
-      formatGuide = `
+  } else if (intent === 'compare') {
+    formatGuide = `
 • เปรียบเทียบตัวเลขชัดเจน
 • สรุปว่าที่ไหนมากกว่า/น้อยกว่า
 • ใช้ emoji 📊 หรือ 🔍`;
-    } else {
-      formatGuide = `
+  } else {
+    formatGuide = `
 • สรุปข้อมูลเป็นข้อๆ
 • ใช้ • bullet ทุกข้อ (ห้ามใช้ตัวเลข 1. 2. 3.)
 • ใช้ตัวหนาเน้นจำนวน`;
-    }
+  }
 
 
-    const prompt = `คุณคือ "น้อง DO" (น้องดีโอ) ผู้ช่วย AI **ผู้ชาย** ของกระทรวงศึกษาธิการ
+  const prompt = `คุณคือ "น้อง DO" ผู้ช่วย AI ด้านการศึกษาไทย (เป็นผู้ชาย ใช้ "ครับ")
 
-**บุคลิกของคุณ:**
-- เป็นกันเอง สุภาพ แต่เป็นมืออาชีพ
-- **คุณเป็นผู้ชาย** → ลงท้ายด้วย "ครับ" หรือ "นะครับ" เท่านั้น
-- **ห้ามใช้ "ค่ะ" หรือ "คะ" เด็ดขาด!** (เพราะเป็นภาษาผู้หญิง)
-- ใช้ emoji อย่างเหมาะสม 😊
-- **ฉลาดและช่วยเหลือ** - ไม่ปฏิเสธผู้ใช้ด้วยคำว่า "ไม่พบข้อมูล" แบบเฉยๆ
-
-${conversationHistory && conversationHistory.length > 0 ? `**ประวัติการสนทนาก่อนหน้า (บริบท):**
+${conversationHistory && conversationHistory.length > 0 ? `**บริบทก่อนหน้า:**
 ${conversationHistory.slice(-4).map(h => `${h.role === 'user' ? 'ผู้ใช้' : 'AI'}: ${h.parts?.[0]?.text?.substring(0, 200) || ''}`).join('\n')}
 
-` : ''}**คำถามปัจจุบัน:** "${originalQuestion}"
+` : ''}**คำถาม:** "${originalQuestion}"
 
-**ข้อมูลที่ได้จากระบบ:**
+**ข้อมูลจริง:**
 ${rawData}
 
-**หน้าที่ของคุณ:** 
-- ถ้าคำถามปัจจุบันเป็น follow-up (เช่น "แล้ว..." หรือ "อื่นๆละ" หรือ สรรพนามที่อ้างอิงบริบทก่อน) ให้ใช้ประวัติการสนทนาเพื่อเข้าใจบริบท
-- สรุปข้อมูลข้างต้นเป็นคำตอบที่สวยงาม ธรรมชาติ เหมือนคนตอบจริงๆ
+**คำย่อสังกัด (สำคัญมาก!):**
+- สช = สำนักงานคณะกรรมการส่งเสริมการศึกษาเอกชน (โรงเรียนเอกชน)
+- สพฐ = สำนักงานคณะกรรมการการศึกษาขั้นพื้นฐาน (โรงเรียนรัฐบาล)
+- อปท = กรมส่งเสริมการปกครองท้องถิ่น
+- สอศ = สำนักงานคณะกรรมการการอาชีวศึกษา
+⚠️ **ห้ามสับสน สช กับ สพฐ!** (คนละสังกัดกัน)
 
-**รูปแบบการตอบ:**
+**วิธีตอบ:**
+- ตอบเหมือนคนคุยกัน ไม่ใช่หุ่นยนต์
+- เข้าใจบริบท ถ้าถามต่อเนื่อง ให้เชื่อมโยง
+- ใช้ภาษาหลากหลาย ไม่ซ้ำซาก
 ${formatGuide}
 
-**กฎสำคัญที่สุด:**
-- ห้าม Hallucinate หรือแต่งเติมตัวเลขเด็ดขาด! ยึดตาม **ข้อมูลที่ได้จากระบบ** เท่านั้น
-- ห้ามขยายคำย่อถ้าไม่แน่ใจ (เช่น ห้ามแปลง สช. เป็น สพฐ. หรืออื่นๆ) ให้ใช้คำตามต้นฉบับ
-- ห้ามขึ้นต้นด้วย "📊 จำนวนโรงเรียน..." (อ่านแข็งเกินไป)
-- ห้ามใช้รูปแบบ "รายละเอียดตามสังกัด:" แบบเดิม
-- ให้ตอบแบบเป็นกันเอง เช่น "สำหรับคำถามนี้ครับ..."
-- ใส่ข้อมูลครบถ้วน แต่อ่านง่าย
+**โครงสร้างคำตอบที่ดี:**
+1. ตอบคำถามหลักก่อน (ตัวเลขสำคัญ)
+2. แสดงรายละเอียด (bullet points)
+3. ให้ข้อสังเกตหรือ insight (ถ้ามี)
+4. ปิดท้ายสั้นๆ
 
-**✨ กฎสำคัญ - ทำให้คำตอบน่าสนใจ:**
-- ห้ามตอบแห้งๆ แค่ list ข้อมูล! ต้องเสริม **insights** หรือ **ข้อสังเกตที่น่าสนใจ**
-- เพิ่มข้อมูลเชิงลึก เช่น:
-  - "น่าสนใจว่า **สพฐ.** มีโรงเรียนมากถึง **55%** ของทั้งประเทศเลยครับ! 🏆"
-  - "เห็นได้ว่า **กรมส่งเสริมการปกครองท้องถิ่น** มีบทบาทสำคัญในระดับท้องถิ่น"
-  - "Top 3 นี้ครอบคลุม **กว่า 90%** ของโรงเรียนทั้งหมดเลยนะครับ!"
-- แนะนำคำถามติดตามที่น่าสนใจ เช่น: "สนใจดู**จังหวัดไหนมีโรงเรียนมากที่สุด**ไหมครับ?"
-- ปิดท้ายด้วยข้อแนะนำหรือ "มีอะไรสอบถามเพิ่มเติมได้นะครับ 😊"
+**กฎ Formatting (สำคัญ!):**
+- ใช้ **ตัวหนา** สำหรับตัวเลขสำคัญ เช่น **2977 แห่ง**, **174 แห่ง**
+- ใช้ bullet points (- หรือ •) สำหรับรายการ
+- เน้นตัวเลขให้โดดเด่น
 
-**กฎสำคัญ - เมื่อไม่พบข้อมูลตรงตามเงื่อนไข:**
-- ห้ามตอบแค่ "ไม่พบข้อมูล" แล้วจบ!
-- ให้แนะนำข้อมูลที่ใกล้เคียงที่สุดแทน เช่น:
-  - ถ้าถามหา "น้อยกว่า 40" แต่ไม่มี → บอกว่า "ไม่มีที่น้อยกว่า 40 แต่ที่น้อยที่สุดคือ..."
-  - ถ้าถามหา "มากกว่า 1000" แต่ไม่มี → บอกว่า "ไม่มีที่มากกว่า 1000 แต่ที่มากที่สุดคือ..."
-- แนะนำให้ผู้ใช้ปรับคำถามหรือลองเงื่อนไขอื่น
+**กฎ:**
+- ตัวเลขต้องมาจาก "ข้อมูลจริง" เท่านั้น ห้ามแต่งเอง
+- ❌ ห้ามใช้คำซ้ำซาก: "สำหรับคำถามนี้ครับ", "น่าสนใจว่า", "สนใจดู...ไหมครับ"`;
 
-ตัวอย่างโทนการตอบ:
-"สำหรับอำเภอเมืองปัตตานีครับ **ตำบลบานา** มีโรงเรียนมากที่สุด 🏆 รวม **15** แห่ง
 
-• สพฐ.: **10** แห่ง
-• เอกชน: **3** แห่ง  
-• อปท.: **2** แห่ง
+  // ✨ Extract chart/map data before sending to LLM (preserve widgets!)
+  const chartMatch = rawData.match(/<chart>([\s\S]*?)<\/chart>/);
+  const mapMatch = rawData.match(/<map>([\s\S]*?)<\/map>/);
+  const extractedChart = chartMatch ? chartMatch[0] : '';
+  const extractedMap = mapMatch ? mapMatch[0] : '';
 
-มีอะไรสอบถามเพิ่มเติมได้นะครับ 😊"
+  // Remove chart/map from text before sending to LLM (LLM shouldn't modify JSON)
+  const textOnlyData = rawData
+    .replace(/<chart>[\s\S]*?<\/chart>/g, '')
+    .replace(/<map>[\s\S]*?<\/map>/g, '')
+    .trim();
 
-ตัวอย่างเมื่อไม่พบข้อมูลตรง:
-"สำหรับจังหวัดสตูลครับ ไม่มีอำเภอที่มีโรงเรียนน้อยกว่า 40 แห่งนะครับ 🔍
+  const promptWithTextOnly = prompt.replace(rawData, textOnlyData);
 
-แต่ผมมีข้อมูลที่ใกล้เคียงให้ครับ:
-• **อำเภอมะนัง** มีโรงเรียนน้**ยที่สุด** เพียง **48 แห่ง**
-• รองลงมาคือ ควนโดน **66 แห่ง**
-
-💡 ลองถามว่า 'อำเภอไหนมีโรงเรียนน้อยที่สุด' หรือ 'น้อยกว่า 50' ดูนะครับ 😊"`;
-
-    // ✨ Extract chart/map data before sending to LLM (preserve widgets!)
-    const chartMatch = rawData.match(/<chart>([\s\S]*?)<\/chart>/);
-    const mapMatch = rawData.match(/<map>([\s\S]*?)<\/map>/);
-    const extractedChart = chartMatch ? chartMatch[0] : '';
-    const extractedMap = mapMatch ? mapMatch[0] : '';
-
-    // Remove chart/map from text before sending to LLM (LLM shouldn't modify JSON)
-    const textOnlyData = rawData
-      .replace(/<chart>[\s\S]*?<\/chart>/g, '')
-      .replace(/<map>[\s\S]*?<\/map>/g, '')
-      .trim();
-
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${groqKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        messages: [{ role: 'user', content: prompt.replace(rawData, textOnlyData) }],
-        model: 'llama-3.3-70b-versatile',
-        temperature: 0.8, // Slightly higher for more creative responses
-        max_tokens: 1500  // More tokens for richer responses
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      console.error('[AI Layer 2] ❌ Groq API error:', response.status, errorText);
-      return null;
-    }
-
-    const data = await response.json();
-    let content = data.choices?.[0]?.message?.content || '';
-
-    if (!content) {
-      console.warn('[AI Layer 2] ⚠️ Empty response from Groq');
-      return null;
-    }
-
-    // ✨ Re-attach chart/map data at the end (preserve widgets!)
+  // Helper to re-attach chart/map
+  const attachWidgets = (content: string): string => {
+    let result = content;
     if (extractedChart) {
-      content += '\n\n' + extractedChart;
+      result += '\n\n' + extractedChart;
       console.log('[AI Layer 2] 📊 Chart data preserved and re-attached');
     }
     if (extractedMap) {
-      content += '\n\n' + extractedMap;
+      result += '\n\n' + extractedMap;
       console.log('[AI Layer 2] 🗺️ Map data preserved and re-attached');
     }
+    return result;
+  };
 
-    console.log('[AI Layer 2] ✅ Summarized successfully, length:', content.length);
-    return sanitizeResponseText(content);
-  } catch (error: any) {
-    console.error('[AI Layer 2] ❌ Error:', error.message || error);
-    return null;
+  // ============================================
+  // TRY 1: GROQ API (Primary - Fast)
+  // ============================================
+  if (groqKey) {
+    try {
+      console.log('[AI Layer 2] 🚀 Trying Groq API first...');
+
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${groqKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: promptWithTextOnly }],
+          model: 'llama-3.3-70b-versatile',
+          temperature: 0.8,
+          max_tokens: 1500
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content || '';
+
+        if (content) {
+          console.log('[AI Layer 2] ✅ Groq success!');
+          return sanitizeResponseText(attachWidgets(content));
+        }
+      } else {
+        const errorText = await response.text().catch(() => '');
+        console.warn('[AI Layer 2] ⚠️ Groq API error:', response.status, errorText);
+      }
+    } catch (groqError: any) {
+      console.warn('[AI Layer 2] ⚠️ Groq failed:', groqError.message);
+    }
   }
+
+  // ============================================
+  // TRY 2: GEMINI API (Fallback)
+  // ============================================
+  // Get Gemini key from activeKeyQueues if not provided
+  const catKey = 'school' as keyof typeof activeKeyQueues;
+  const effectiveGeminiKey = geminiKey || activeKeyQueues[catKey]?.[0] || activeKeyQueues['general']?.[0];
+
+  if (effectiveGeminiKey) {
+    try {
+      console.log('[AI Layer 2] 🔄 Falling back to Gemini API...');
+
+      const geminiAi = new GoogleGenAI({ apiKey: effectiveGeminiKey });
+      const modelName = await getAvailableGeminiModel(effectiveGeminiKey);
+
+      const result = await geminiAi.models.generateContent({
+        model: modelName,
+        contents: [{ role: 'user', parts: [{ text: promptWithTextOnly }] }],
+        config: {
+          generationConfig: {
+            temperature: 0.8,
+            maxOutputTokens: 1500
+          }
+        }
+      } as any);
+
+      const content = result.text || '';
+
+      if (content) {
+        console.log('[AI Layer 2] ✅ Gemini fallback success!');
+        return sanitizeResponseText(attachWidgets(content));
+      }
+    } catch (geminiError: any) {
+      console.error('[AI Layer 2] ❌ Gemini fallback also failed:', geminiError.message);
+    }
+  } else {
+    console.warn('[AI Layer 2] ⚠️ No Gemini key available for fallback');
+  }
+
+  // ============================================
+  // BOTH FAILED - Return null (will use fallbackFormatResponse)
+  // ============================================
+  console.error('[AI Layer 2] ❌ Both Groq and Gemini failed');
+  return null;
 };
 
 // ============================================================================
@@ -864,6 +889,108 @@ export const detectCategory = (message: string): 'general' | 'school' | 'student
 };
 
 // ============================================================================
+// FALLBACK FORMATTER (When AI Layer 2 fails)
+// ============================================================================
+
+/**
+ * Fallback formatter - แปลง JSON/raw response เป็นข้อความที่อ่านได้
+ * ใช้เมื่อ aiResponseSummarizer ล้มเหลว
+ */
+const fallbackFormatResponse = (rawData: string, originalQuestion: string): string => {
+  try {
+    // Try to parse as JSON
+    let data: any;
+
+    // Check if it's wrapped in ```json blocks
+    const jsonMatch = rawData.match(/```json\s*([\s\S]*?)\s*```/);
+    if (jsonMatch) {
+      data = JSON.parse(jsonMatch[1]);
+    } else {
+      // Try direct JSON parse
+      try {
+        data = JSON.parse(rawData);
+      } catch {
+        // Not JSON, return cleaned up text
+        return rawData
+          .replace(/```json/g, '')
+          .replace(/```/g, '')
+          .trim();
+      }
+    }
+
+    // Format the parsed data
+    let response = '';
+
+    // Handle school_counts structure
+    if (data.school_counts) {
+      const schoolCounts = data.school_counts;
+      const schools = Object.keys(schoolCounts);
+
+      if (schools.length > 0) {
+        response += `📊 **สรุปข้อมูลจากการค้นหา:**\n\n`;
+
+        let totalStudents = 0;
+        schools.forEach((school, index) => {
+          const info = schoolCounts[school];
+          const total = info.total || 0;
+          totalStudents += total;
+
+          response += `**${index + 1}. ${school}**\n`;
+          response += `• จำนวนรวม: **${total.toLocaleString()}** คน\n`;
+
+          if (info.province) response += `• จังหวัด: ${info.province}\n`;
+          if (info.district) response += `• เขต/อำเภอ: ${info.district}\n`;
+          if (info.grade) response += `• ระดับชั้น: ${info.grade}\n`;
+          if (info.gender) response += `• เพศ: ${info.gender}\n`;
+
+          response += '\n';
+        });
+
+        if (data.total_students) {
+          response += `📈 **รวมทั้งหมด:** ${data.total_students.toLocaleString()} คน ใน ${data.num_schools || schools.length} โรงเรียนครับ`;
+        }
+      }
+    }
+    // Handle other data structures
+    else if (data.total || data.count) {
+      response += `📊 **ผลการค้นหา:**\n\n`;
+      response += `• จำนวนรวม: **${(data.total || data.count).toLocaleString()}** รายการครับ\n`;
+
+      if (data.province) response += `• จังหวัด: ${data.province}\n`;
+      if (data.district) response += `• อำเภอ: ${data.district}\n`;
+    }
+    // Handle array response
+    else if (Array.isArray(data)) {
+      response += `📋 **พบข้อมูล ${data.length} รายการ:**\n\n`;
+      data.slice(0, 10).forEach((item, i) => {
+        const name = item.name || item.school_name || item.title || `รายการ ${i + 1}`;
+        response += `• ${name}\n`;
+      });
+      if (data.length > 10) {
+        response += `\n... และอีก ${data.length - 10} รายการครับ`;
+      }
+    }
+    // Generic object
+    else {
+      response += `📊 **ข้อมูลที่พบ:**\n\n`;
+      Object.entries(data).slice(0, 10).forEach(([key, value]) => {
+        if (typeof value === 'object') {
+          response += `• **${key}**: (มีข้อมูลย่อย)\n`;
+        } else {
+          response += `• **${key}**: ${value}\n`;
+        }
+      });
+    }
+
+    return response || rawData;
+  } catch (error) {
+    console.error('[Fallback Formatter] Error:', error);
+    // Return a user-friendly message if all else fails
+    return `ได้รับข้อมูลจากระบบแล้วครับ แต่รูปแบบอาจไม่ตรงที่คาดหวัง กรุณาลองถามใหม่อีกครั้งนะครับ 🙏`;
+  }
+};
+
+// ============================================================================
 // ABORT CONTROLLER FOR STOPPING AI GENERATION
 // ============================================================================
 let currentAbortController: AbortController | null = null;
@@ -898,15 +1025,14 @@ export const sendMessageStream = async (
       throw new Error('ABORTED');
     }
   };
-  // Auto-detect category if 'auto' is passed
-  const effectiveCategory = category.toLowerCase() === 'auto'
-    ? detectCategory(message)
-    : category.toLowerCase();
+  // UNIFIED SINGLE CHATBOT: Always use 'school' category for all queries
+  // This sends all queries to Flask Backend which uses LLM Agent for intelligent routing
+  const effectiveCategory = 'school'; // Hardcoded - LLM Agent handles query routing
+  console.log('[sendMessageStream] 🎯 Unified mode: using school category for Flask API');
 
   initializeGemini(effectiveCategory);
 
-  const catKey = (effectiveCategory === 'school' ? 'school' :
-    effectiveCategory === 'student' ? 'student' : 'general') as 'general' | 'school' | 'student';
+  const catKey = 'school' as 'general' | 'school' | 'student';
 
   // Get current time for context
   const currentTime = new Date().toLocaleString('th-TH', {
@@ -936,27 +1062,15 @@ export const sendMessageStream = async (
 
       // ============================================
       // AI LAYER 1: Query Normalization
+      // ⚠️ DISABLED: Backend LLM Agent handles this now
+      // Saves ~500-1000 tokens per query
       // ============================================
       let parsedQuery: ParsedQuery | null = null;
       let queryToSend = message;
 
-      if (groqKey) {
-        // Note: Don't show analyzing message here - it creates duplicate
-        console.log('[AI Layer 1] Starting query normalization...');
-        parsedQuery = await aiQueryNormalizer(message, groqKey);
-
-        if (parsedQuery) {
-          console.log('[AI Layer 1] ✅ Intent:', parsedQuery.intent, 'Level:', parsedQuery.level);
-
-          // Use normalized query for Flask if available
-          if (parsedQuery.normalizedQuery && parsedQuery.normalizedQuery !== message) {
-            queryToSend = parsedQuery.normalizedQuery;
-            console.log('[AI Layer 1] Using normalized query:', queryToSend);
-          }
-        } else {
-          console.log('[AI Layer 1] ⚠️ Normalization returned null, using original query');
-        }
-      }
+      // QUOTA OPTIMIZATION: Skip frontend AI normalization
+      // Backend's LLM Agent does entity extraction already
+      console.log('[AI Layer 1] ⏭️ Skipped (Backend handles normalization)');
 
       // Convert history to Flask format - ✨ Enhanced: 10 messages for better context
       const flaskHistory = history.slice(-10).map(h => ({
@@ -1030,8 +1144,25 @@ export const sendMessageStream = async (
               );
 
               if (isNotFoundResponse) {
-                console.log(`[Flask API] ⚠️ Not found response detected, falling back to Pinecone RAG...`);
-                // Don't return - let it fall through to Pinecone RAG below
+                console.log(`[Flask API] ⚠️ Not found response detected, showing professional message...`);
+                // 🏛️ For government system: Show professional "no data" message instead of falling back
+                const professionalNotFoundMessage = `😅 อุ๊บส์! น้องดีโอยังหาข้อมูลส่วนนี้ไม่เจอเลยครับ\n\nถ้าลองถามเรื่องอื่นดูนะครับ น้องยินดีช่วยเต็มที่เลย! 💪✨`;
+
+                if (onChunk) {
+                  const chars = professionalNotFoundMessage.split('');
+                  let buffer = '';
+                  for (let i = 0; i < chars.length; i++) {
+                    checkAborted();
+                    buffer += chars[i];
+                    if (i % 3 === 0 || i === chars.length - 1) {
+                      onChunk(buffer);
+                      buffer = '';
+                      await new Promise(r => setTimeout(r, 8));
+                    }
+                  }
+                  if (buffer) onChunk(buffer);
+                }
+                return { text: professionalNotFoundMessage };
               } else {
                 // Stream the buffered response - character by character like ChatGPT
                 if (onChunk) {
@@ -1056,7 +1187,7 @@ export const sendMessageStream = async (
 
               // ✨ Instead of returning immediately, send to AI Layer 2 for richer context
               flaskResponse = result.response;
-              // Don't return - let it fall through to AI Layer 2 below
+              break;  // 🔧 FIX: Exit retry loop on success!
             }
           }
 
@@ -1073,34 +1204,22 @@ export const sendMessageStream = async (
 
       // ============================================
       // AI LAYER 2: Response Summarization
+      // ⚠️ DISABLED: Backend already returns formatted responses
+      // Saves ~1000-2000 tokens per query
       // ============================================
       if (flaskResponse) {
         let finalResponse = flaskResponse;
         let usedAiFormatting = false;
 
-        // Always use AI to format response in "น้อง DO" style
-        if (groqKey) {
-          console.log('[AI Layer 2] 🚀 Starting response formatting...');
-          console.log('[AI Layer 2] groqKey available:', !!groqKey);
-          console.log('[AI Layer 2] flaskResponse length:', flaskResponse.length);
-
-          const summarized = await aiResponseSummarizer(
-            message,
-            flaskResponse,
-            groqKey,
-            parsedQuery,
-            history  // Pass conversation history for context
-          );
-
-          if (summarized) {
-            finalResponse = summarized;
-            usedAiFormatting = true;
-            console.log('[AI Layer 2] ✅ AI formatting successful!');
-          } else {
-            console.warn('[AI Layer 2] ⚠️ AI formatting returned null, using original Flask response');
-          }
+        // QUOTA OPTIMIZATION: Skip frontend AI summarization
+        // Backend's LLM Agent already returns well-formatted responses
+        // Only use fallback formatter if response looks like raw JSON
+        if (flaskResponse.startsWith('{') || flaskResponse.startsWith('[')) {
+          console.log('[AI Layer 2] ⏭️ Using fallback formatter (raw JSON detected)');
+          finalResponse = fallbackFormatResponse(flaskResponse, message);
         } else {
-          console.warn('[AI Layer 2] ⚠️ No groqKey available, using original Flask response');
+          console.log('[AI Layer 2] ⏭️ Using Backend response directly (already formatted)');
+          // Response is already formatted by Backend, use as-is
         }
 
         console.log('[AI Layer 2] Final response preview:', finalResponse.substring(0, 100) + '...');
@@ -1218,12 +1337,15 @@ ${ragResult.context}
   // Use last 6 messages for context
   const effectiveHistory = history.slice(-6);
 
-  // 1. GROQ
+  // 1. GROQ - ⚠️ DISABLED: Save quota, rely on Flask only
+  // If Flask fails, show friendly error instead of burning Groq quota
+  const ENABLE_FALLBACK_GROQ = false; // Set to true to re-enable Groq fallback
+
   const groqQueue = activeGroqQueues[catKey] || [];
   console.log(`🔍 [Debug] Category: ${catKey}, Groq Queue Length: ${groqQueue.length}, Keys: ${groqQueue.map(k => k.substring(0, 8) + '...')}`);
   console.log(`🔍 [Debug] Current Config groqKeys:`, currentConfig.apiKeys?.[catKey]?.groqKeys?.length || 0);
 
-  if (!imageData && groqQueue.length > 0) {
+  if (ENABLE_FALLBACK_GROQ && !imageData && groqQueue.length > 0) {
     let groqAttempts = 0;
     const MAX_GROQ_RETRIES = Math.max(2, groqQueue.length); // Try at least 2 or all available keys
 
@@ -1357,7 +1479,7 @@ ${ragResult.context}
     }
   }
 
-  onChunk("😊 ขออภัยครับ ขณะนี้ระบบกำลังประมวลผลคำขอจำนวนมาก กรุณาลองใหม่อีกครั้งในอีกสักครู่นะครับ หรือลองถามคำถามอื่นได้เลยครับ");
+  onChunk("😅 เอ๊ะ! ขอโทษนะครับ ตอนนี้น้องดีโอตอบไม่ได้ชั่วคราว\n\nลองถามใหม่อีกทีได้ไหมครับ? น้องพร้อมช่วยเสมอเลยนะ! 💪");
 };
 
 export const optimizeQueue = async (category: string) => {

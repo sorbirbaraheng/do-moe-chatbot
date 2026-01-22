@@ -33,20 +33,11 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
 
     return (
         <div className="space-y-6">
-            {/* Category Selector for API Keys */}
-            <div className="flex gap-2 p-1 bg-black/5 rounded-xl">
-                {(['general', 'school', 'student'] as const).map((cat) => (
-                    <button
-                        key={cat}
-                        onClick={() => setActiveApiCategory(cat)}
-                        className={`flex-1 py-2 px-4 rounded-lg text-sm font-bold transition-all ${activeApiCategory === cat
-                            ? 'bg-white shadow-sm text-[#1D1D1F]'
-                            : 'text-black/50 hover:text-black/70'
-                            }`}
-                    >
-                        {cat === 'general' ? 'ทั่วไป (General)' : cat === 'school' ? 'โรงเรียน (School)' : 'นักเรียน (Student)'}
-                    </button>
-                ))}
+            {/* UNIFIED SINGLE CHATBOT - No category tabs needed */}
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-200">
+                <p className="text-sm font-medium text-blue-800">
+                    ✨ <strong>Unified Mode:</strong> API Keys ทั้งหมดใช้ร่วมกันสำหรับทุกคำถาม
+                </p>
             </div>
 
             {/* Groq API Keys (Primary) */}

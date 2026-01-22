@@ -148,6 +148,20 @@ class FirestoreConfigLoader:
         """Get the first available Gemini key"""
         keys = self.get_gemini_keys(category)
         return keys[0] if keys else None
+    
+    def get_groq_model(self) -> str:
+        """Get Groq model name from config, default to llama-3.3-70b-versatile"""
+        config = self.get_config()
+        # Try to get model from various possible locations
+        model = config.get("model", {}).get("name")
+        if not model:
+            # Check if model is stored in apiKeys section
+            for category in ["school", "general", "student"]:
+                cat_config = config.get("apiKeys", {}).get(category, {})
+                model = cat_config.get("groqModel")
+                if model:
+                    break
+        return model or "llama-3.3-70b-versatile"
 
 
 # Global config loader instance
@@ -184,3 +198,40 @@ def get_gemini_keys(category: str = "school") -> List[str]:
     """Get all Gemini keys for rotation"""
     loader = get_config_loader()
     return loader.get_gemini_keys(category)
+
+
+def get_unified_groq_keys() -> List[str]:
+    """Get all Groq keys from ALL categories for unified mode (deduplicated)"""
+    loader = get_config_loader()
+    all_keys = []
+    seen = set()
+    
+    for category in ["general", "school", "student"]:
+        keys = loader.get_groq_keys(category)
+        for key in keys:
+            if key and key not in seen:
+                all_keys.append(key)
+                seen.add(key)
+    
+    if all_keys:
+        logger.info(f"🔑 Unified mode: {len(all_keys)} Groq keys from all categories")
+    return all_keys
+
+
+def get_unified_gemini_keys() -> List[str]:
+    """Get all Gemini keys from ALL categories for unified mode (deduplicated)"""
+    loader = get_config_loader()
+    all_keys = []
+    seen = set()
+    
+    for category in ["general", "school", "student"]:
+        keys = loader.get_gemini_keys(category)
+        for key in keys:
+            if key and key not in seen:
+                all_keys.append(key)
+                seen.add(key)
+    
+    if all_keys:
+        logger.info(f"🔑 Unified mode: {len(all_keys)} Gemini keys from all categories")
+    return all_keys
+

@@ -23,6 +23,31 @@ import ChartWidget from './ChartWidget';
 import MapWidget from './MapWidget';
 import { saveFeedback } from '../services/feedbackService';
 
+/**
+ * Clean up markdown formatting issues from LLM output
+ * - Convert inline `*` bullets to proper markdown list format
+ * - Add proper line breaks for better rendering
+ */
+const cleanupMarkdown = (text: string): string => {
+  if (!text) return '';
+
+  let cleaned = text;
+
+  // Fix: "มีดังนี้: * item" -> "มีดังนี้:\n\n- item"
+  cleaned = cleaned.replace(/:\s*\*\s+/g, ':\n\n- ');
+
+  // Fix: Standalone "*" at start of line -> "-"
+  cleaned = cleaned.replace(/^\*\s+/gm, '- ');
+
+  // Fix: "• " bullet points (already correct but ensure consistency)
+  cleaned = cleaned.replace(/•\s+/g, '- ');
+
+  // Fix: Multiple consecutive bullet points need newlines between
+  cleaned = cleaned.replace(/(-\s.+?)(\s+-\s)/g, '$1\n$2');
+
+  return cleaned;
+};
+
 interface MessageBubbleProps {
   message: Message;
   isAdminMode?: boolean;
@@ -412,7 +437,7 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                       ),
                     }}
                   >
-                    {displayedMainContent}
+                    {cleanupMarkdown(displayedMainContent || '')}
                   </ReactMarkdown>
                 </div>
 
@@ -590,7 +615,7 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                         ),
                       }}
                     >
-                      {displayedMainContent}
+                      {cleanupMarkdown(displayedMainContent || '')}
                     </ReactMarkdown>
                   </>
                 )}
@@ -636,10 +661,10 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                     onClick={() => handleFeedback('positive')}
                     disabled={!!feedback || feedbackSaving}
                     className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-300 ${feedback === 'positive'
-                        ? 'bg-green-100 text-green-600 scale-110'
-                        : feedback
-                          ? 'opacity-30 cursor-not-allowed'
-                          : 'bg-white/60 hover:bg-green-50 hover:scale-110 text-gray-400 hover:text-green-500'
+                      ? 'bg-green-100 text-green-600 scale-110'
+                      : feedback
+                        ? 'opacity-30 cursor-not-allowed'
+                        : 'bg-white/60 hover:bg-green-50 hover:scale-110 text-gray-400 hover:text-green-500'
                       } ${feedbackSaving ? 'animate-pulse' : ''}`}
                     title="คำตอบนี้มีประโยชน์"
                   >
@@ -653,10 +678,10 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                     onClick={() => handleFeedback('negative')}
                     disabled={!!feedback || feedbackSaving}
                     className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-300 ${feedback === 'negative'
-                        ? 'bg-red-100 text-red-600 scale-110'
-                        : feedback
-                          ? 'opacity-30 cursor-not-allowed'
-                          : 'bg-white/60 hover:bg-red-50 hover:scale-110 text-gray-400 hover:text-red-500'
+                      ? 'bg-red-100 text-red-600 scale-110'
+                      : feedback
+                        ? 'opacity-30 cursor-not-allowed'
+                        : 'bg-white/60 hover:bg-red-50 hover:scale-110 text-gray-400 hover:text-red-500'
                       } ${feedbackSaving ? 'animate-pulse' : ''}`}
                     title="คำตอบนี้ไม่ถูกต้อง"
                   >

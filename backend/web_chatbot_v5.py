@@ -76,7 +76,7 @@ load_dotenv(dotenv_path=current_dir / ".env")
 # API Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")  # 8b has separate quota
 QDRANT_URL = os.getenv("QDRANT_URL", "http://203.159.242.144:6333")
 QDRANT_TIMEOUT = int(os.getenv("QDRANT_TIMEOUT", "60"))
 

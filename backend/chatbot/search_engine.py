@@ -1,21 +1,52 @@
 
 """
 Search Engine for Education Chatbot
-Handles vector search, metadata filtering, and query expansion
+Handles vector search, metadata filtering, query expansion, and smart collection routing
 """
 
 import time
 import logging
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import google.generativeai as genai
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
 from .types import ParsedQuery, QueryLevel
-from .constants import REGIONS
+from .constants import REGIONS, COLLECTION_KEYWORDS, COLLECTION_SEARCH_ORDER, PRIMARY_COLLECTION
 
 logger = logging.getLogger(__name__)
+
+
+def route_to_collection(query: str) -> Tuple[str, float]:
+    """
+    Smart Collection Routing - เลือก Collection ที่เหมาะสมตาม Query
+    Returns: (collection_name, confidence_score)
+    """
+    query_lower = query.lower()
+    scores = {}
+    
+    for collection, keywords in COLLECTION_KEYWORDS.items():
+        score = 0
+        for keyword in keywords:
+            if keyword.lower() in query_lower:
+                # Higher weight for longer/more specific keywords
+                score += len(keyword)
+        scores[collection] = score
+    
+    if scores:
+        best_collection = max(scores, key=scores.get)
+        best_score = scores[best_collection]
+        
+        if best_score > 0:
+            # Normalize confidence (0-1)
+            confidence = min(1.0, best_score / 20.0)
+            logger.info(f"🎯 Smart Routing: '{query[:30]}...' → {best_collection} (confidence: {confidence:.2f})")
+            return best_collection, confidence
+    
+    # Fallback to primary
+    logger.info(f"🔄 Fallback routing → {PRIMARY_COLLECTION}")
+    return PRIMARY_COLLECTION, 0.5
 
 
 class SearchEngine:
@@ -179,3 +210,132 @@ class SearchEngine:
         except Exception as e:
             logger.error(f"Ranking search error: {e}")
             return []
+
+    def smart_search(self, query: str, parsed_query: ParsedQuery, top_k: int = 50) -> dict:
+        """
+        Smart Multi-Collection Search
+        1. Route to best collection based on query
+        2. Search in that collection
+        3. Fallback to secondary collections if needed
+        
+        Returns: {
+            "results": [...],
+            "collection": "collection_name",
+            "confidence": 0.0-1.0
+        }
+        """
+        start_time = time.time()
+        
+        # 1. Smart routing
+        best_collection, confidence = route_to_collection(query)
+        
+        # 2. Search in best collection
+        results = self.search(parsed_query, best_collection, top_k)
+        
+        # 3. Fallback if no results
+        if not results and confidence < 0.8:
+            logger.info(f"⚠️ No results in {best_collection}, trying fallback collections...")
+            for fallback in COLLECTION_SEARCH_ORDER:
+                if fallback != best_collection:
+                    try:
+                        results = self.search(parsed_query, fallback, top_k)
+                        if results:
+                            logger.info(f"✅ Found {len(results)} results in fallback: {fallback}")
+                            best_collection = fallback
+                            break
+                    except Exception as e:
+                        logger.warning(f"Fallback search in {fallback} failed: {e}")
+                        continue
+        
+        elapsed = (time.time() - start_time) * 1000
+        logger.info(f"🔍 Smart search completed in {elapsed:.2f}ms | Collection: {best_collection} | Results: {len(results)}")
+        
+        return {
+            "results": results,
+            "collection": best_collection,
+            "confidence": confidence
+        }
+
+    def multi_collection_search(self, query: str, parsed_query: ParsedQuery, top_k: int = 50) -> dict:
+        """
+        🔥 Multi-Collection Search - Search ALL relevant collections automatically
+        
+        Based on query keywords, determines which collections to search and aggregates results.
+        This provides comprehensive answers by pulling data from multiple sources.
+        
+        Returns: {
+            "results": [...],
+            "collections_searched": ["col1", "col2"],
+            "results_by_collection": {"col1": [...], "col2": [...]},
+            "primary_collection": "col1"
+        }
+        """
+        start_time = time.time()
+        query_lower = query.lower()
+        
+        # Determine which collections to search based on keywords
+        collections_to_search = []
+        
+        for collection, keywords in COLLECTION_KEYWORDS.items():
+            for keyword in keywords:
+                if keyword.lower() in query_lower:
+                    if collection not in collections_to_search:
+                        collections_to_search.append(collection)
+                        logger.info(f"🎯 Matched keyword '{keyword}' → {collection}")
+                    break
+        
+        # If no specific keywords found, use default search order
+        if not collections_to_search:
+            collections_to_search = COLLECTION_SEARCH_ORDER[:2]
+            logger.info(f"🔄 No keywords matched, using defaults: {collections_to_search}")
+        
+        # Search each relevant collection
+        all_results = []
+        results_by_collection = {}
+        primary_collection = None
+        
+        for collection in collections_to_search:
+            try:
+                collection_results = self.search(parsed_query, collection, top_k)
+                if collection_results:
+                    results_by_collection[collection] = collection_results
+                    all_results.extend(collection_results)
+                    if not primary_collection:
+                        primary_collection = collection
+                    logger.info(f"✅ {collection}: {len(collection_results)} results")
+                else:
+                    logger.info(f"⚪ {collection}: 0 results")
+            except Exception as e:
+                logger.warning(f"❌ Error searching {collection}: {e}")
+                continue
+        
+        # Additional: Search for grade+gender specific queries in edu_students_v5
+        grade_keywords = ['ม.1', 'ม.2', 'ม.3', 'ม.4', 'ม.5', 'ม.6', 'ป.1', 'ป.2', 'ป.3', 'ป.4', 'ป.5', 'ป.6',
+                         'มัธยมศึกษาปีที่', 'ประถมศึกษาปีที่', 'อนุบาล', 'ระดับชั้น']
+        gender_keywords = ['เพศชาย', 'เพศหญิง', 'ชาย', 'หญิง', 'นักเรียนชาย', 'นักเรียนหญิง']
+        
+        has_grade = any(kw in query_lower for kw in grade_keywords)
+        has_gender = any(kw in query_lower for kw in gender_keywords)
+        
+        if (has_grade or has_gender) and 'edu_students_v5' not in collections_to_search:
+            logger.info(f"🎓 Grade/Gender detected - adding edu_students_v5 search")
+            try:
+                student_results = self.search(parsed_query, 'edu_students_v5', top_k)
+                if student_results:
+                    results_by_collection['edu_students_v5'] = student_results
+                    all_results.extend(student_results)
+                    if not primary_collection:
+                        primary_collection = 'edu_students_v5'
+                    logger.info(f"✅ edu_students_v5: {len(student_results)} results")
+            except Exception as e:
+                logger.warning(f"❌ Error searching edu_students_v5: {e}")
+        
+        elapsed = (time.time() - start_time) * 1000
+        logger.info(f"🔍 Multi-collection search completed in {elapsed:.2f}ms | Collections: {list(results_by_collection.keys())} | Total: {len(all_results)}")
+        
+        return {
+            "results": all_results,
+            "collections_searched": list(results_by_collection.keys()),
+            "results_by_collection": results_by_collection,
+            "primary_collection": primary_collection or PRIMARY_COLLECTION
+        }

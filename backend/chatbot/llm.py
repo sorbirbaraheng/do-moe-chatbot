@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Environment variables
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")  # Changed from 70b to 8b for separate quota
 
 # Initialize Gemini
 if GEMINI_API_KEY:
@@ -41,7 +41,7 @@ class MultiProviderLLM:
     Falls back to .env if Firestore is unavailable.
     """
     
-    def __init__(self, category: str = "school", gemini_model: str = 'gemini-2.0-flash-exp'):
+    def __init__(self, category: str = "school", gemini_model: str = "gemini-2.0-flash"):  # 2.0-flash has more quota than 2.5-flash
         self.category = category
         self.groq_model = GROQ_MODEL
         self.gemini_model_name = gemini_model
@@ -62,17 +62,22 @@ class MultiProviderLLM:
                 sys.path.insert(0, backend_dir)
             
             # Direct import from firebase_config module
-            from firebase_config import get_groq_keys, get_gemini_keys
+            from firebase_config import get_groq_keys, get_gemini_keys, get_unified_groq_keys, get_unified_gemini_keys, config_loader
 
 
-            # Get list of keys
-            self.groq_keys = get_groq_keys(self.category)
-            self.gemini_keys = get_gemini_keys(self.category)
+            # Get list of keys - Use UNIFIED mode to merge all keys from all categories
+            self.groq_keys = get_unified_groq_keys()
+            self.gemini_keys = get_unified_gemini_keys()
+            
+            # Load Groq model from Admin Panel config
+            if config_loader:
+                self.groq_model = config_loader.get_groq_model()
+                logger.info(f"🤖 Groq model from config: {self.groq_model}")
             
             self.groq_key_index = 0
             
             if self.groq_keys:
-                logger.info(f"✅ Loaded {len(self.groq_keys)} Groq keys from Firestore (category: {self.category})")
+                logger.info(f"✅ Loaded {len(self.groq_keys)} Groq keys (unified mode)")
             else:
                 # Fallback to .env single key
                 env_key = GROQ_API_KEY
@@ -85,7 +90,7 @@ class MultiProviderLLM:
             if self.gemini_keys:
                 # Use first Gemini key for now, could implement rotation later if needed
                 genai.configure(api_key=self.gemini_keys[0])
-                logger.info(f"✅ Loaded {len(self.gemini_keys)} Gemini keys from Firestore (category: {self.category})")
+                logger.info(f"✅ Loaded {len(self.gemini_keys)} Gemini keys (unified mode)")
             elif GEMINI_API_KEY:
                  genai.configure(api_key=GEMINI_API_KEY)
                  logger.info("✅ Gemini key loaded from .env")
@@ -115,9 +120,37 @@ class MultiProviderLLM:
         except Exception as e:
             logger.error(f"Failed to init Gemini: {e}")
     
+    def _reload_keys_if_needed(self):
+        """Hot-reload keys from shared_config.json if changed"""
+        try:
+            import json
+            from pathlib import Path
+            config_path = Path(__file__).parent.parent / 'shared_config.json'
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                api_keys = config.get('apiKeys', {}).get(self.category, {})
+                new_groq_keys = [k for k in api_keys.get('groqKeys', []) if k and k.strip()]
+                new_gemini_keys = [k for k in api_keys.get('geminiKeys', []) if k and k.strip()]
+                
+                # Update if different
+                if new_groq_keys and new_groq_keys != self.groq_keys:
+                    self.groq_keys = new_groq_keys
+                    self.groq_key_index = 0
+                    logger.info(f"🔄 Hot-reloaded {len(new_groq_keys)} Groq keys")
+                if new_gemini_keys and new_gemini_keys != getattr(self, 'gemini_keys', []):
+                    self.gemini_keys = new_gemini_keys
+                    genai.configure(api_key=new_gemini_keys[0])
+                    logger.info(f"🔄 Hot-reloaded {len(new_gemini_keys)} Gemini keys")
+        except Exception as e:
+            pass  # Silent fail, use existing keys
+    
     def generate_content(self, prompt: str, timeout: int = 30, **kwargs) -> LLMResponse:
         """Generate content using Groq first (with key rotation), then Gemini as fallback"""
         # Note: **kwargs absorbs arguments like 'stream' that might be passed but not supported yet
+        
+        # Hot-reload keys from config (picks up Admin Panel changes)
+        self._reload_keys_if_needed()
         
         # Try Groq first
         if self.groq_keys:
@@ -151,6 +184,9 @@ class MultiProviderLLM:
         """Call Groq API with specific key"""
         import requests
         
+        # Debug: Log which key is being used
+        logger.info(f"🔑 Trying Groq with key: ...{api_key[-4:] if api_key else 'NONE'}")
+        
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
@@ -176,7 +212,8 @@ class MultiProviderLLM:
             logger.info(f"⚡ Groq responded ({self.groq_model})")
             return content
         elif response.status_code == 429:
-            logger.warning("⚠️ Groq rate limited (429) - Switching key...")
+            error_detail = response.text[:200] if response.text else "No details"
+            logger.warning(f"⚠️ Groq rate limited (429) - Switching key... Error: {error_detail}")
             # Raise exception to trigger next key retry
             raise Exception("Rate limit exceeded")
         else:

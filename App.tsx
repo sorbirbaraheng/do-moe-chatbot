@@ -548,6 +548,27 @@ const AppContent: React.FC = () => {
       let fullContent = '';
       const systemInstruction = getSystemInstruction(category);
 
+      // Use RAF to batch streaming updates and prevent excessive re-renders
+      let rafId: number | null = null;
+      let pendingContent = '';
+
+      const batchedUpdate = (content: string) => {
+        pendingContent = content;
+        if (rafId === null) {
+          rafId = requestAnimationFrame(() => {
+            setMessages(prev => {
+              const updated = [...prev];
+              const idx = updated.findIndex(m => m.id === modelMessageId);
+              if (idx !== -1) {
+                updated[idx] = { ...updated[idx], content: pendingContent };
+              }
+              return updated;
+            });
+            rafId = null;
+          });
+        }
+      };
+
       // Pass the CURRENT history state (including the new user message implicitly via context management logic, 
       // but here we pass the PREVIOUS history to initialize if needed. 
       // The new message itself is sent as the prompt.)
@@ -558,14 +579,19 @@ const AppContent: React.FC = () => {
         systemInstruction,
         (chunk) => {
           fullContent += chunk;
-          setMessages(prev => prev.map(m => m.id === modelMessageId ? { ...m, content: fullContent } : m));
+          batchedUpdate(fullContent);
         },
         formattedHistory,
         (debugInfo) => {
-          // Immediate RAG Debug Update
+          // Immediate RAG Debug Update - less frequent, no need to batch
           setMessages(prev => prev.map(m => m.id === modelMessageId ? { ...m, ragDebugInfo: debugInfo } : m));
         }
       );
+
+      // Cancel any pending RAF and do final update
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
 
       // Attach RAG debug info to the message (for admin mode display)
       const ragDebugInfo = getLastRagDebugInfo();
@@ -781,7 +807,7 @@ const AppContent: React.FC = () => {
               </div>
 
               <nav className="relative z-10 flex-1 overflow-y-auto no-scrollbar px-4 fade-mask-b">
-                <CategorySelector selected={category} onSelect={handleCategoryChange} disabled={isLoading} />
+                {/* CategorySelector removed - unified single chatbot mode */}
                 {pastChats.length > 0 && (
                   <div className="mt-8 slide-up-content stagger-2">
                     <div className="px-2 text-[10px] font-black uppercase tracking-[0.2em] mb-3 opacity-30">ประวัติการสนทนา</div>
@@ -874,117 +900,50 @@ const AppContent: React.FC = () => {
                   <div className="hidden sm:flex px-4 py-1.5 rounded-full bg-white/80 backdrop-blur-md border border-white/60 shadow-sm text-[11px] font-semibold items-center gap-2">
                     <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
                     <span className="text-black/60">Mode:</span>
-                    <span className="text-blue-600">{category === Category.General ? 'ทั่วไป' : category === Category.School ? 'โรงเรียน' : 'สถิติ'}</span>
+                    <span className="text-blue-600">DO AI</span>
                   </div>
                 </div>
               </header>
 
               <div ref={chatContainerRef} className="flex-1 overflow-y-auto no-scrollbar relative">
-                {/* Sticky Mobile Category - ✨ Apple Style Segmented Control */}
-                <div className="sticky top-0 z-10 -mx-6 lg:-mx-8 pt-4 px-2 sm:px-6 lg:px-8 bg-gradient-to-b from-[#F2F2F7] via-[#F2F2F7]/95 to-transparent pb-2 pointer-events-none sticky-category-mobile">
-                  <div className="pointer-events-auto md:hidden shadow-sm rounded-2xl">
-                    <CategorySelector selected={category} onSelect={handleCategoryChange} disabled={isLoading} />
-                  </div>
-                </div>
+                {/* Mobile category selector removed - unified single chatbot mode */}
 
-                <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-32">
+                <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-32 pt-6">
                   {messages.length === 0 && (
                     <div className="flex flex-col items-center justify-center min-h-[50vh] pt-8 md:pt-16 animate-in fade-in duration-700">
 
-                      {/* Section Header */}
+                      {/* Unified DO AI Welcome */}
                       <div className="text-center mb-10">
+                        <div className="w-20 h-20 mx-auto mb-6 rounded-3xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="white" className="w-10 h-10">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
+                          </svg>
+                        </div>
                         <h2 className="text-[28px] md:text-[34px] font-bold text-[#1D1D1F] tracking-tight mb-3">
-                          เลือกหมวดหมู่
+                          สวัสดีครับ! ผมคือ DO AI ✨
                         </h2>
-                        <p className="text-[15px] md:text-[17px] text-[#86868B] font-medium">
-                          คลิกหมวดหมู่หรือคำถามแนะนำเพื่อเริ่มสนทนา
+                        <p className="text-[15px] md:text-[17px] text-[#86868B] font-medium max-w-lg mx-auto">
+                          ถามได้ทุกเรื่องเกี่ยวกับข้อมูลการศึกษา ไม่ว่าจะเป็นโรงเรียน ครู นักเรียน หรือสถิติต่างๆ ผมพร้อมช่วยเหลือครับ!
                         </p>
                       </div>
 
-                      {/* 3 Category Cards - Apple Style Grid */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
-
-                        {/* General Card */}
-                        <div className="flex flex-col">
+                      {/* Sample Questions Grid */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl">
+                        {[
+                          "กรุงเทพมีโรงเรียนกี่แห่ง",
+                          "จำนวนครูในกรุงเทพ",
+                          "โรงเรียนที่มีนักเรียนมากที่สุด",
+                          "อัตราส่วนครูต่อนักเรียน"
+                        ].map((q, idx) => (
                           <button
-                            onClick={() => handleCategoryChange(Category.General)}
-                            className="group p-6 rounded-[28px] bg-white/70 backdrop-blur-xl border border-white/80 shadow-[0_2px_20px_rgba(0,0,0,0.04)] hover:shadow-[0_8px_40px_rgba(0,122,255,0.12)] hover:-translate-y-0.5 transition-all duration-300 text-left mb-4"
+                            key={idx}
+                            onClick={() => handleSendMessage(q, null)}
+                            className="text-left px-5 py-4 rounded-2xl bg-gradient-to-br from-blue-50 to-purple-50 hover:from-blue-100 hover:to-purple-100 border border-blue-100 text-[14px] font-medium text-[#1D1D1F] hover:shadow-md transition-all duration-200"
                           >
-                            <div className="w-12 h-12 rounded-2xl bg-[#007AFF]/10 flex items-center justify-center mb-5 group-hover:scale-105 transition-transform duration-300">
-                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="#007AFF" className="w-6 h-6">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
-                              </svg>
-                            </div>
-                            <h3 className="font-semibold text-[19px] text-[#1D1D1F] mb-1.5 tracking-tight">ถามทั่วไป</h3>
-                            <p className="text-[13px] text-[#86868B] leading-relaxed">สอบถามข้อมูลทั่วไปเกี่ยวกับการศึกษา</p>
+                            <span className="text-blue-500 mr-2">💬</span>
+                            {q}
                           </button>
-                          <div className="flex flex-col gap-2.5">
-                            {COMMON_QUERIES[Category.General].slice(0, 2).map((q, idx) => (
-                              <button
-                                key={idx}
-                                onClick={() => { setCategory(Category.General); handleSendMessage(q, null); }}
-                                className="text-left px-4 py-3 rounded-2xl bg-[#007AFF]/5 hover:bg-[#007AFF]/10 border border-[#007AFF]/10 text-[13px] font-medium text-[#007AFF] hover:text-[#0056b3] transition-all duration-200 line-clamp-2"
-                              >
-                                {q}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* School Card */}
-                        <div className="flex flex-col">
-                          <button
-                            onClick={() => handleCategoryChange(Category.School)}
-                            className="group p-6 rounded-[28px] bg-white/70 backdrop-blur-xl border border-white/80 shadow-[0_2px_20px_rgba(0,0,0,0.04)] hover:shadow-[0_8px_40px_rgba(255,149,0,0.12)] hover:-translate-y-0.5 transition-all duration-300 text-left mb-4"
-                          >
-                            <div className="w-12 h-12 rounded-2xl bg-[#FF9500]/10 flex items-center justify-center mb-5 group-hover:scale-105 transition-transform duration-300">
-                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="#FF9500" className="w-6 h-6">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0 0 12 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75Z" />
-                              </svg>
-                            </div>
-                            <h3 className="font-semibold text-[19px] text-[#1D1D1F] mb-1.5 tracking-tight">ค้นหาโรงเรียน</h3>
-                            <p className="text-[13px] text-[#86868B] leading-relaxed">ค้นหาข้อมูลโรงเรียนทั่วประเทศ</p>
-                          </button>
-                          <div className="flex flex-col gap-2.5">
-                            {COMMON_QUERIES[Category.School].slice(0, 2).map((q, idx) => (
-                              <button
-                                key={idx}
-                                onClick={() => { setCategory(Category.School); handleSendMessage(q, null); }}
-                                className="text-left px-4 py-3 rounded-2xl bg-[#FF9500]/5 hover:bg-[#FF9500]/10 border border-[#FF9500]/10 text-[13px] font-medium text-[#FF9500] hover:text-[#cc7700] transition-all duration-200 line-clamp-2"
-                              >
-                                {q}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Stats Card */}
-                        <div className="flex flex-col">
-                          <button
-                            onClick={() => handleCategoryChange(Category.Student)}
-                            className="group p-6 rounded-[28px] bg-white/70 backdrop-blur-xl border border-white/80 shadow-[0_2px_20px_rgba(0,0,0,0.04)] hover:shadow-[0_8px_40px_rgba(175,82,222,0.12)] hover:-translate-y-0.5 transition-all duration-300 text-left mb-4"
-                          >
-                            <div className="w-12 h-12 rounded-2xl bg-[#AF52DE]/10 flex items-center justify-center mb-5 group-hover:scale-105 transition-transform duration-300">
-                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="#AF52DE" className="w-6 h-6">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
-                              </svg>
-                            </div>
-                            <h3 className="font-semibold text-[19px] text-[#1D1D1F] mb-1.5 tracking-tight">สถิติการศึกษา</h3>
-                            <p className="text-[13px] text-[#86868B] leading-relaxed">ดูสถิติและข้อมูลเชิงตัวเลข</p>
-                          </button>
-                          <div className="flex flex-col gap-2.5">
-                            {COMMON_QUERIES[Category.Student].slice(0, 2).map((q, idx) => (
-                              <button
-                                key={idx}
-                                onClick={() => { setCategory(Category.Student); handleSendMessage(q, null); }}
-                                className="text-left px-4 py-3 rounded-2xl bg-[#AF52DE]/5 hover:bg-[#AF52DE]/10 border border-[#AF52DE]/10 text-[13px] font-medium text-[#AF52DE] hover:text-[#8b41b2] transition-all duration-200 line-clamp-2"
-                              >
-                                {q}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
+                        ))}
                       </div>
                     </div>
                   )}
