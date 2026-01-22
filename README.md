@@ -1,166 +1,144 @@
-# 🎓 DO-MOE Education Chatbot
+# DO-MOE AI Chatbot 🤖
 
-**AI-powered Education Data Assistant for Thailand's Ministry of Education**
+ระบบ AI Chatbot สำหรับข้อมูลการศึกษาไทย พัฒนาโดย กระทรวงศึกษาธิการ
 
-![Version](https://img.shields.io/badge/version-5.0-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)
-![Python](https://img.shields.io/badge/Python-3.9+-yellow)
+## 📋 Prerequisites
 
----
-
-## 📋 Overview
-
-DO-MOE เป็นระบบ AI Chatbot สำหรับการสืบค้นข้อมูลการศึกษาของประเทศไทย พัฒนาสำหรับกระทรวงศึกษาธิการ รองรับการค้นหาข้อมูลโรงเรียน สถิตินักเรียน และคำถามทั่วไปเกี่ยวกับการศึกษา
-
-### ✨ Key Features
-
-| Feature | Description |
-|---------|-------------|
-| 🗣️ **Multi-Category Chat** | รองรับ 3 หมวด: ทั่วไป, โรงเรียน, นักเรียน |
-| 🤖 **Multi-LLM Support** | Groq (primary) + Gemini (fallback) |
-| 🔍 **Vector Search** | Qdrant สำหรับ semantic search |
-| ⚡ **Real-time Streaming** | แสดงคำตอบแบบ character-by-character |
-| 📊 **Interactive Charts** | แสดงกราฟและแผนที่ |
-| 👍👎 **Feedback System** | เก็บ feedback สำหรับ improve AI |
-| 🔐 **Authentication** | Firebase Auth (Google Sign-in) |
-
----
-
-## 🏗️ Project Structure
-
-```
-moe-one---ict-hub/
-├── 📂 backend/                 # Python Flask API
-│   ├── chatbot/               # Core chatbot logic
-│   │   ├── chatbot_core.py    # Main chatbot class
-│   │   ├── query_parser.py    # Intent extraction
-│   │   ├── search_engine.py   # Qdrant queries
-│   │   └── memory.py          # Conversation memory
-│   ├── web_chatbot_v5.py      # Flask API entry point
-│   ├── redis_session.py       # Redis session storage
-│   └── .env.example           # Environment template
-│
-├── 📂 components/              # React UI components
-│   ├── MessageBubble.tsx      # Chat message display
-│   ├── ChatInput.tsx          # Input with voice/file
-│   ├── ChartWidget.tsx        # Chart rendering
-│   └── admin/                 # Admin panel
-│
-├── 📂 services/                # Frontend services
-│   ├── geminiService.ts       # LLM API integration
-│   ├── feedbackService.ts     # Feedback to Firebase
-│   └── firebase.ts            # Firebase config
-│
-├── 📂 config/                  # App configuration
-│   ├── defaultConfig.ts       # Default settings
-│   └── systemPrompts.ts       # AI persona prompts
-│
-├── App.tsx                    # Main React app
-├── index.html                 # Entry HTML
-└── package.json               # Dependencies
-```
-
----
+- **Node.js** >= 18.x
+- **Python** >= 3.9
+- **Qdrant** Vector Database (running on server)
+- **Redis** (optional, for session management)
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-- Node.js 18+
-- Python 3.9+
-- Redis (optional, has SQLite fallback)
-
-### 1. Clone & Install
+### 1. Clone Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/moe-one---ict-hub.git
-cd moe-one---ict-hub
+git clone https://github.com/sorbirbaraheng/do-moe-chatbot.git
+cd do-moe-chatbot
+```
 
-# Frontend
+### 2. Frontend Setup
+
+```bash
+# Install dependencies
 npm install
 
-# Backend
-cd backend
-pip install -r requirements.txt  # or use pip3
-```
-
-### 2. Environment Setup
-
-```bash
-# Copy example files
-cp backend/.env.example backend/.env
-
-# Edit with your API keys
-nano backend/.env
-```
-
-**Required variables:**
-```env
-GEMINI_API_KEY=your_gemini_key
-QDRANT_URL=http://your-qdrant-server:6333
-GROQ_API_KEY=your_groq_key  # Optional but recommended
-REDIS_URL=redis://localhost:6379/0  # Optional
-```
-
-### 3. Run Development
-
-```bash
-# Terminal 1: Frontend
+# Run development server
 npm run dev
+```
 
-# Terminal 2: Backend
+Frontend จะรันที่: `http://localhost:3000`
+
+### 3. Backend Setup
+
+```bash
+cd backend
+
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Run Flask API
+python3 web_chatbot_v5.py --api --port 5001
+```
+
+Backend จะรันที่: `http://localhost:5001`
+
+## 🔑 API Keys Configuration
+
+### วิธีที่ 1: ผ่าน Admin Panel (แนะนำ)
+
+1. เปิด Frontend และ Login ด้วย Admin account
+2. ไปที่ **Admin Panel** > **API Settings**
+3. เพิ่ม API Keys:
+   - **Groq API Keys** (Primary) - หลาย keys สำหรับ rotation
+   - **Gemini API Keys** (Fallback)
+4. กด **บันทึก**
+
+### วิธีที่ 2: ผ่าน Environment Variables
+
+สร้างไฟล์ `.env` ใน `backend/`:
+
+```env
+GROQ_API_KEY=gsk_xxx...
+GEMINI_API_KEY=AIzaSy...
+QDRANT_URL=http://your-qdrant-server:6333
+REDIS_URL=redis://...
+```
+
+## 📁 Project Structure
+
+```
+├── backend/
+│   ├── chatbot/
+│   │   ├── chatbot_core.py      # Main chatbot class
+│   │   ├── llm.py               # Multi-provider LLM (Groq/Gemini)
+│   │   ├── llm_agent.py         # LLM Agent with function calling
+│   │   ├── tools.py             # Tool definitions
+│   │   ├── tool_executor.py     # Tool executor for Qdrant
+│   │   └── handlers/            # Mixin handlers
+│   ├── firebase_config.py       # Firebase/Firestore config
+│   └── web_chatbot_v5.py        # Flask API entry point
+├── services/
+│   └── geminiService.ts         # Frontend AI service
+├── components/
+│   └── admin/                   # Admin Panel components
+└── contexts/
+    └── AdminConfigContext.tsx   # Config management
+```
+
+## 🔧 Configuration
+
+### Qdrant Collections (V5)
+
+| Collection | Description |
+|------------|-------------|
+| `edu_schools_v5` | โรงเรียน |
+| `edu_teachers_v5` | ครู |
+| `edu_students_v5` | นักเรียน |
+| `edu_ratios_v5` | อัตราส่วน |
+| `edu_areas_v5` | พื้นที่การศึกษา |
+
+### LLM Models
+
+- **Primary:** Groq `llama-3.3-70b-versatile`
+- **Fallback:** Gemini `gemini-2.0-flash`
+
+## 🛠️ Development
+
+### Run Frontend (Dev)
+```bash
+npm run dev
+```
+
+### Run Backend (Dev)
+```bash
 cd backend
 python3 web_chatbot_v5.py --api --port 5001
 ```
 
-Open http://localhost:5173
+### Build for Production
+```bash
+npm run build
+```
 
----
+## 📝 API Endpoints
 
-## 🔧 Tech Stack
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/chat/stream` | Send chat message (streaming) |
+| POST | `/api/sync-config` | Sync config from Admin Panel |
+| GET | `/api/health` | Health check |
 
-### Frontend
-- **React 18** + TypeScript
-- **Vite** - Build tool
-- **Firebase** - Auth & Firestore
+## 🔐 Firebase Setup (Optional)
 
-### Backend  
-- **Flask** - REST API
-- **Qdrant** - Vector database
-- **Redis** - Session storage
-- **Groq/Gemini** - LLM providers
+สำหรับ Admin Panel sync:
 
----
+1. สร้าง Firebase project
+2. เปิด Firestore
+3. เพิ่ม Service Account key ใน `backend/`
+4. Config จะ sync อัตโนมัติ
 
-## 📖 Documentation
+## 📞 Support
 
-- [📘 Setup Guide](./docs/SETUP.md) - Detailed setup instructions
-- [📘 API Reference](./docs/API.md) - Backend API endpoints
-- [📘 Architecture](./docs/ARCHITECTURE.md) - System design
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
-
----
-
-## 📝 License
-
-MIT License - see [LICENSE](LICENSE) file
-
----
-
-## 👥 Team
-
-Developed by **ICT Hub, Ministry of Education Thailand**
-
----
-
-> 💡 **Note:** ไฟล์ `.env` ไม่ได้ถูก commit ผู้ใช้ใหม่ต้องสร้างเองจาก `.env.example`
+- GitHub Issues: https://github.com/sorbirbaraheng/do-moe-chatbot/issues
