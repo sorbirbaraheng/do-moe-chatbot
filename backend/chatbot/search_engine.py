@@ -52,9 +52,11 @@ def route_to_collection(query: str) -> Tuple[str, float]:
 class SearchEngine:
     """Production-ready search engine with fallback strategies"""
     
-    def __init__(self, client: QdrantClient, parser=None):
+
+    def __init__(self, client: QdrantClient, parser=None, llm_provider=None):
         self.client = client
         self.parser = parser
+        self.llm_provider = llm_provider
     
     def search(self, parsed_query: ParsedQuery, collection_name: str, top_k: int = 50) -> List:
         """
@@ -111,11 +113,16 @@ class SearchEngine:
             if len(query) < 5: 
                 return query
                 
-            model = genai.GenerativeModel("gemini-1.5-flash")
             prompt = f"แปลงคำค้นหานี้ให้เป็นประโยคที่ใช้ค้นหาใน Vector Database ภาษาไทย: '{query}' (ขอแค่ประโยคผลลัพธ์ ไม่ต้องอธิบาย)"
             
-            response = model.generate_content(prompt, generation_config={"max_output_tokens": 50})
-            expanded = response.text.strip()
+            if self.llm_provider:
+                response = self.llm_provider.generate_content(prompt)
+                expanded = response.text.strip()
+            else:
+                # Legacy fallback
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                response = model.generate_content(prompt, generation_config={"max_output_tokens": 50})
+                expanded = response.text.strip()
             
             if len(expanded) > 200:
                 return query
@@ -128,13 +135,21 @@ class SearchEngine:
     def _semantic_search(self, query: str, collection_name: str, top_k: int, filters: Filter = None) -> List:
         """Semantic search using embeddings with filters"""
         try:
-            result = genai.embed_content(
-                model="models/text-embedding-004",
-                content=query,
-                task_type="retrieval_query"
-            )
-            query_vector = result['embedding']
+            if self.llm_provider:
+                query_vector = self.llm_provider.embed_content(query)
+            else:
+                # Legacy fallback
+                result = genai.embed_content(
+                    model="models/text-embedding-004",
+                    content=query,
+                    task_type="retrieval_query"
+                )
+                query_vector = result['embedding']
             
+            if not query_vector:
+                logger.warning("Generated empty embedding vector")
+                return []
+
             # Use new query_points API (qdrant-client >= 1.7.0)
             response = self.client.query_points(
                 collection_name=collection_name,

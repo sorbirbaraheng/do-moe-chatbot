@@ -13,13 +13,15 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+
 class SemanticCache:
     """Semantic Caching using Qdrant for instant replies"""
     
-    def __init__(self, client, collection_name: str = "semantic_cache"):
+    def __init__(self, client, llm_provider=None, collection_name: str = "semantic_cache"):
         from qdrant_client.models import VectorParams, Distance, PointStruct
         
         self.client = client
+        self.llm_provider = llm_provider
         self.collection_name = collection_name
         self.vector_size = 768  # models/text-embedding-004
         self.threshold = 0.97
@@ -45,15 +47,21 @@ class SemanticCache:
     def check(self, query: str) -> Optional[str]:
         """Check cache for similar queries"""
         try:
-            import google.generativeai as genai
+            vector = []
+            if self.llm_provider:
+                vector = self.llm_provider.embed_content(query)
+            else:
+                 import google.generativeai as genai
+                 # Generate embedding for the query
+                 result = genai.embed_content(
+                     model="models/text-embedding-004",
+                     content=query,
+                     task_type="retrieval_query"
+                 )
+                 vector = result['embedding']
             
-            # Generate embedding for the query
-            result = genai.embed_content(
-                model="models/text-embedding-004",
-                content=query,
-                task_type="retrieval_query"
-            )
-            vector = result['embedding']
+            if not vector:
+                return None
             
             # Use new query_points API (qdrant-client >= 1.7.0)
             response = self.client.query_points(
@@ -75,15 +83,22 @@ class SemanticCache:
         """Save response to cache"""
         try:
             import uuid
-            import google.generativeai as genai
             
-            result = genai.embed_content(
-                model="models/text-embedding-004",
-                content=query,
-                task_type="retrieval_query"
-            )
-            vector = result['embedding']
+            vector = []
+            if self.llm_provider:
+                vector = self.llm_provider.embed_content(query)
+            else:
+                import google.generativeai as genai
+                result = genai.embed_content(
+                    model="models/text-embedding-004",
+                    content=query,
+                    task_type="retrieval_query"
+                )
+                vector = result['embedding']
             
+            if not vector:
+                return
+
             self.client.upsert(
                 collection_name=self.collection_name,
                 points=[
@@ -105,8 +120,8 @@ class HybridCache:
     - L2: SemanticCache (similar query match, ~500ms)
     """
     
-    def __init__(self, qdrant_client):
-        self.semantic_cache = SemanticCache(qdrant_client)
+    def __init__(self, qdrant_client, llm_provider=None):
+        self.semantic_cache = SemanticCache(qdrant_client, llm_provider=llm_provider)
         self.redis_client = None
         self.ttl = int(os.getenv('REDIS_CACHE_TTL', 3600))  # 1 hour default
         

@@ -103,8 +103,15 @@ class ConversationMemory:
             
             # Apply stored province if current query doesn't have one AND doesn't have a region
             # BUT: If user only asks about agency (e.g., "สพฐ มีกี่โรงเรียน"), don't apply province - they want nationwide
+            # CRITICAL FIX: If user mentions a NEW school name, DON'T apply province from memory
+            #               This prevents searching "โรงเรียนในปัตตานี" using memory province "นราธิวาส"
             is_agency_only_query = parsed.agency and not parsed.province and not parsed.region
-            if not parsed.province and not parsed.region and self.last_province and not is_agency_only_query:
+            has_new_school_name = parsed.school_name is not None  # User specified a school in this query
+            
+            if has_new_school_name:
+                # User is asking about a specific school - search globally, don't use memory province
+                logger.info(f"   🏫 New school name detected: '{parsed.school_name}' - skipping province memory for accurate search")
+            elif not parsed.province and not parsed.region and self.last_province and not is_agency_only_query:
                 parsed.province = self.last_province
                 logger.info(f"   ✅ Applied province from memory: {self.last_province}")
             elif is_agency_only_query:

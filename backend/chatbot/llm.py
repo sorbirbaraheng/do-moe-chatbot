@@ -1,11 +1,12 @@
 """
 Multi-Provider LLM Wrapper for Education Chatbot
 Supports Groq (Primary) and Gemini (Fallback)
+Migrated to google-genai SDK (v1.0+)
 """
 
 import os
 import logging
-from typing import Optional
+from typing import Optional, List, Any
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -13,19 +14,28 @@ from dotenv import load_dotenv
 current_dir = Path(__file__).parent.parent
 load_dotenv(dotenv_path=current_dir / ".env")
 
-import google.generativeai as genai
+# New SDK
+from google import genai
+from google.genai import types
+
+# Legacy SDK (Keep for backward compatibility during migration)
+try:
+    import google.generativeai as old_genai
+    HAS_LEGACY_SDK = True
+except ImportError:
+    HAS_LEGACY_SDK = False
 
 logger = logging.getLogger(__name__)
 
 # Environment variables
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")  # Changed from 70b to 8b for separate quota
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
-# Initialize Gemini
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    logger.info("✅ Gemini API configured (Fallback)")
+# Initialize Legacy Global State (Temporary)
+if GEMINI_API_KEY and HAS_LEGACY_SDK:
+    old_genai.configure(api_key=GEMINI_API_KEY)
+    logger.info("✅ Legacy Gemini SDK configured (Backward Compatibility)")
 
 # Import types
 from .types import LLMResponse
@@ -34,23 +44,23 @@ from .types import LLMResponse
 class MultiProviderLLM:
     """
     Multi-provider LLM wrapper with automatic fallback:
-    1. Groq (Primary) - Faster, generous free tier
-    2. Gemini (Fallback) - When Groq fails
+    1. Groq (Primary)
+    2. Gemini (Fallback)
     
-    API keys are fetched from Firestore (Admin Panel config) for consistency.
-    Falls back to .env if Firestore is unavailable.
+    Uses google-genai SDK (Client-based) but syncs with legacy global config.
     """
     
-    def __init__(self, category: str = "school", gemini_model: str = "gemini-2.0-flash"):  # 2.0-flash has more quota than 2.5-flash
+    def __init__(self, category: str = "school", gemini_model: str = "gemini-2.0-flash"):
         self.category = category
         self.groq_model = GROQ_MODEL
         self.gemini_model_name = gemini_model
-        self.gemini_model = None
+        self.gemini_client = None
         
         # Try to load keys from Firestore first
         self._load_keys_from_firestore()
         
-        self._init_gemini(gemini_model)
+        # Initialize Gemini Client
+        self._init_gemini_client()
     
     def _load_keys_from_firestore(self):
         """Load API keys from Firestore (synced with Admin Panel) with rotation support"""
@@ -62,8 +72,7 @@ class MultiProviderLLM:
                 sys.path.insert(0, backend_dir)
             
             # Direct import from firebase_config module
-            from firebase_config import get_groq_keys, get_gemini_keys, get_unified_groq_keys, get_unified_gemini_keys, config_loader
-
+            from firebase_config import get_unified_groq_keys, get_unified_gemini_keys, config_loader
 
             # Get list of keys - Use UNIFIED mode to merge all keys from all categories
             self.groq_keys = get_unified_groq_keys()
@@ -87,19 +96,21 @@ class MultiProviderLLM:
                 else:
                     self.groq_keys = []
             
-            if self.gemini_keys:
-                # Use first Gemini key for now, could implement rotation later if needed
-                genai.configure(api_key=self.gemini_keys[0])
-                logger.info(f"✅ Loaded {len(self.gemini_keys)} Gemini keys (unified mode)")
-            elif GEMINI_API_KEY:
+            # Setup Gemini keys
+            if not self.gemini_keys and GEMINI_API_KEY:
                  self.gemini_keys = [GEMINI_API_KEY]
-                 genai.configure(api_key=GEMINI_API_KEY)
-                 logger.info("✅ Gemini key loaded from .env (Fallback enabled)")
+                 logger.info("✅ Gemini key loaded from .env")
+            elif self.gemini_keys:
+                logger.info(f"✅ Loaded {len(self.gemini_keys)} Gemini keys (unified mode)")
+                
+            self.gemini_key_index = 0
                 
         except Exception as e:
             logger.warning(f"⚠️ Firestore config load failed: {e}")
             self.groq_keys = [GROQ_API_KEY] if GROQ_API_KEY else []
+            self.gemini_keys = [GEMINI_API_KEY] if GEMINI_API_KEY else []
             self.groq_key_index = 0
+            self.gemini_key_index = 0
 
     def _get_next_groq_key(self) -> Optional[str]:
         """Get next Groq key in rotation"""
@@ -107,25 +118,45 @@ class MultiProviderLLM:
             return None
         
         key = self.groq_keys[self.groq_key_index]
-        # Rotate index
         self.groq_key_index = (self.groq_key_index + 1) % len(self.groq_keys)
         return key
 
-    def _init_gemini(self, model_name: str):
-        """Initialize Gemini as fallback"""
+    def _get_current_gemini_key(self) -> Optional[str]:
+        if not getattr(self, 'gemini_keys', []):
+            return None
+        return self.gemini_keys[self.gemini_key_index]
+
+    def _rotate_gemini_key(self):
+        """Rotate to next Gemini key and re-init client"""
+        if not getattr(self, 'gemini_keys', []):
+            return
+            
+        self.gemini_key_index = (self.gemini_key_index + 1) % len(self.gemini_keys)
+        self._init_gemini_client()
+
+    def _init_gemini_client(self):
+        """Initialize Gemini Client with current key (and sync legacy config)"""
+        current_key = self._get_current_gemini_key()
+        if not current_key:
+            return
+
         try:
-            if not model_name.startswith('models/'):
-                model_name = f'models/{model_name}'
-            self.gemini_model = genai.GenerativeModel(model_name)
-            logger.info(f"✅ Gemini fallback ready: {model_name}")
+            # 1. New SDK Client
+            self.gemini_client = genai.Client(api_key=current_key)
+            logger.info(f"✅ Gemini Client ready (key: ...{current_key[-4:]})")
+            
+            # 2. Sync Legacy Global Config (for unmigrated modules)
+            if HAS_LEGACY_SDK:
+                old_genai.configure(api_key=current_key)
+                # logger.debug("Synced legacy Gemini config")
+                
         except Exception as e:
-            logger.error(f"Failed to init Gemini: {e}")
-    
+            logger.error(f"Failed to init Gemini Client: {e}")
+
     def _reload_keys_if_needed(self):
         """Hot-reload keys from shared_config.json if changed"""
         try:
             import json
-            from pathlib import Path
             config_path = Path(__file__).parent.parent / 'shared_config.json'
             if config_path.exists():
                 with open(config_path, 'r') as f:
@@ -134,35 +165,21 @@ class MultiProviderLLM:
                 new_groq_keys = [k for k in api_keys.get('groqKeys', []) if k and k.strip()]
                 new_gemini_keys = [k for k in api_keys.get('geminiKeys', []) if k and k.strip()]
                 
-                # Update if different
                 if new_groq_keys and new_groq_keys != self.groq_keys:
                     self.groq_keys = new_groq_keys
                     self.groq_key_index = 0
                     logger.info(f"🔄 Hot-reloaded {len(new_groq_keys)} Groq keys")
-                if new_gemini_keys and new_gemini_keys != getattr(self, 'gemini_keys', []):
+                if new_gemini_keys and new_gemini_keys != self.gemini_keys:
                     self.gemini_keys = new_gemini_keys
-                    genai.configure(api_key=new_gemini_keys[0])
+                    self.gemini_key_index = 0
+                    self._init_gemini_client()
                     logger.info(f"🔄 Hot-reloaded {len(new_gemini_keys)} Gemini keys")
         except Exception as e:
-            pass  # Silent fail, use existing keys
-    
-    def _get_next_gemini_key(self) -> Optional[str]:
-        """Get next Gemini key in rotation"""
-        if not getattr(self, 'gemini_keys', []):
-             return None
-        
-        # Initialize index if not set
-        if not hasattr(self, 'gemini_key_index'):
-            self.gemini_key_index = 0
-            
-        key = self.gemini_keys[self.gemini_key_index]
-        self.gemini_key_index = (self.gemini_key_index + 1) % len(self.gemini_keys)
-        return key
+            pass
 
     def generate_content(self, prompt: str, timeout: int = 30, **kwargs) -> LLMResponse:
-        """Generate content using Groq first (with key rotation), then Gemini as fallback (with rotation)"""
+        """Generate content using Groq first, then Gemini as fallback"""
         
-        # Hot-reload keys from config
         self._reload_keys_if_needed()
         
         # 1. Try Groq (Primary)
@@ -176,42 +193,65 @@ class MultiProviderLLM:
                         return LLMResponse(text=response, provider="groq")
                 except Exception as e:
                     if i < max_retries - 1:
-                         logger.warning(f"⚠️ Groq attempt {i+1} failed ({str(e)[:50]}...), retrying with next key...")
+                         logger.warning(f"⚠️ Groq attempt {i+1} failed ({str(e)[:50]}...), retrying...")
         
         # 2. Fallback to Gemini (Secondary)
-        # Now with Rotation Support!
-        if getattr(self, 'gemini_keys', []):
+        if self.gemini_keys:
             max_gemini_retries = len(self.gemini_keys)
             for i in range(max_gemini_retries):
                 try:
-                    # Rotate Key
-                    current_key = self._get_next_gemini_key()
-                    if current_key:
-                        genai.configure(api_key=current_key)
+                    if not self.gemini_client:
+                        self._init_gemini_client()
                         
-                        # Re-init model if needed (or just use existing instance which picks up new config?)
-                        # Safer to re-declare model to ensure key binding
-                        if not self.gemini_model:
-                             self._init_gemini(self.gemini_model_name)
-                        
-                        logger.info(f"⚡ Trying Gemini fallback (Attempt {i+1}/{max_gemini_retries}) with key ...{current_key[-4:]}")
-                        response = self.gemini_model.generate_content(prompt)
-                        return LLMResponse(text=response.text, provider="gemini")
+                    logger.info(f"⚡ Trying Gemini fallback (Attempt {i+1}/{max_gemini_retries})")
+                    
+                    # New SDK Usage
+                    response = self.gemini_client.models.generate_content(
+                        model=self.gemini_model_name,
+                        contents=prompt
+                    )
+                    return LLMResponse(text=response.text, provider="gemini")
                         
                 except Exception as e:
                      logger.warning(f"⚠️ Gemini attempt {i+1} failed: {e}")
-                     if i == max_gemini_retries - 1:
+                     if i < max_gemini_retries - 1:
+                         self._rotate_gemini_key()
+                     else:
                          logger.error("❌ All Gemini keys exhausted")
                          raise e
         
         raise Exception("All providers and keys failed")
     
+    def embed_content(self, content: str, model: str = "text-embedding-004") -> List[float]:
+        """Generate embeddings using Gemini (with rotation support)"""
+        # Ensure client is ready
+        if not self.gemini_client:
+             self._init_gemini_client()
+             
+        if not self.gemini_keys:
+            return []
+
+        max_retries = len(self.gemini_keys)
+        for i in range(max_retries):
+            try:
+                # New SDK Usage for Embeddings
+                response = self.gemini_client.models.embed_content(
+                    model=model,
+                    contents=content
+                )
+                return response.embeddings[0].values
+            except Exception as e:
+                logger.warning(f"⚠️ Embedding attempt {i+1} failed: {e}")
+                if i < max_retries - 1:
+                    self._rotate_gemini_key()
+                else:
+                    logger.error("❌ All embedding attempts failed")
+                    raise e
+        return []
+
     def _call_groq(self, prompt: str, api_key: str, timeout: int = 30) -> Optional[str]:
         """Call Groq API with specific key"""
         import requests
-        
-        # Debug: Log which key is being used
-        logger.info(f"🔑 Trying Groq with key: ...{api_key[-4:] if api_key else 'NONE'}")
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -234,14 +274,8 @@ class MultiProviderLLM:
         
         if response.status_code == 200:
             data = response.json()
-            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            logger.info(f"⚡ Groq responded ({self.groq_model})")
-            return content
+            return data.get("choices", [{}])[0].get("message", {}).get("content", "")
         elif response.status_code == 429:
-            error_detail = response.text[:200] if response.text else "No details"
-            logger.warning(f"⚠️ Groq rate limited (429) - Switching key... Error: {error_detail}")
-            # Raise exception to trigger next key retry
             raise Exception("Rate limit exceeded")
         else:
-            logger.warning(f"⚠️ Groq error: {response.status_code}")
             return None

@@ -30,7 +30,7 @@ class LLMAgent:
     """
     
     def __init__(self, qdrant_client, llm: MultiProviderLLM):
-        self.tool_executor = ToolExecutor(qdrant_client)
+        self.tool_executor = ToolExecutor(qdrant_client, llm_provider=llm)
         self.llm = llm
         self.tools_prompt = get_tools_prompt()
     
@@ -268,15 +268,20 @@ class LLMAgent:
             
         if province:
             params["province"] = province
-        elif context and context.get("last_province"):
+        elif context and context.get("last_province") and not school_name:
+            # CRITICAL: Only inject province from context if user did NOT specify a new school name
+            # If user asks about a specific school, we should search globally, not in memory province
             params["province"] = context.get("last_province")
             province = params["province"]  # Update local var
+            logger.info(f"🧠 Injected province from context: {province}")
 
         if district:
             params["district"] = district
-        elif context and context.get("last_district"):
+        elif context and context.get("last_district") and not school_name:
+            # Don't inject district from context if user specified a new school
             params["district"] = context.get("last_district")
             district = params["district"]  # Update local var
+            logger.info(f"🧠 Injected district from context: {district}")
 
         if agency:
             params["agency"] = agency
@@ -348,8 +353,71 @@ class LLMAgent:
         if any(kw in question_lower for kw in ['อัตราส่วน', 'ต่อครู', 'ratio', 'นักเรียน:ครู', 'ครู:นักเรียน']):
             return [{"name": "get_ratio", "params": params}]
         
+        # 2.5 THRESHOLD FILTER - โรงเรียนที่มีนักเรียน/ครู น้อยกว่า/มากกว่า X คน
+        import re
+        threshold_patterns = [
+            (r'น้อยกว่า\s*(\d+)', 'lt'),
+            (r'ต่ำกว่า\s*(\d+)', 'lt'),
+            (r'ไม่ถึง\s*(\d+)', 'lt'),
+            (r'<\s*(\d+)', 'lt'),
+            (r'มากกว่า\s*(\d+)', 'gt'),
+            (r'เกิน\s*(\d+)', 'gt'),
+            (r'มากกว่า\s*(\d+)', 'gt'),
+            (r'>\s*(\d+)', 'gt'),
+            (r'ไม่เกิน\s*(\d+)', 'lte'),
+            (r'ไม่เกินกว่า\s*(\d+)', 'lte'),
+            (r'<=\s*(\d+)', 'lte'),
+            (r'อย่างน้อย\s*(\d+)', 'gte'),
+            (r'>=\s*(\d+)', 'gte'),
+        ]
+        
+        threshold_value = None
+        threshold_operator = None
+        for pattern, op in threshold_patterns:
+            match = re.search(pattern, question)
+            if match:
+                threshold_value = int(match.group(1))
+                threshold_operator = op
+                break
+        
+        if threshold_value is not None and threshold_operator:
+            # Determine metric: students or teachers
+            if any(kw in question_lower for kw in ['ครู', 'อาจารย์', 'บุคลากร']):
+                metric = "teachers"
+            else:
+                metric = "students"
+            
+            # Extract subdistrict if present
+            subdistrict = None
+            subdistrict_patterns = [r'ตำบล\s*(\S+)', r'แขวง\s*(\S+)']
+            for pattern in subdistrict_patterns:
+                match = re.search(pattern, question)
+                if match:
+                    subdistrict = match.group(1)
+                    break
+            
+            filter_params = {
+                "metric": metric,
+                "operator": threshold_operator,
+                "value": threshold_value,
+                "limit": 20
+            }
+            if province:
+                filter_params["province"] = province
+            if district:
+                filter_params["district"] = district
+            if subdistrict:
+                filter_params["subdistrict"] = subdistrict
+                
+            logger.info(f"📊 Detected THRESHOLD FILTER query: {metric} {threshold_operator} {threshold_value}, subdistrict={subdistrict}")
+            return [{"name": "filter_schools", "params": filter_params}]
+        
         # 3. RANKING - มากที่สุด/น้อยที่สุด
-        if any(kw in question_lower for kw in ['มากที่สุด', 'น้อยที่สุด', 'อันดับ', 'top', 'สูงสุด', 'ต่ำสุด', 'เยอะที่สุด', 'เยอะสุด', 'มากสุด', 'น้อยสุด']):
+        # EXCEPTION: If asking about "which grade" (ชั้นไหน, ระดับไหน) -> Do NOT use ranking (which ranks schools/provinces).
+        # Use count_students/get_details instead to show the breakdown.
+        is_grade_ranking = any(kw in question_lower for kw in ['ชั้นไหน', 'ระดับไหน', 'ชั้นใด', 'grade'])
+        
+        if any(kw in question_lower for kw in ['มากที่สุด', 'น้อยที่สุด', 'อันดับ', 'top', 'สูงสุด', 'ต่ำสุด', 'เยอะที่สุด', 'เยอะสุด', 'มากสุด', 'น้อยสุด']) and not is_grade_ranking:
             order = "most" if any(kw in question_lower for kw in ['มากที่สุด', 'สูงสุด', 'top', 'เยอะที่สุด', 'เยอะสุด', 'มากสุด']) else "least"
             # Determine metric from keywords
             if any(kw in question_lower for kw in ['ครู', 'อาจารย์', 'บุคลากร']):
@@ -461,7 +529,7 @@ class LLMAgent:
         if match:
             school = match.group(1).strip()
             # Blacklist common false positives
-            if any(x in school for x in ['การสอน', 'การเรียน', 'การศึกษา', 'อะไรบ้าง', 'อย่างไร', 'ไหม', 'ที่', 'ที่มี', 'ซึ่ง', 'ทั้งหมด', 'กี่', 'ใด']):
+            if any(x in school for x in ['การสอน', 'การเรียน', 'การศึกษา', 'อะไรบ้าง', 'อย่างไร', 'ไหม', 'ที่', 'ที่มี', 'ซึ่ง', 'ทั้งหมด', 'กี่', 'ใด', 'นี้', 'นั้น', 'โน้น']):
                 logger.info(f"🏫 Ignoring false positive school name: '{school}'")
                 return None
                 
@@ -959,6 +1027,35 @@ class LLMAgent:
             suggestions = result.get("suggestions")
             if suggestions:
                 search_query = result.get("query", {}).get("school_name") or result.get("school_name", "ที่ค้นหา")
+                
+                # AUTO-SELECT: If only 1 suggestion and it's very similar, use it directly with disclaimer
+                if len(suggestions) == 1:
+                    s = suggestions[0]
+                    matched_name = s.get('name', 'Unknown')
+                    province = s.get('province', '')
+                    school_id = s.get('school_id', '')
+                    
+                    # Show data with fuzzy match disclaimer
+                    text = f"📌 **หมายเหตุ:** ไม่พบ '{search_query}' โดยตรง แต่พบข้อมูลใกล้เคียง:\n\n"
+                    text += f"**{matched_name}**"
+                    if province:
+                        text += f" (จ.{province})"
+                    if school_id:
+                        text += f"\n- รหัสโรงเรียน: `{school_id}`"
+                    
+                    # Add available details from suggestion
+                    if s.get('district'):
+                        text += f"\n- อำเภอ: {s['district']}"
+                    if s.get('total_students'):
+                        text += f"\n- จำนวนนักเรียน: {s['total_students']:,} คน"
+                    if s.get('total_teachers'):
+                        text += f"\n- จำนวนครู: {s['total_teachers']:,} คน"
+                    
+                    text += "\n\nหากต้องการข้อมูลเพิ่มเติมเกี่ยวกับโรงเรียนนี้ สามารถถามได้เลยครับ 😊"
+                    parts.append(text)
+                    continue
+                
+                # MULTIPLE SUGGESTIONS: Ask user to select
                 text = f"ไม่พบข้อมูล '{search_query}' ครับ แต่พบโรงเรียนที่มีชื่อใกล้เคียงดังนี้:\n"
                 for i, s in enumerate(suggestions[:5], 1):
                     text += f"\n{i}. {s['name']}"

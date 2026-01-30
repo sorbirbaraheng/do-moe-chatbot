@@ -74,6 +74,9 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         
         self.qdrant_client = qdrant_client
         
+        # Initialize LLM First (needed for SearchEngine)
+        self.model = self._init_model(model_name)
+        
         # 1. Health Check & Collections Load (Fail Fast)
         self.collections = {}
         try:
@@ -91,12 +94,12 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             self.cache = None
         else:
             self.parser = SmartQueryParser(qdrant_client=qdrant_client)
-            self.search_engine = SearchEngine(qdrant_client, parser=self.parser)
+            self.search_engine = SearchEngine(qdrant_client, parser=self.parser, llm_provider=self.model)
             self.aggregator = ResultAggregator()
-            self.cache = HybridCache(qdrant_client)
+            self.cache = HybridCache(qdrant_client, llm_provider=self.model)
             
         self.memory = ConversationMemory()
-        self.model = self._init_model(model_name)
+        # self.model initialized above
         self.formatter = ResponseFormatter(model=self.model, model_name=model_name)
         # self.collections already loaded
         
@@ -119,9 +122,9 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             if len(self.collections) > 0:
                 logger.info("🎉 Qdrant is back ONLINE! Re-initializing components...")
                 self.parser = SmartQueryParser(qdrant_client=self.qdrant_client)
-                self.search_engine = SearchEngine(self.qdrant_client, parser=self.parser)
+                self.search_engine = SearchEngine(self.qdrant_client, parser=self.parser, llm_provider=self.model)
                 self.aggregator = ResultAggregator()
-                self.cache = HybridCache(self.qdrant_client)
+                self.cache = HybridCache(self.qdrant_client, llm_provider=self.model)
                 
                 # Re-init LLM Agent with DB access
                 self._init_llm_agent()
@@ -266,6 +269,12 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
 
         # Parse query intent
         parsed = self.parser.parse(message)
+        if not parsed:
+            logger.error("❌ Parser returned None")
+            history[-1]["content"] = "ขออภัยครับ ไม่สามารถเข้าใจคำถามได้ โปรดลองอีกครั้ง"
+            yield history, ""
+            return
+            
         parsed = self.memory.apply_context(parsed, message)
         
         # NEW: Check if frontend injected a school_name via memory
@@ -599,7 +608,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
 
     def _handle_school_query(self, parsed: ParsedQuery, message: str, history: List) -> Optional[str]:
         """Handle school-related queries"""
-        school_engine = SchoolSearchEngine(self.qdrant_client)
+        school_engine = SchoolSearchEngine(self.qdrant_client, llm_provider=self.model)
         synthesizer = ResponseSynthesizer()
         response_text = ""
         

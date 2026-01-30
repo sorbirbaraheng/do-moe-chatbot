@@ -7,11 +7,14 @@ import logging
 from typing import List, Dict, Optional, Tuple, Any
 from difflib import SequenceMatcher
 
+from rapidfuzz import process, fuzz
+
 import google.generativeai as genai
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
+from qdrant_client.models import Filter, FieldCondition, MatchValue, Range, ScoredPoint
 
 from .constants import COLLECTIONS, PRIMARY_COLLECTION
+from .thai_provinces import THAI_PROVINCES
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +22,10 @@ logger = logging.getLogger(__name__)
 class SchoolSearchEngine:
     """Search engine for education data collection"""
     
-    def __init__(self, client: QdrantClient):
+    
+    def __init__(self, client: QdrantClient, llm_provider=None):
         self.client = client
+        self.llm_provider = llm_provider
         # Use unified collection (thailand_education) for all queries
         self.collection = PRIMARY_COLLECTION
     
@@ -29,9 +34,15 @@ class SchoolSearchEngine:
         - Remove spaces
         - Remove common prefixes
         - Convert Thai numerals
+        - Fix common typos
         """
         if not name:
             return ""
+            
+        # 0. Fix common typos
+        name = name.replace("อนุบาน", "อนุบาล")
+        name = name.replace("วิทยลัย", "วิทยาลัย")
+        name = name.replace("เชียงหม่", "เชียงใหม่")
             
         # 1. Convert Thai numerals
         thai_digits = "๐๑๒๓๔๕๖๗๘๙"
@@ -52,7 +63,7 @@ class SchoolSearchEngine:
         return name
 
     def search_by_name(self, name: str, limit: int = 10) -> List:
-        """Search schools by name - try text match first, then semantic search (deduplicated by school_code)"""
+        """Search schools by name - try text match first, then semantic search, then fuzzy search"""
         results = []
         
         def deduplicate(items, target_limit):
@@ -75,7 +86,7 @@ class SchoolSearchEngine:
                         break
             return unique
         
-        # 1. Try text-match filter first
+        # 1. Try text-match filter first (Exact & Normalized)
         try:
             # 1a. Try EXACT text-match filter first
             response = self.client.scroll(
@@ -93,23 +104,6 @@ class SchoolSearchEngine:
                 norm_name = self._normalize_name(name)
                 if norm_name and norm_name != name:
                     logger.info(f"Retrying with normalized name: '{norm_name}'")
-                    # Note: This checks strictly school_name. 
-                    # Ideally we want a specialized field like 'normalized_name' in DB.
-                    # But often names in DB are mixed "รร.บ้าน..." or "โรงเรียนบ้าน..."
-                    # So we try scanning common variations logic OR just relying on cleaned string 
-                    # implicitly if semantic search handles it (but semantic search failed here).
-                    # 
-                    # Hack: Since we can't easily query "normalized" against raw field efficiently without new index,
-                    # We will rely on Semantic Search to pick up the slack, BUT we can try 
-                    # matching against "รร.{norm_name}" or "{norm_name}" if stored without prefix.
-                    
-                    # Try fuzzy match manually? No, strict match on key variations?
-                    # Let's try matching 'start' using LIKE? Qdrant support match text?
-                    # Since we identified the issue is "รร.เทศบาล4..." vs "โรงเรียนเทศบาล 4...",
-                    # Normalized 'เทศบาล4...' should match if we could partial match.
-                    
-                    # Instead of complex logic, let's just use the NORMALIZED string for the SEMANTIC SEARCH too.
-                    # But first, let's pass the normalized name to semantic search if direct match fails.
                     pass 
             
             if results:
@@ -118,33 +112,167 @@ class SchoolSearchEngine:
         except Exception as e:
             logger.warning(f"Text match failed: {e}")
         
-        # 2. Fallback to semantic search
+        # 2. Try Semantic Search
         try:
             # Use normalized name for semantic search to reduce noise
             search_query = f"โรงเรียน{self._normalize_name(name)}"
             
-            result = genai.embed_content(
-                model="models/text-embedding-004",
-                content=search_query,
-                task_type="retrieval_query"
-            )
-            query_vector = result['embedding']
+            if self.llm_provider:
+                query_vector = self.llm_provider.embed_content(search_query)
+            else:
+                # Legacy fallback
+                result = genai.embed_content(
+                    model="models/text-embedding-004",
+                    content=search_query,
+                    task_type="retrieval_query"
+                )
+                query_vector = result['embedding']
             
-            # Use new query_points API (qdrant-client >= 1.7.0)
-            response = self.client.query_points(
-                collection_name=self.collection,
-                query=query_vector,
-                limit=limit * 5,
-                with_payload=True
-            )
-            results = response.points
-            unique_results = deduplicate(results, limit)
-            logger.info(f"🔍 Semantic search found {len(unique_results)} unique schools for '{name}'")
-            return unique_results
+            if not query_vector:
+                # Fallback to fuzzy if embedding fails
+                 logger.warning("Empty embedding vector, skipping semantic search")
+            else:
+                response = self.client.query_points(
+                    collection_name=self.collection,
+                    query=query_vector,
+                    # Higher similarity threshold to avoid wildly unrelated semantic matches
+                    # Bumped to 0.82 to force Fuzzy Search for typos
+                    score_threshold=0.82, 
+                    limit=limit * 5,
+                    with_payload=True
+                )
+                results = response.points
+                unique_results = deduplicate(results, limit)
+                
+                if unique_results:
+                    logger.info(f"🔍 Semantic search found {len(unique_results)} schools for '{name}'")
+                    return unique_results
+                
         except Exception as e:
-            logger.error(f"School search by name error: {e}")
+            logger.error(f"Semantic search error: {e}")
+
+        # 3. Fallback: Fuzzy Search (Typo Tolerance)
+        # Only triggered if Exact Match and Semantic Search (with high threshold) failed
+        try:
+            logger.info(f"🧩 Trying Fuzzy Search for '{name}'...")
+            return self.find_similar_schools_fuzzy(name, limit=limit)
+        except Exception as e:
+            logger.error(f"Fuzzy search fallback error: {e}")
             return []
-    
+
+    def find_similar_schools_fuzzy(self, query_name: str, limit: int = 5, threshold: int = 60) -> List:
+        """
+        Perform fuzzy search on school names using RapidFuzz.
+        Strategy:
+        1. Extract province from query if present.
+        2. If province found: Fetch ALL schools in that province and fuzzy match. (Very accurate)
+        3. If no province: Fetch candidates using broad semantic search and fuzzy match.
+        """
+        try:
+            candidates = []
+            norm_name = self._normalize_name(query_name)
+            
+            # Step 1: Detect province
+            detected_province = None
+            for prov in THAI_PROVINCES:
+                if prov in query_name or prov in norm_name: # Check raw query and normalized (typo-fixed) query
+                    detected_province = prov
+                    break
+            
+            if detected_province:
+                logger.info(f"📍 Detected province in query: '{detected_province}'")
+                # Step 2: Fetch schools in province
+                response = self.client.scroll(
+                    collection_name=self.collection,
+                    scroll_filter=Filter(must=[
+                        FieldCondition(key="metadata.province", match=MatchValue(value=detected_province))
+                    ]),
+                    limit=1000, # Should cover most schools in a province for fuzzy matching
+                    with_payload=True
+                )
+                
+                # Convert Record objects (from scroll) to ScoredPoint-like objects for consistency
+                candidates = []
+                for record in response[0]:
+                    # Scroll returns Record, which has id, payload, vector, no version/score usually
+                    candidates.append(ScoredPoint(
+                        id=record.id,
+                        version=getattr(record, 'version', 0),
+                        score=0.0, 
+                        payload=record.payload,
+                        vector=None
+                    ))
+            else:
+                # Step 3: No province, use broad semantic search to get candidates
+                logger.info("⚠️ No province detected, using broad semantic search for candidates")
+                
+                # Smart prefixing: Don't add 'โรงเรียน' if it's a college or center
+                if any(x in norm_name for x in ["วิทยาลัย", "มหาวิทยาลัย", "ศูนย์"]):
+                    search_query = norm_name
+                else:
+                    search_query = f"โรงเรียน{norm_name}"
+                
+                if self.llm_provider:
+                    query_vector = self.llm_provider.embed_content(search_query)
+                else:
+                     result = genai.embed_content(
+                        model="models/text-embedding-004",
+                        content=search_query,
+                        task_type="retrieval_query"
+                    )
+                     query_vector = result['embedding']
+
+                response = self.client.query_points(
+                    collection_name=self.collection,
+                    query=query_vector,
+                    score_threshold=0.4, # Lower threshold to get candidates (typos usually have low semantic score)
+                    limit=100,
+                    with_payload=True
+                )
+                candidates = response.points
+            
+            logger.info(f"🧩 Fuzzy search processing {len(candidates)} candidates...")
+
+
+            if not candidates:
+                return []
+                
+            # Re-rank with RapidFuzz
+            scored_candidates = []
+            seen_ids = set()
+            
+            for point in candidates:
+                meta = point.payload.get('metadata', {})
+                school_name = meta.get('school_name', '')
+                school_id = meta.get('school_id')
+                
+                if not school_name or school_id in seen_ids:
+                    continue
+                seen_ids.add(school_id)
+                
+                # Calculate simple ratio
+                # Use normalized names for comparison to ignore spacing/prefix diffs
+                score = fuzz.ratio(norm_name, self._normalize_name(school_name))
+                
+                # Bonus for partial containment (helps with "อนุบาน" vs "โรงเรียนอนุบาล")
+                if norm_name in self._normalize_name(school_name):
+                    score += 15
+                
+                if score >= threshold:
+                    # Monkey patch score to reflect fuzzy score for UI sorting
+                    point.score = score / 100.0 
+                    scored_candidates.append(point)
+            
+            # Sort by fuzzy score
+            scored_candidates.sort(key=lambda x: x.score, reverse=True)
+            
+            logger.info(f"🧩 Fuzzy search matched {len(scored_candidates)} candidates")
+            return scored_candidates[:limit]
+
+        except Exception as e:
+            logger.error(f"Fuzzy internal error: {e}")
+            return []
+
     def find_similar_schools(self, query: str, province: str = None, top_k: int = 5, threshold: float = 0.5) -> List[Dict]:
         """Find school names similar to query using fuzzy matching"""
         try:
@@ -529,3 +657,74 @@ class SchoolSearchEngine:
         except Exception as e:
             logger.error(f"School count error: {e}")
             return 0
+
+    def get_student_statistics(self, school_id: str) -> Dict[str, Any]:
+        """
+        Fetch detailed student statistics from specific collection (v5).
+        Aggregates by grade and gender.
+        """
+        if not school_id:
+            return {}
+
+        try:
+            # Assumed collection name
+            collection_name = "edu_students_v5" 
+            
+            # Fetch all records for this school
+            response = self.client.scroll(
+                collection_name=collection_name,
+                scroll_filter=Filter(must=[
+                    FieldCondition(key="metadata.school_id", match=MatchValue(value=str(school_id)))
+                ]),
+                limit=100,
+                with_payload=True
+            )
+            
+            records = response[0]
+            if not records:
+                return {}
+                
+            stats = {
+                "total_students": 0,
+                "by_grade": {},
+                "source": collection_name
+            }
+            
+            for point in records:
+                meta = point.payload.get('metadata', {})
+                
+                # Extract fields based on investigation
+                raw_grade = meta.get('grade', 'ไม่ระบุ')
+                count = int(meta.get('count', 0))
+                gender = meta.get('gender', 'ไม่ระบุ')
+                
+                # Simplify grade name (e.g. "มัธยมศึกษาปีที่ 3 /เกรด 9/..." -> "มัธยมศึกษาปีที่ 3")
+                grade_parts = raw_grade.split('/')
+                grade_name = grade_parts[0].strip()
+                
+                # Further normalize common patterns if needed
+                if "ประถมศึกษา" in grade_name:
+                    grade_name = grade_name.replace("ประถมศึกษาปีที่", "ป.")
+                elif "มัธยมศึกษา" in grade_name:
+                   grade_name = grade_name.replace("มัธยมศึกษาปีที่", "ม.")
+                elif "อนุบาล" in grade_name:
+                   grade_name = grade_name.replace("อนุบาลปีที่", "อ.")
+                
+                # Initialize grade entry if not exists
+                if grade_name not in stats["by_grade"]:
+                    stats["by_grade"][grade_name] = {"total": 0, "male": 0, "female": 0}
+                    
+                # Aggregation
+                stats["by_grade"][grade_name]["total"] += count
+                stats["total_students"] += count
+                
+                if gender == "ชาย":
+                    stats["by_grade"][grade_name]["male"] += count
+                elif gender == "หญิง":
+                    stats["by_grade"][grade_name]["female"] += count
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"❌ Error fetching student statistics: {e}")
+            return {}

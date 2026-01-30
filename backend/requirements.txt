@@ -7,7 +7,8 @@ flask-cors>=4.0.0
 flask-limiter>=3.0.0
 
 # LLM Providers
-google-generativeai>=0.3.0
+rapidfuzz
+google-genai>=1.0.0
 groq>=0.4.0
 
 # Vector Database

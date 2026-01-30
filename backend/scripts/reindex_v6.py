@@ -11,7 +11,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-import google.generativeai as genai
+from google import genai
+from chatbot.llm import MultiProviderLLM
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct
 from tqdm import tqdm
@@ -35,7 +36,7 @@ if not all([QDRANT_URL, GEMINI_API_KEY]):
 
 # Initialize Clients
 try:
-    genai.configure(api_key=GEMINI_API_KEY)
+    llm = MultiProviderLLM()
     qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
 except Exception as e:
     logger.error(f"❌ Client init failed: {e}")
@@ -125,13 +126,15 @@ def reindex_data():
         # Generate Embeddings
         try:
             # Gemini Batch Embedding
-            embeddings = genai.embed_content(
-                model=EMBEDDING_MODEL,
-                content=texts_to_embed,
-                task_type="retrieval_document"
-            )
-            
-            vectors = embeddings['embedding']
+            vectors = []
+            for text in texts_to_embed:
+                # LLM helper handles rotation
+                try:
+                    v = llm.embed_content(text)
+                    vectors.append(v)
+                except Exception as e:
+                    logger.warning(f"Skipping failed embedding: {e}")
+                    vectors.append([0.0]*768) # Fallback zero vector
             
             # Create Points
             for j, vector in enumerate(vectors):

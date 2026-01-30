@@ -17,15 +17,16 @@ class ToolExecutor:
     Each tool returns structured data that LLM can use to generate responses.
     """
     
-    def __init__(self, qdrant_client: QdrantClient):
+    def __init__(self, qdrant_client: QdrantClient, llm_provider=None):
         self.client = qdrant_client
+        self.llm_provider = llm_provider
         
         # Use centralized collection names from constants
         from .constants import COLLECTION_NAMES
         self.collections = COLLECTION_NAMES.copy()
         
         # Initialize specialized search engine
-        self.search_engine = SchoolSearchEngine(self.client)
+        self.search_engine = SchoolSearchEngine(self.client, llm_provider=llm_provider)
     
     def execute(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a tool and return structured data"""
@@ -48,6 +49,8 @@ class ToolExecutor:
                 return self._ranking(**params)
             elif tool_name == "list_schools":
                 return self._list_schools(**params)
+            elif tool_name == "filter_schools":
+                return self._filter_schools(**params)
             # Phase 1: New tools
             elif tool_name == "search_education_areas":
                 return self._search_education_areas(**params)
@@ -470,7 +473,7 @@ class ToolExecutor:
                 
                 # We need to instantiate SearchEngine on the fly or reuse one if available
                 # Since ToolExecutor has QdrantClient, we can pass it
-                engine = SearchEngine(self.client)
+                engine = SearchEngine(self.client, llm_provider=self.llm_provider)
                 
                 # Use the original school name (concept) for semantic search
                 # We reuse the province filter if it exists
@@ -953,6 +956,28 @@ class ToolExecutor:
             except Exception as e:
                 logger.error(f"❌ Fallback to schools metadata failed for teachers: {e}")
 
+        # HYBRID ENRICHMENT: If we found teachers data BUT total is low, check schools metadata for potentially higher total
+        # This ensures we report the higher of the two sources
+        elif total_count > 0 and school_name and len(schools) == 1:
+            try:
+                details = self.search_engine.get_school_details(school_name)
+                if details:
+                    metadata_total = details.get("total_teachers", 0)
+                    if metadata_total > total_count:
+                        logger.info(f"📊 HYBRID: Schools metadata has higher count ({metadata_total}) than teachers collection ({total_count})")
+                        # Keep the breakdown from teachers collection, but note the discrepancy
+                        # Update the total to the higher value from metadata
+                        single_school_name = list(schools.keys())[0]
+                        schools[single_school_name]["total"] = metadata_total
+                        schools[single_school_name]["metadata_total"] = metadata_total
+                        schools[single_school_name]["teachers_collection_total"] = total_count
+                        total_count = metadata_total
+                    elif total_count > metadata_total and metadata_total > 0:
+                         logger.info(f"📊 HYBRID: Teachers collection has more data ({total_count}) than metadata ({metadata_total})")
+                         # Teachers collection is richer, keep it
+            except Exception as e:
+                logger.debug(f"Hybrid enrichment failed: {e}")
+
         result = {
             "tool": "count_teachers",
             "query": {"school_name": school_name, "province": province, "gender": gender, "person_type": person_type},
@@ -984,13 +1009,21 @@ class ToolExecutor:
              # If user supplied province, it reduces ambiguity, pass it.
              ambiguity_check = self._resolve_school_ambiguity(school_name, province)
              if ambiguity_check['type'] == 'ambiguous':
-                 logger.info(f"🤔 Ambiguous school name '{school_name}' -> Found {len(ambiguity_check['choices'])} matches")
-                 return {
-                     "tool": "count_students",
-                     "ambiguous": True,
-                     "choices": ambiguity_check['choices'],
-                     "query": {"school_name": school_name}
-                 }
+                 # SMART RESOLUTION: Check if one choice exactly matches the query
+                 exact_in_choices = [c for c in ambiguity_check['choices'] if c.get('school_name') == school_name]
+                 if len(exact_in_choices) == 1:
+                     # Found exact match! Override ambiguity and use this one.
+                     logger.info(f"🎯 Exact match '{school_name}' found in ambiguous list. Overriding.")
+                     # Update school_name to ensure downstream logic uses this exact name
+                     # We let the rest of the function run normally, it will find only this school.
+                 else:
+                     logger.info(f"🤔 Ambiguous school name '{school_name}' -> Found {len(ambiguity_check['choices'])} matches")
+                     return {
+                         "tool": "count_students",
+                         "ambiguous": True,
+                         "choices": ambiguity_check['choices'],
+                         "query": {"school_name": school_name}
+                     }
         
         conditions = []
         
@@ -1071,13 +1104,50 @@ class ToolExecutor:
                 for name, count in ranked[:10]:
                     top_10[name] = {"total": count}
                     
+                # ENHANCEMENT: Also fetch grade/gender breakdown from students collection
+                # This provides richer data for province-level queries
+                by_gender = {"male": 0, "female": 0}
+                by_grade = {}
+                
+                try:
+                    # Fetch a sample of students data to get grade/gender breakdown
+                    # We use a reasonable limit since we just need aggregation
+                    student_results = self._scroll_all(self.collections["students"], scroll_filter, limit=50000)
+                    
+                    for r in student_results:
+                        meta = r.payload.get("metadata", {})
+                        count = meta.get("count", 1)
+                        g = meta.get("gender", "-")
+                        grade_val = meta.get("grade", "ไม่ระบุ")
+                        
+                        # Aggregate by gender
+                        if g == "ชาย":
+                            by_gender["male"] += count
+                        elif g == "หญิง":
+                            by_gender["female"] += count
+                        
+                        # Aggregate by grade
+                        if grade_val not in by_grade:
+                            by_grade[grade_val] = {"total": 0, "male": 0, "female": 0}
+                        by_grade[grade_val]["total"] += count
+                        if g == "ชาย":
+                            by_grade[grade_val]["male"] += count
+                        elif g == "หญิง":
+                            by_grade[grade_val]["female"] += count
+                    
+                    logger.info(f"📊 Province breakdown: {len(by_grade)} grades, {by_gender['male']} male, {by_gender['female']} female")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not fetch grade/gender breakdown: {e}")
+                    
                 return {
                     "tool": "count_students",
                     "query": {"school_name": school_name, "province": province},
                     "total_students": total_all,
-                    "by_gender": {}, # detailed breakdown not available in fast mode
+                    "by_gender": by_gender,
                     "by_school": top_10,
                     "school_count": len(ranked),
+                    "student_breakdown": by_grade,  # Add grade breakdown
+                    "student_breakdown_source": "edu_students_v5" if by_grade else None,
                     "ambiguous_schools": []
                 }
             except Exception as e:
@@ -1119,8 +1189,64 @@ class ToolExecutor:
                 schools[school]["female"] += count
                 total_female += count
         
-        # Flag if multiple schools were found (for LLM to format as table)
         is_multi_school = len(schools) > 1
+        
+        # SMART REDUCTION: If multiple schools found, but one matches exactly, pick that one.
+        if is_multi_school and school_name:
+            # 1. Try strict equality
+            exact_matches = [s for s in schools.keys() if s == school_name]
+            
+            # 2. If no strict match, try normalized (remove whitespace, casing)
+            if not exact_matches:
+                target_clean, _ = self._normalize_school_name(school_name)
+                # Check normalized key vs normalized target
+                exact_matches = [s for s in schools.keys() if self._normalize_school_name(s)[0] == target_clean]
+            
+            if len(exact_matches) == 1:
+                # Found exactly one school that matches the user's query perfectly
+                target = exact_matches[0]
+                logger.info(f"🎯 Exact match found in ambiguous list: '{target}'. Ignoring others.")
+                # Filter down to just this one
+                schools = {target: schools[target]}
+                total_count = schools[target]['total']
+                total_male = schools[target]['male']
+                total_female = schools[target]['female']
+                is_multi_school = False
+        
+        # SUPER FALLBACK: If still ambiguous but user gave a school_name, try fetching it directly
+        # logic: sometimes 'search' returns noise, but 'get_details' works perfectly.
+        if is_multi_school and school_name:
+             try:
+                 details = self.search_engine.get_school_details(school_name)
+                 if details:
+                     logger.info(f"🎯 Direct fetch found exact match for '{school_name}', overriding ambiguous list.")
+                     # Construct single school result manually
+                     s_name = details['school_name']
+                     t_students = details.get('total_students', 0)
+                     schools = {s_name: {"total": t_students, "male": 0, "female": 0, "province": details.get('province', '')}} # Gender unknown from metadata
+                     total_count = t_students
+                     is_multi_school = False
+                     
+                     # Note: The breakdown fetch logic below will now verify and attach breakdown
+                     # Manual injection of school_id to results metadata so the breakdown fetcher below can find it
+                     logger.info(f"💉 Injecting fallback school_id {details.get('school_id')} for breakdown fetch")
+                     # We fake a result object or just rely on the fact that 'schools' is now size 1.
+                     # But the breakdown fetcher (lines 1180+) looks for 'school_id' in 'results'.
+                     # Let's just manually fetch it here for safety.
+                     if details.get('school_id'):
+                         stats = self.search_engine.get_student_statistics(details.get('school_id'))
+                         if stats:
+                             # Attach directly to a temporary holder that we can merge later or just modify result structure
+                             # Actually, easiest is to just let the standard logic run, but we need to ensure school_id discovery works.
+                             # Standard logic iterates 'results'. We don't have 'results' update here.
+                             # So let's just do it manually here.
+                             result["student_breakdown"] = stats.get("by_grade", {})
+                             result["student_breakdown_source"] = stats.get("source")
+                             logger.info("📊 Attached student breakdown (Fallback path)")
+             except Exception as e:
+                 logger.error(f"Fallback fetch failed: {e}")
+
+
         
         # FALLBACK: If total_count is 0 but we queried a specific school/province
         # Check the SCHOOLS collection metadata, which often has the total count even if the STUDENTS collection is empty.
@@ -1170,10 +1296,42 @@ class ToolExecutor:
             "query": {"school_name": school_name, "province": province, "grade": grade, "gender": gender},
             "total_students": total_count,
             "by_gender": {"male": total_male, "female": total_female},
-            "by_school": dict(sorted(schools.items(), key=lambda x: x[1]['total'], reverse=True)[:20]),  # Increased from 10 to 20
+            "by_school": dict(sorted(schools.items(), key=lambda x: x[1]['total'], reverse=True)[:20]),
             "school_count": len(schools),
-            "is_multi_school": is_multi_school  # NEW: Flag for LLM to know to use table format
+            "is_multi_school": is_multi_school
         }
+
+        # ENHANCEMENT: If single school found, attach detailed breakdown
+        # This fixes "How many M.1 students" queries failing because get_school_details wasn't called
+        if len(schools) == 1:
+            try:
+                single_school_name = list(schools.keys())[0]
+                # Try to find school_id from results or schools metadata logic above
+                school_id = None
+                
+                # Check results first
+                for r in results:
+                    meta = r.payload.get("metadata", {})
+                    if meta.get("school_name") == single_school_name:
+                         school_id = meta.get("school_id")
+                         break
+                
+                # If not found (e.g. fallback logic), try to search for it quickly or skip
+                if not school_id and school_name:
+                     # Quick lookup for ID
+                     details = self.search_engine.get_school_details(single_school_name)
+                     if details:
+                         school_id = details.get("school_id")
+                
+                if school_id:
+                    stats = self.search_engine.get_student_statistics(school_id)
+                    if stats:
+                        result["student_breakdown"] = stats.get("by_grade", {})
+                        result["student_breakdown_source"] = stats.get("source")
+                        logger.info(f"📊 Attached student breakdown to count_students for {single_school_name}")
+            except Exception as e:
+                logger.error(f"❌ Failed to attach student breakdown in count_students: {e}")
+
 
         # FUZZY SUGGESTION FALLBACK
         if total_count == 0 and school_name:
@@ -1418,6 +1576,104 @@ class ToolExecutor:
         return self._search_schools(province=province, district=district, 
                                     agency=agency, limit=limit)
     
+    def _filter_schools(self, metric: str, operator: str, value: int,
+                        province: str = None, district: str = None, 
+                        subdistrict: str = None, limit: int = 20) -> Dict[str, Any]:
+        """Filter schools by numeric threshold (e.g., schools with < 100 students)"""
+        
+        # Normalize operator
+        operator = operator.lower().strip()
+        value = int(value)
+        
+        # Build filter conditions
+        conditions = []
+        if province:
+            province = self._normalize_province(province)
+            conditions.append(
+                FieldCondition(key="metadata.province", match=MatchValue(value=province))
+            )
+        if district:
+            conditions.append(
+                FieldCondition(key="metadata.district", match=MatchText(text=district))
+            )
+        if subdistrict:
+            conditions.append(
+                FieldCondition(key="metadata.subdistrict", match=MatchText(text=subdistrict))
+            )
+        
+        scroll_filter = self._build_filter(conditions) if conditions else None
+        
+        # Fetch all schools from schools collection
+        all_schools = self._scroll_all(self.collections["schools"], scroll_filter, limit=50000)
+        
+        # Determine which field to filter on
+        if metric.lower() in ["students", "student", "นักเรียน"]:
+            field_name = "total_students"
+        elif metric.lower() in ["teachers", "teacher", "ครู", "บุคลากร"]:
+            field_name = "total_teachers"
+        else:
+            field_name = "total_students"
+        
+        # Apply threshold filter in Python (more flexible than Qdrant numeric filters)
+        matching_schools = []
+        for r in all_schools:
+            meta = r.payload.get("metadata", {})
+            count = meta.get(field_name, 0) or 0
+            
+            # Apply operator
+            matches = False
+            if operator == "lt" and count < value:
+                matches = True
+            elif operator == "gt" and count > value:
+                matches = True
+            elif operator == "eq" and count == value:
+                matches = True
+            elif operator == "lte" and count <= value:
+                matches = True
+            elif operator == "gte" and count >= value:
+                matches = True
+            
+            if matches:
+                matching_schools.append({
+                    "school_name": meta.get("school_name", "ไม่ระบุ"),
+                    "province": meta.get("province", ""),
+                    "district": meta.get("district", ""),
+                    field_name: count,
+                    "school_id": meta.get("school_id", ""),
+                })
+        
+        # Sort by count (ascending for lt/lte, descending for gt/gte)
+        reverse_order = operator in ["gt", "gte"]
+        matching_schools.sort(key=lambda x: x.get(field_name, 0), reverse=reverse_order)
+        
+        # Apply limit
+        limited_schools = matching_schools[:limit]
+        
+        # Human-readable operator
+        op_labels = {
+            "lt": "น้อยกว่า",
+            "gt": "มากกว่า", 
+            "eq": "เท่ากับ",
+            "lte": "ไม่เกิน",
+            "gte": "อย่างน้อย"
+        }
+        
+        return {
+            "tool": "filter_schools",
+            "query": {
+                "metric": metric,
+                "operator": op_labels.get(operator, operator),
+                "value": value,
+                "province": province,
+                "district": district,
+                "subdistrict": subdistrict
+            },
+            "total_found": len(matching_schools),
+            "schools": limited_schools,
+            "showing": len(limited_schools),
+            "field_name": field_name
+        }
+    
     # ============================================================
     # PHASE 1: NEW TOOL IMPLEMENTATIONS
     # ============================================================
@@ -1531,6 +1787,18 @@ class ToolExecutor:
 
         point = results[0]
         meta = point.payload.get("metadata", {})
+        
+        # Enrich with detailed student statistics (Phase 2 Requirement)
+        school_id = meta.get("school_id")
+        student_stats = {}
+        if school_id:
+            try:
+                # Call the new method in SchoolSearchEngine
+                student_stats = self.search_engine.get_student_statistics(school_id)
+                logger.info(f"📊 Fetched student stats for {school_id}: {len(student_stats.get('by_grade', {}))} grades found")
+            except Exception as e:
+                logger.error(f"❌ Failed to fetch student stats: {e}")
+
         return {
             "tool": "get_school_full_details",
             "found": True,
@@ -1548,7 +1816,10 @@ class ToolExecutor:
             "google_maps_url": f"https://www.google.com/maps/search/?api=1&query={meta.get('lat')},{meta.get('lon')}" if meta.get('lat') and meta.get('lon') else None,
             "total_students": meta.get("total_students", 0),
             "total_teachers": meta.get("total_teachers", 0),
-            "ratio": meta.get("ratio", 0)
+            "ratio": meta.get("ratio", 0),
+            # New fields
+            "student_breakdown": student_stats.get("by_grade", {}),
+            "student_breakdown_source": student_stats.get("source")
         }
     
     def _get_province_summary(self, province: str) -> Dict[str, Any]:

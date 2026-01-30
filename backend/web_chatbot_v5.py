@@ -32,7 +32,6 @@ from typing import Optional
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
-import google.generativeai as genai
 
 # Session storage: Redis (production) with SQLite fallback
 try:
@@ -79,13 +78,11 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")  # 8b has separate quota
 QDRANT_URL = os.getenv("QDRANT_URL", "http://203.159.242.144:6333")
 QDRANT_TIMEOUT = int(os.getenv("QDRANT_TIMEOUT", "5"))  # Lower timeout for fail-fast
-
 # Initialize Gemini
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    logger.info("✅ Gemini API configured")
+    logger.info("✅ Gemini API Key preset")
 else:
-    logger.warning("⚠️ GEMINI_API_KEY not found")
+    logger.warning("⚠️ GEMINI_API_KEY not found (will rely on Firestore)")
 
 # Initialize Groq
 if GROQ_API_KEY and GROQ_API_KEY != "your_groq_api_key_here":
@@ -192,8 +189,15 @@ def create_flask_api():
         get_remote_address,
         app=app,
         default_limits=["1000 per day", "200 per hour"],
-        storage_uri="memory://"
+        storage_uri="memory://",
     )
+
+    @app.errorhandler(429)
+    def ratelimit_handler(e):
+        return jsonify({
+            "error": "ใจเย็นๆ นะครับ! คุณส่งข้อความเร็วเกินไป โปรดรอสักครู่ ⏳",
+            "description": str(e.description)
+        }), 429
 
     @app.after_request
     def after_request(response):
@@ -202,6 +206,7 @@ def create_flask_api():
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-API-Key')
         response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
         response.headers.add('Access-Control-Allow-Credentials', 'true')
+        response.headers.add('Content-Type', 'application/json; charset=utf-8') # Ensure Thai support
         return response
     
     if not qdrant_client:
@@ -216,7 +221,7 @@ def create_flask_api():
         return jsonify({'status': 'healthy', 'version': '5.0.0'})
 
     @app.route('/api/chat/stream', methods=['POST', 'OPTIONS'])
-    @limiter.limit("50 per minute")
+    @limiter.limit("60 per minute")
     def chat_stream():
         if request.method == 'OPTIONS':
             return '', 204
@@ -460,6 +465,80 @@ def create_flask_api():
             logger.error(f"❌ Schools list error: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
     
+
+    @app.route('/api/admin/upload', methods=['POST', 'OPTIONS'])
+    def admin_upload():
+        """Handle file upload for admin data sync"""
+        if request.method == 'OPTIONS':
+            return '', 204
+        
+        try:
+            if 'file' not in request.files:
+                return jsonify({'success': False, 'error': 'No file part'}), 400
+            
+            file = request.files['file']
+            if file.filename == '':
+                return jsonify({'success': False, 'error': 'No selected file'}), 400
+            
+            if file:
+                import werkzeug
+                filename = werkzeug.utils.secure_filename(file.filename)
+                
+                # Ensure upload dir exists
+                upload_dir = current_dir / "uploads"
+                upload_dir.mkdir(exist_ok=True)
+                
+                file_path = upload_dir / filename
+                file.save(str(file_path))
+                
+                logger.info(f"✅ File uploaded: {file_path}")
+                return jsonify({
+                    'success': True, 
+                    'message': 'File uploaded successfully',
+                    'filename': filename
+                })
+                
+        except Exception as e:
+            logger.error(f"❌ Upload failed: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/admin/reindex', methods=['POST', 'OPTIONS'])
+    def admin_reindex():
+        """Trigger re-indexing process"""
+        if request.method == 'OPTIONS':
+            return '', 204
+            
+        try:
+            data = request.json or {}
+            target = data.get('target', 'all')
+            
+            logger.info(f"🔄 Re-index triggered for: {target}")
+            
+            # Run in background thread to avoid blocking API
+            import threading
+            from scripts.reindex_v6 import reindex_data
+            
+            def run_reindex():
+                try:
+                    logger.info("🚀 Starting background re-index task...")
+                    reindex_data()
+                    logger.info("✅ Background re-index completed")
+                except Exception as e:
+                    logger.error(f"❌ Background re-index failed: {e}")
+            
+            thread = threading.Thread(target=run_reindex)
+            thread.daemon = True
+            thread.start()
+            
+            return jsonify({
+                'success': True,
+                'message': f'Re-indexing process started for {target}'
+            })
+            
+        except Exception as e:
+            logger.error(f"❌ Re-index trigger failed: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
     return app
 
 
