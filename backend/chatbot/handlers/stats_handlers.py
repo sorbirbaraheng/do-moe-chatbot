@@ -19,6 +19,7 @@ Contains handlers for student, teacher, ratio, ranking, and education area queri
 import re
 import logging
 from typing import Optional
+from ..constants import COLLECTION_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -66,18 +67,31 @@ class StatsHandlersMixin:
         if not detected_grade and not detected_gender:
             return None
         
-        school_name = parsed.school_name
-        if not school_name:
-            patterns = [r'โรงเรียน([^\s]+)', r'ร\.ร\.([^\s]+)', r'รร\.([^\s]+)']
-            for pattern in patterns:
-                match = re.search(pattern, message)
-                if match:
-                    school_name = match.group(1).strip()
-                    for suffix in ['ครับ', 'ค่ะ', 'มี', 'ที่', 'ใน']:
-                        if school_name.endswith(suffix):
-                            school_name = school_name[:-len(suffix)]
-                    break
+        # Try to detect school name via Regex (Always run this to catch "Name Number" patterns that LLM might miss)
+        # 1. Match "โรงเรียน" prefix
+        regex_name = None
+        match_prefix = re.search(r'โรงเรียน(.+?)(?=\s+(?:มี|กี่|ชั้น|ที่|ใน|จังหวัด|อำเภอ|$))', message)
+        if match_prefix:
+            regex_name = match_prefix.group(1).strip()
         
+        # 2. Match patterns like "ราชประชานุเคราะห์ 40" (Thai + Number)
+        if not regex_name:
+            match_num = re.search(r'([ก-๙]+\s*\d+)', message)
+            if match_num:
+                candidate = match_num.group(1).strip()
+                if len(candidate) > 5 and not candidate.startswith(('ชั้น', 'ม.', 'ป.')):
+                    regex_name = candidate
+        
+        # Decide whether to use Regex name or LLM name
+        if regex_name:
+            if not school_name:
+                school_name = regex_name
+                logger.info(f"🏫 Used Regex school name: '{school_name}'")
+            elif len(regex_name) > len(school_name) and any(c.isdigit() for c in regex_name) and not any(c.isdigit() for c in school_name):
+                 # Override if Regex found numbers but LLM didn't (e.g. LLM="ราชประชานุเคราะห์", Regex="ราชประชานุเคราะห์ 40")
+                 logger.info(f"⚠️ Overriding LLM name '{school_name}' with Regex name '{regex_name}'")
+                 school_name = regex_name
+
         logger.info(f"🎓 Student Query: grade={detected_grade}, gender={detected_gender}, school={school_name}")
         
         try:
@@ -93,29 +107,48 @@ class StatsHandlersMixin:
                         break
                 logger.info(f"🏫 Clean school name: '{school_name}' → '{clean_school_name}'")
             
+            # Prioritize Exact Match (MatchValue)
             if clean_school_name:
-                conditions.append(FieldCondition(key="metadata.school_name", match=MatchText(text=clean_school_name)))
-            
-            if parsed.province:
-                conditions.append(FieldCondition(key="metadata.province", match=MatchValue(value=parsed.province)))
-            
-            if detected_gender:
-                conditions.append(FieldCondition(key="metadata.gender", match=MatchValue(value=detected_gender)))
-            
-            scroll_filter = Filter(must=conditions) if conditions else None
-            
-            response = self.qdrant_client.scroll(
-                collection_name="edu_students_v5",
-                scroll_filter=scroll_filter,
-                limit=500,
-                with_payload=True
-            )
-            
-            results = response[0]
+                conditions_exact = list(conditions) # Copy base conditions (gender, province...)
+                conditions_exact.append(FieldCondition(key="metadata.school_name", match=MatchValue(value=clean_school_name)))
+                
+                scroll_filter_exact = Filter(must=conditions_exact)
+                response_exact = self.qdrant_client.scroll(
+                    collection_name="edu_students_v5",
+                    scroll_filter=scroll_filter_exact,
+                    limit=500,
+                    with_payload=True
+                )
+                if response_exact[0]:
+                    logger.info(f"🎯 Found exact match for school: {clean_school_name}")
+                    results = response_exact[0]
+                else:
+                    # Fallback to Partial Match (MatchText)
+                    # Note: MatchText can be too loose, so we might want to restrict it or check results
+                    conditions.append(FieldCondition(key="metadata.school_name", match=MatchText(text=clean_school_name)))
+                    
+                    scroll_filter = Filter(must=conditions) if conditions else None
+                    response = self.qdrant_client.scroll(
+                        collection_name="edu_students_v5",
+                        scroll_filter=scroll_filter,
+                        limit=500,
+                        with_payload=True
+                    )
+                    results = response[0]
+            else:
+                 # No school name, use base conditions
+                 scroll_filter = Filter(must=conditions) if conditions else None
+                 response = self.qdrant_client.scroll(
+                    collection_name="edu_students_v5",
+                    scroll_filter=scroll_filter,
+                    limit=500,
+                    with_payload=True
+                )
+                 results = response[0]
             
             if not results:
                 logger.info(f"⚠️ No exact match, trying semantic search...")
-                search_query = f"โรงเรียน{school_name} {detected_grade or ''} {detected_gender or ''}"
+                search_query = f"โรงเรียน{school_name or ''} {detected_grade or ''} {detected_gender or ''} {parsed.agency or ''}"
                 results = self.search_engine._semantic_search(search_query, "edu_students_v5", top_k=50)
             
             if detected_grade and results:
@@ -134,7 +167,9 @@ class StatsHandlersMixin:
                 school_counts = {}
                 for r in results:
                     meta = r.payload.get('metadata', {})
+                    # DEBUG: Add school name debug tag
                     school = meta.get('school_name', 'ไม่ระบุ')
+                    school = f"{school} [Q: {school_name}]" 
                     count = meta.get('count', 1)
                     
                     if school not in school_counts:
@@ -301,7 +336,7 @@ class StatsHandlersMixin:
 
     def _handle_school_info_v5(self, parsed, message: str) -> Optional[str]:
         """
-        🏫 Handle school info queries from edu_schools_v5
+        🏫 Handle school info queries from school collection
         Returns detailed school information including address, agency, students, teachers
         """
         query_lower = message.lower()
@@ -350,8 +385,8 @@ class StatsHandlersMixin:
             results = response[0]
             
             if not results:
-                logger.info(f"⚠️ No exact match in edu_schools_v5, trying semantic...")
-                results = self.search_engine._semantic_search(f"โรงเรียน{clean_school_name}", "edu_schools_v5", top_k=5)
+                logger.info(f"⚠️ No exact match in school collection, trying semantic...")
+                results = self.search_engine._semantic_search(f"โรงเรียน{clean_school_name}", COLLECTION_NAMES["schools"], top_k=5)
             
             logger.info(f"📊 Found {len(results)} school records")
             
@@ -487,7 +522,7 @@ class StatsHandlersMixin:
     def _handle_school_count_by_area(self, parsed, message: str) -> Optional[str]:
         """
         🏫 Handle school count queries by province/district
-        Counts schools from edu_schools_v5 collection
+        Counts schools from school collection collection
         """
         query_lower = message.lower()
         
@@ -519,13 +554,14 @@ class StatsHandlersMixin:
                     province = 'กรุงเทพมหานคร'
                     break
         
-        if not province and not district:
+        if not province and not district and not parsed.region:
             return None
         
-        logger.info(f"🏫 School Count by Area: province={province}, district={district}")
+        logger.info(f"🏫 School Count by Area: region={parsed.region}, province={province}, district={district}")
         
         try:
-            from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchText
+            from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchText, MatchAny
+            from .constants import REGIONS
             
             conditions = []
             
@@ -534,6 +570,10 @@ class StatsHandlersMixin:
             
             if district:
                 conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=district)))
+                
+            if parsed.region and parsed.region in REGIONS:
+                provinces_in_region = REGIONS[parsed.region]
+                conditions.append(FieldCondition(key="metadata.province", match=MatchAny(any=provinces_in_region)))
             
             scroll_filter = Filter(must=conditions) if conditions else None
             
@@ -542,7 +582,7 @@ class StatsHandlersMixin:
             
             while True:
                 response = self.qdrant_client.scroll(
-                    collection_name="edu_schools_v5",
+                    collection_name=COLLECTION_NAMES["schools"],
                     scroll_filter=scroll_filter,
                     limit=500,
                     offset=offset,
@@ -573,6 +613,7 @@ class StatsHandlersMixin:
                 
                 data = {
                     "location": {
+                        "region": parsed.region,
                         "province": province,
                         "district": district
                     },
@@ -585,7 +626,28 @@ class StatsHandlersMixin:
                 
                 return self._format_response_with_llm(message, data, "school_count")
             else:
-                area_name = district or province or "พื้นที่นี้"
+                # Try semantic search fallback
+                search_query = f"โรงเรียนใน{parsed.region or province or district}"
+                logger.info(f"⚠️ No exact match for school count, trying semantic search: {search_query}")
+                results = self.search_engine._semantic_search(search_query, COLLECTION_NAMES["schools"], top_k=50)
+                
+                if results:
+                     # Construct data from semantic results (approximate)
+                     data = {
+                        "location": {
+                            "region": parsed.region,
+                            "province": province,
+                            "district": district
+                        },
+                        "counts": {
+                            "total": len(results), # This is top_k limited, but better than 0
+                            "agencies": {} # Cannot easily aggregate
+                        },
+                        "sample_schools": [{"name": r.payload.get('metadata', {}).get('school_name')} for r in results[:5]]
+                    }
+                     return self._format_response_with_llm(message, data, "school_count")
+                
+                area_name = district or province or parsed.region or "พื้นที่นี้"
                 return f"❌ ไม่พบโรงเรียนใน{area_name}\n\n💡 ลองค้นหาพื้นที่อื่น"
                 
         except Exception as e:
@@ -630,13 +692,25 @@ class StatsHandlersMixin:
                 conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=district)))
             
             response = self.qdrant_client.scroll(
-                collection_name="edu_schools_v5",
+                collection_name=COLLECTION_NAMES["schools"],
                 scroll_filter=Filter(must=conditions) if conditions else None,
                 limit=50,
                 with_payload=True
             )
             
             results = response[0]
+            
+            # Get actual total count (not limited)
+            try:
+                count_result = self.qdrant_client.count(
+                    collection_name=COLLECTION_NAMES["schools"],
+                    count_filter=Filter(must=conditions) if conditions else None,
+                    exact=True
+                )
+                actual_total = count_result.count
+            except Exception as count_error:
+                logger.warning(f"Count query failed: {count_error}")
+                actual_total = len(results)  # Fallback to scroll count
             
             if results:
                 schools_list = []
@@ -651,7 +725,8 @@ class StatsHandlersMixin:
                 data = {
                     "province": province,
                     "district": district,
-                    "total_found": len(results),
+                    "total_count": actual_total,  # Actual total in database
+                    "total_found": len(schools_list),  # Number displayed (limited)
                     "schools": schools_list
                 }
                 
@@ -712,7 +787,7 @@ class StatsHandlersMixin:
             
             while True:
                 response = self.qdrant_client.scroll(
-                    collection_name="edu_schools_v5",
+                    collection_name=COLLECTION_NAMES["schools"],
                     scroll_filter=Filter(must=conditions),
                     limit=500,
                     offset=offset,
@@ -790,10 +865,12 @@ class StatsHandlersMixin:
             conditions = []
             if province:
                 conditions.append(FieldCondition(key="metadata.province", match=MatchValue(value=province)))
+            if parsed.agency:
+                conditions.append(FieldCondition(key="metadata.agency", match=MatchText(text=parsed.agency)))
             
             while True:
                 response = self.qdrant_client.scroll(
-                    collection_name="edu_schools_v5",
+                    collection_name=COLLECTION_NAMES["schools"],
                     scroll_filter=Filter(must=conditions) if conditions else None,
                     limit=500,
                     offset=offset,
@@ -888,7 +965,7 @@ class StatsHandlersMixin:
                 return response_text
             else:
                 response2 = self.qdrant_client.scroll(
-                    collection_name="edu_schools_v5",
+                    collection_name=COLLECTION_NAMES["schools"],
                     scroll_filter=Filter(must=[FieldCondition(key="metadata.area_name", match=MatchText(text=area_name or "สพม"))]),
                     limit=100,
                     with_payload=True

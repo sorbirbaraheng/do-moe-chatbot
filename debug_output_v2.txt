@@ -1,0 +1,305 @@
+/Users/sobirbaraheng/Library/Python/3.9/lib/python/site-packages/google/api_core/_python_version_support.py:237: FutureWarning: You are using a non-supported Python version (3.9.6). Google will not post any further updates to google.api_core supporting this Python version. Please upgrade to the latest Python version, or at least Python 3.10, and then update google.api_core.
+  warnings.warn(message, FutureWarning)
+/Users/sobirbaraheng/Library/Python/3.9/lib/python/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+/Users/sobirbaraheng/Downloads/chattt/moe-one---ict-hub/backend/chatbot/llm.py:16: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+INFO:httpx:HTTP Request: GET http://203.159.242.144:6333 "HTTP/1.1 200 OK"
+INFO:backend.chatbot.chatbot_core:🚀 Initializing Education Chatbot v5.0...
+INFO:httpx:HTTP Request: GET http://203.159.242.144:6333/collections "HTTP/1.1 200 OK"
+INFO:backend.chatbot.chatbot_core:   ✅ schools: edu_schools_v6
+INFO:backend.chatbot.chatbot_core:   ✅ students: edu_students_v5
+INFO:backend.chatbot.chatbot_core:   ✅ teachers: edu_teachers_v5
+INFO:backend.chatbot.chatbot_core:   ✅ areas: edu_areas_v5
+INFO:backend.chatbot.chatbot_core:   ✅ systems: edu_systems_v5
+INFO:backend.chatbot.chatbot_core:   ✅ grades: edu_grade_summary_v5
+INFO:backend.chatbot.chatbot_core:   ✅ gender: edu_gender_overview_v5
+INFO:backend.chatbot.chatbot_core:   ✅ ratios: edu_ratios_v5
+INFO:firebase_config:✅ Firebase initialized with service account
+INFO:firebase_config:✅ Firestore client ready
+INFO:firebase_config:✅ Config loaded from Firestore (Admin Panel)
+INFO:firebase_config:🔑 Unified mode: 34 Groq keys from all categories
+INFO:firebase_config:🔑 Unified mode: 7 Gemini keys from all categories
+INFO:backend.chatbot.llm:✅ Loaded 34 Groq keys (unified mode)
+INFO:backend.chatbot.llm:✅ Loaded 7 Gemini keys (unified mode)
+INFO:backend.chatbot.llm:✅ Gemini fallback ready: models/gemini-2.0-flash
+INFO:firebase_config:🔑 Unified mode: 34 Groq keys from all categories
+INFO:firebase_config:🔑 Unified mode: 7 Gemini keys from all categories
+INFO:backend.chatbot.llm:🤖 Groq model from config: llama-3.3-70b-versatile
+INFO:backend.chatbot.llm:✅ Loaded 34 Groq keys (unified mode)
+INFO:backend.chatbot.llm:✅ Loaded 7 Gemini keys (unified mode)
+INFO:backend.chatbot.llm:✅ Gemini fallback ready: models/gemini-2.0-flash
+INFO:httpx:HTTP Request: GET http://203.159.242.144:6333/collections "HTTP/1.1 200 OK"
+INFO:backend.chatbot.cache:✅ Redis connected: redis://default:FPK9yM65WNMhdEVqb4S4eYhYWOts0Tpc@redis-15806.c296.ap-southeast-2-1.ec2.cloud.redislabs.com:15806
+INFO:firebase_config:🔑 Unified mode: 34 Groq keys from all categories
+INFO:firebase_config:🔑 Unified mode: 7 Gemini keys from all categories
+INFO:backend.chatbot.llm:🤖 Groq model from config: llama-3.3-70b-versatile
+INFO:backend.chatbot.llm:✅ Loaded 34 Groq keys (unified mode)
+INFO:backend.chatbot.llm:✅ Loaded 7 Gemini keys (unified mode)
+INFO:backend.chatbot.llm:✅ Gemini fallback ready: models/gemini-2.0-flash
+INFO:backend.chatbot.chatbot_core:✅ Using model: Groq:llama-3.3-70b-versatile → Gemini:gemini-2.0-flash
+INFO:backend.chatbot.chatbot_core:✅ LLM Agent initialized (Function Calling enabled)
+INFO:backend.chatbot.chatbot_core:✅ Chatbot ready with 8 collections (LLM Agent enabled)
+INFO:backend.chatbot.chatbot_core:💬 User: โรงเรียนยุพราชวิทยาลัยมีครูกี่คน
+INFO:backend.chatbot.chatbot_core:🔧 DEBUG: Cache DISABLED for testing
+INFO:backend.chatbot.llm:🔄 Hot-reloaded 35 Groq keys
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...gRBY
+INFO:backend.chatbot.llm:⚡ Groq responded (llama-3.3-70b-versatile)
+INFO:backend.chatbot.query_parser:🧠 LLM Intent: {'intent': 'TEACHER_COUNT', 'region': None, 'province': None, 'district': None, 'subdistrict': None, 'agency': None, 'school_name': 'ยุพราชวิทยาลัย', 'threshold': None}
+INFO:backend.chatbot.llm:🔄 Hot-reloaded 35 Groq keys
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...gRBY
+INFO:backend.chatbot.llm:⚡ Groq responded (llama-3.3-70b-versatile)
+INFO:backend.chatbot.chatbot_core:🎯 Intent: teacher_count, Level: subdistrict
+INFO:backend.chatbot.chatbot_core:   Region: None, Province: None, School: ยุพราชวิทยาลัย
+INFO:backend.chatbot.chatbot_core:🤖 Using LLM Agent for query processing...
+INFO:backend.chatbot.llm_agent:🤖 LLM Agent processing: โรงเรียนยุพราชวิทยาลัยมีครูกี่คน
+INFO:backend.chatbot.llm_agent:🏫 Extracted school (prefix pattern): 'ยุพราชวิทยาลัย'
+INFO:backend.chatbot.entity_extractor:🔄 Fetching valid values from Qdrant for entity extraction...
+INFO:httpx:HTTP Request: GET http://203.159.242.144:6333 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_students_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_schools_v6/points/scroll "HTTP/1.1 200 OK"
+INFO:backend.chatbot.entity_extractor:✅ Loaded valid values: 18 person_types, 26 grades, 12 agencies, 242 areas, 891 districts
+INFO:backend.chatbot.llm_agent:⚡ Triggering Unified Entity Extraction (LLM)...
+INFO:backend.chatbot.llm:🔄 Hot-reloaded 35 Groq keys
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...gRBY
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01keb2qa4ee3vtq9c8nwxh4q1z` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 96419,
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 1 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...pQJS
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01keb2qa4ee3vtq9c8nwxh4q1z` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 96419,
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 2 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...Khk9
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01keb2qa4ee3vtq9c8nwxh4q1z` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 96418,
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 3 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...Lu8N
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kee423gafmfbk3bcshn8gnv6` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 4069
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 4 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...gdrp
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kee423gafmfbk3bcshn8gnv6` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 4028
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 5 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...Ccx2
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01keb2qa4ee3vtq9c8nwxh4q1z` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 96417,
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 6 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...wiZn
+INFO:backend.chatbot.llm:⚡ Groq responded (llama-3.3-70b-versatile)
+INFO:backend.chatbot.llm_agent:🔍 Extracted entities: school=ยุพราชวิทยาลัย, province=None, district=None, agency=None, grade=None, person_type=ข้าราชการครู, gender=None
+INFO:backend.chatbot.llm_agent:DEBUG INFER: Matched Teacher keywords
+INFO:backend.chatbot.llm_agent:DEBUG INFER: Matched Quantity context for Teachers. Params: {'school_name': 'ยุพราชวิทยาลัย', 'person_type': 'ข้าราชการครู'}
+INFO:backend.chatbot.llm_agent:⚡ Fast-tracked tool selection via keywords: ['count_teachers']
+INFO:backend.chatbot.llm_agent:🔧 Selected 1 tool(s): ['count_teachers']
+INFO:backend.chatbot.tool_executor:🔧 Executing tool: count_teachers with params: {'school_name': 'ยุพราชวิทยาลัย', 'person_type': 'ข้าราชการครู'}
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_schools_v6/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_schools_v6/points/scroll "HTTP/1.1 200 OK"
+INFO:backend.chatbot.llm_agent:🤖 Generating response (hybrid pro)...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...4S7s
+INFO:backend.chatbot.llm:⚡ Groq responded (llama-3.3-70b-versatile)
+INFO:backend.chatbot.llm_agent:✅ LLM response generated successfully
+INFO:httpx:HTTP Request: PUT http://203.159.242.144:6333/collections/semantic_cache/points?wait=true "HTTP/1.1 200 OK"
+INFO:backend.chatbot.chatbot_core:💬 User: มีครูผู้หญิงกี่คน
+INFO:backend.chatbot.chatbot_core:🔧 DEBUG: Cache DISABLED for testing
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...pQJS
+INFO:backend.chatbot.llm:⚡ Groq responded (llama-3.3-70b-versatile)
+INFO:backend.chatbot.query_parser:🧠 LLM Intent: {'intent': 'TEACHER_COUNT', 'region': None, 'province': None, 'district': None, 'subdistrict': None, 'agency': None, 'school_name': None, 'threshold': None}
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...pQJS
+INFO:backend.chatbot.llm:⚡ Groq responded (llama-3.3-70b-versatile)
+INFO:backend.chatbot.chatbot_core:🎯 Intent: teacher_count, Level: subdistrict
+INFO:backend.chatbot.chatbot_core:   Region: None, Province: None, School: None
+INFO:backend.chatbot.chatbot_core:🤖 Using LLM Agent for query processing...
+INFO:backend.chatbot.llm_agent:🤖 LLM Agent processing: มีครูผู้หญิงกี่คน
+INFO:backend.chatbot.llm_agent:⚡ Triggering Unified Entity Extraction (LLM)...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...kSAy
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kfykd74ceacs5jh3xx0rcbsv` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 1032
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 1 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...A96f
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kfykd74ceacs5jh3xx0rcbsv` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 1028
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 2 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...CqWW
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kfykd74ceacs5jh3xx0rcbsv` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 1025
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 3 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...Vu1r
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kfykd74ceacs5jh3xx0rcbsv` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 1001
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 4 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...guhA
+INFO:backend.chatbot.llm:⚡ Groq responded (llama-3.3-70b-versatile)
+INFO:backend.chatbot.llm_agent:🔍 Extracted entities: school=None, province=None, district=None, agency=None, grade=None, person_type=ข้าราชการครู, gender=หญิง
+INFO:backend.chatbot.llm_agent:DEBUG INFER: Matched Teacher keywords
+INFO:backend.chatbot.llm_agent:DEBUG INFER: Matched Quantity context for Teachers. Params: {'person_type': 'ข้าราชการครู', 'gender': 'หญิง'}
+INFO:backend.chatbot.llm_agent:⚡ Fast-tracked tool selection via keywords: ['count_teachers']
+INFO:backend.chatbot.llm_agent:🔧 Selected 1 tool(s): ['count_teachers']
+INFO:backend.chatbot.tool_executor:🔧 Executing tool: count_teachers with params: {'person_type': 'ข้าราชการครู', 'gender': 'หญิง'}
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:backend.chatbot.llm_agent:🤖 Generating response (hybrid pro)...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...uXqp
+INFO:backend.chatbot.llm:⚡ Groq responded (llama-3.3-70b-versatile)
+INFO:backend.chatbot.llm_agent:✅ LLM response generated successfully
+INFO:httpx:HTTP Request: PUT http://203.159.242.144:6333/collections/semantic_cache/points?wait=true "HTTP/1.1 200 OK"
+INFO:backend.chatbot.chatbot_core:💬 User: มีลูกจ้างชั่วคราวกี่คน
+INFO:backend.chatbot.chatbot_core:🔧 DEBUG: Cache DISABLED for testing
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...Khk9
+INFO:backend.chatbot.llm:⚡ Groq responded (llama-3.3-70b-versatile)
+INFO:backend.chatbot.query_parser:🧠 LLM Intent: {'intent': 'GENERAL', 'region': None, 'province': None, 'district': None, 'subdistrict': None, 'agency': None, 'school_name': None, 'threshold': None}
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...Khk9
+INFO:backend.chatbot.llm:⚡ Groq responded (llama-3.3-70b-versatile)
+INFO:backend.chatbot.chatbot_core:🎯 Intent: unknown, Level: subdistrict
+INFO:backend.chatbot.chatbot_core:   Region: None, Province: None, School: None
+INFO:backend.chatbot.chatbot_core:🤖 Using LLM Agent for query processing...
+INFO:backend.chatbot.llm_agent:🤖 LLM Agent processing: มีลูกจ้างชั่วคราวกี่คน
+INFO:backend.chatbot.entity_extractor:👔 Direct match person_type: 'ลูกจ้างชั่วคราว'
+INFO:backend.chatbot.llm_agent:🔍 Extracted entities: school=None, province=None, district=None, agency=None, grade=None, person_type=ลูกจ้างชั่วคราว, gender=None
+INFO:backend.chatbot.llm_agent:🌐 Detected GENERAL query (no education keywords): มีลูกจ้างชั่วคราวกี่คน
+INFO:backend.chatbot.llm_agent:🤖 Keywords insufficient, falling back to LLM for tool selection...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...W3pZ
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kfyq4h56fa89tj083g59mc61` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 1026
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 1 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...ozbm
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kfyq4h56fa89tj083g59mc61` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 1023
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 2 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...Vu1r
+WARNING:backend.chatbot.llm:⚠️ Groq rate limited (429) - Switching key... Error: {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kfykd74ceacs5jh3xx0rcbsv` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 8932
+WARNING:backend.chatbot.llm:⚠️ Groq attempt 3 failed (Rate limit exceeded...), retrying with next key...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...fvzj
+INFO:backend.chatbot.llm:⚡ Groq responded (llama-3.3-70b-versatile)
+INFO:backend.chatbot.llm_agent:✅ LLM tool selection succeeded on attempt 1
+INFO:backend.chatbot.llm_agent:🔧 Selected 1 tool(s): ['count_teachers']
+INFO:backend.chatbot.tool_executor:🔧 Executing tool: count_teachers with params: {'person_type': 'ลูกจ้างชั่วคราว'}
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://203.159.242.144:6333/collections/edu_teachers_v5/points/scroll "HTTP/1.1 200 OK"
+INFO:backend.chatbot.llm_agent:🤖 Generating response (hybrid pro)...
+INFO:backend.chatbot.llm:🔑 Trying Groq with key: ...7OyO
+INFO:backend.chatbot.llm:⚡ Groq responded (llama-3.3-70b-versatile)
+INFO:backend.chatbot.llm_agent:✅ LLM response generated successfully
+INFO:httpx:HTTP Request: PUT http://203.159.242.144:6333/collections/semantic_cache/points?wait=true "HTTP/1.1 200 OK"
+An error occurred: module 'importlib.metadata' has no attribute 'packages_distributions'
+
+🚀 STARTING LIVE DRILL-DOWN TEST...
+
+👤 User: โรงเรียนยุพราชวิทยาลัยมีครูกี่คน
+🤖 Bot: เสียดายครับ ไม่พบข้อมูลเกี่ยวกับจำนวนครูของโรงเรียนยุพราชวิทยาลัยในฐานข้อมูลของเราครับ อย่างไรก็ตาม มีข้อมูลแนะนำเกี่ยวกับโรงเรียนที่มีชื่อใกล้เคียง เช่น **ยุพราชวิทยาลัย** ในจังหวัดเชียงใหม่ และ **ราชปิโยรสา ยุพราชานุสรณ์** ในจังหวัดน่าน หากต้องการข้อมูลเจาะจงโรงเรียนใด สามารถระบุชื่อเต็มหรือจังหวัดได้ครับ
+
+👤 User: มีครูผู้หญิงกี่คน
+🤖 Bot: จากฐานข้อมูลของกระทรวงศึกษาธิการ มีครูผู้หญิงทั้งหมด **277,375** คน ซึ่งเป็นจำนวนครูทั้งหมดที่เป็นผู้หญิงในฐานข้อมูลครับ โดยไม่มีครูชายในฐานข้อมูลที่ให้มาครับ ซึ่งแสดงให้เห็นว่าครูผู้หญิงมีจำนวนมากในระบบการศึกษาของประเทศไทยครับ
+
+👤 User: มีลูกจ้างชั่วคราวกี่คน
+🤖 Bot: จากฐานข้อมูลครับ มีลูกจ้างชั่วคราวทั้งหมด **49,114** คน โดยแบ่งเป็นชาย **21,316** คน และหญิง **27,798** คน ซึ่งแสดงให้เห็นว่ามีลูกจ้างชั่วคราวหญิงมากกว่าชายประมาณ **30%** ครับ ซึ่งสะท้อนถึงความหลากหลายในด้านเพศของลูกจ้างชั่วคราวในระบบการศึกษานั้นครับ
+

@@ -19,6 +19,9 @@ class QueryIntent(Enum):
     SCHOOL_LIST = "school_list"
     SCHOOL_DETAIL = "school_detail"
     SCHOOL_COUNT = "school_count"
+    STUDENT_COUNT = "student_count"
+    TEACHER_COUNT = "teacher_count"
+    RATIO = "ratio"
     LOAD_MORE = "load_more"  # Pagination - load more results
     # Threshold-based filtering (e.g., "มากกว่า 50 แห่ง", "น้อยกว่า 100 โรง")
     FILTER_LESS_THAN = "filter_less_than"
@@ -54,6 +57,17 @@ class ParsedQuery:
     confidence: float = 0.0
     # Threshold filtering fields (e.g., "น้อยกว่า 50 แห่ง")
     threshold: Optional[int] = None
+    threshold_operator: Optional[str] = None  # "<", ">", "="
+    
+    # New fields for comprehensive querying
+    min_students: Optional[int] = None
+    max_students: Optional[int] = None
+    min_teachers: Optional[int] = None
+    max_teachers: Optional[int] = None
+    area_name: Optional[str] = None
+    person_type: Optional[str] = None # e.g. "ลูกจ้างชั่วคราว", "พนักงานราชการ"
+    coordinates_intent: bool = False
+    details_intent: bool = False
     threshold_operator: Optional[str] = None  # "<", ">", "="
 
 

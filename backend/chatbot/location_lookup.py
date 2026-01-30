@@ -9,7 +9,9 @@ from typing import List, Dict, Optional, Tuple
 from difflib import SequenceMatcher
 import time
 
+
 from qdrant_client import QdrantClient
+from .constants import COLLECTION_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,7 @@ class LocationLookup:
             
             for _ in range(50):  # Max 50 iterations to avoid infinite loop
                 response = self.client.scroll(
-                    collection_name="edu_schools_v5",
+                    collection_name=COLLECTION_NAMES["schools"],
                     limit=1000,
                     offset=offset,
                     with_payload=["metadata.province"]
@@ -191,7 +193,7 @@ class LocationLookup:
             # Get unique districts
             districts = set()
             response = self.client.scroll(
-                collection_name="edu_schools_v5",
+                collection_name=COLLECTION_NAMES["schools"],
                 scroll_filter=scroll_filter,
                 limit=500,
                 with_payload=["metadata.district"]
@@ -252,7 +254,7 @@ class LocationLookup:
             # Get unique subdistricts
             subdistricts = set()
             response = self.client.scroll(
-                collection_name="edu_schools_v5",
+                collection_name=COLLECTION_NAMES["schools"],
                 scroll_filter=scroll_filter,
                 limit=500,
                 with_payload=["metadata.subdistrict"]

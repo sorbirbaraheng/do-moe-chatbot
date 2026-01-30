@@ -1,5 +1,5 @@
-import React from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import React, { useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -50,15 +50,43 @@ const appleMarkerIcon = new L.DivIcon({
     popupAnchor: [0, -42],
 });
 
+interface MarkerData {
+    lat: number;
+    lng: number;
+    title: string;
+}
+
 interface MapWidgetProps {
     latitude: number;
     longitude: number;
     schoolName: string;
     address?: string;
+    markers?: MarkerData[]; // NEW: For multiple markers
 }
 
-const MapWidget: React.FC<MapWidgetProps> = ({ latitude, longitude, schoolName, address }) => {
-    const position: [number, number] = [latitude, longitude];
+// Helper component to auto-fit bounds
+const MapBounds: React.FC<{ markers: MarkerData[], center: [number, number] }> = ({ markers, center }) => {
+    const map = useMap();
+
+    useEffect(() => {
+        if (markers && markers.length > 1) {
+            const bounds = L.latLngBounds(markers.map(m => [m.lat, m.lng]));
+            map.fitBounds(bounds, { padding: [50, 50] });
+        } else {
+            map.setView(center, 16);
+        }
+    }, [markers, center, map]);
+
+    return null;
+};
+
+const MapWidget: React.FC<MapWidgetProps> = ({ latitude, longitude, schoolName, address, markers }) => {
+    // Default to single marker if no list provided
+    const displayMarkers = markers && markers.length > 0
+        ? markers
+        : [{ lat: latitude, lng: longitude, title: schoolName }];
+
+    const center: [number, number] = [latitude, longitude];
 
     return (
         <div className="mt-6 mb-2 rounded-[24px] overflow-hidden transition-all duration-300 hover:shadow-2xl" style={{
@@ -100,7 +128,7 @@ const MapWidget: React.FC<MapWidgetProps> = ({ latitude, longitude, schoolName, 
                             letterSpacing: '-0.3px',
                             lineHeight: '1.2'
                         }}>
-                            {schoolName}
+                            {displayMarkers.length > 1 ? `พบ ${displayMarkers.length} สถานที่` : schoolName}
                         </div>
                         <div style={{
                             fontSize: '13px',
@@ -108,7 +136,7 @@ const MapWidget: React.FC<MapWidgetProps> = ({ latitude, longitude, schoolName, 
                             fontWeight: 500,
                             marginTop: '3px'
                         }}>
-                            ตำแหน่งที่ตั้งโรงเรียน
+                            {displayMarkers.length > 1 ? 'คลิกที่หมุดเพื่อดูรายละเอียดหรือนำทาง' : 'ตำแหน่งที่ตั้งโรงเรียน'}
                         </div>
                     </div>
                 </div>
@@ -137,50 +165,67 @@ const MapWidget: React.FC<MapWidgetProps> = ({ latitude, longitude, schoolName, 
             {/* Map Content */}
             <div style={{ height: '320px', width: '100%', position: 'relative' }}>
                 <MapContainer
-                    center={position}
+                    center={center}
                     zoom={16}
                     scrollWheelZoom={false}
                     zoomControl={false}
                     style={{ height: '100%', width: '100%' }}
                 >
-                    {/* Esri World Street Map for a cleaner, more premium look similar to Apple Maps */}
+                    <MapBounds markers={displayMarkers} center={center} />
+
+                    {/* Esri World Street Map */}
                     <TileLayer
                         attribution='Tiles &copy; Esri'
                         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"
                     />
-                    <Marker position={position} icon={appleMarkerIcon}>
-                        {/* Minimal Popup removed for cleaner look as info is in header/footer */}
-                    </Marker>
+
+                    {displayMarkers.map((marker, idx) => (
+                        <Marker key={idx} position={[marker.lat, marker.lng]} icon={appleMarkerIcon}>
+                            <Popup className="apple-popup">
+                                <div className="text-sm font-bold">{marker.title}</div>
+                                <a
+                                    href={`https://www.google.com/maps?q=${marker.lat},${marker.lng}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-500 text-xs mt-1 block hover:underline"
+                                >
+                                    เปิดใน Google Maps
+                                </a>
+                            </Popup>
+                        </Marker>
+                    ))}
                 </MapContainer>
 
-                {/* Floating Action Button */}
-                <a
-                    href={`https://www.google.com/maps?q=${latitude},${longitude}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                        position: 'absolute',
-                        bottom: '20px',
-                        right: '20px',
-                        zIndex: 1000,
-                        background: 'white',
-                        padding: '10px 18px',
-                        borderRadius: '16px',
-                        boxShadow: '0 8px 20px rgba(0, 0, 0, 0.12)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        textDecoration: 'none',
-                        fontSize: '14px',
-                        fontWeight: 600,
-                        color: '#007AFF',
-                        transition: 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)'
-                    }}
-                    className="hover:scale-105 active:scale-95"
-                >
-                    <span style={{ fontSize: '18px' }}>🧭</span>
-                    นำทาง
-                </a>
+                {/* Floating Action Button (Only show for single result navigation) */}
+                {displayMarkers.length === 1 && (
+                    <a
+                        href={`https://www.google.com/maps?q=${latitude},${longitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                            position: 'absolute',
+                            bottom: '20px',
+                            right: '20px',
+                            zIndex: 1000,
+                            background: 'white',
+                            padding: '10px 18px',
+                            borderRadius: '16px',
+                            boxShadow: '0 8px 20px rgba(0, 0, 0, 0.12)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            textDecoration: 'none',
+                            fontSize: '14px',
+                            fontWeight: 600,
+                            color: '#007AFF',
+                            transition: 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)'
+                        }}
+                        className="hover:scale-105 active:scale-95"
+                    >
+                        <span style={{ fontSize: '18px' }}>🧭</span>
+                        นำทาง
+                    </a>
+                )}
             </div>
 
             {/* Footer Info */}
@@ -201,7 +246,7 @@ const MapWidget: React.FC<MapWidgetProps> = ({ latitude, longitude, schoolName, 
                         fontSize: '12px'
                     }}>📍</div>
                     <div style={{ fontSize: '13px', color: '#424245', lineHeight: '1.5' }}>
-                        {address || `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`}
+                        {address || (displayMarkers.length > 1 ? 'คลิกที่หมุดบนแผนที่เพื่อดูข้อมูลเพิ่มเติม' : `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`)}
                     </div>
                 </div>
             </div>

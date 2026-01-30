@@ -150,8 +150,13 @@ class FirestoreConfigLoader:
         return keys[0] if keys else None
     
     def get_groq_model(self) -> str:
-        """Get Groq model name from config, default to llama-3.3-70b-versatile"""
+        """Get Groq model name from config, default to llama-3.3-70b-versatile.
+        Validates that the model is a valid Groq model, not Gemini."""
         config = self.get_config()
+        
+        # Valid Groq model prefixes
+        VALID_GROQ_PREFIXES = ('llama', 'mixtral', 'gemma', 'whisper')
+        
         # Try to get model from various possible locations
         model = config.get("model", {}).get("name")
         if not model:
@@ -161,7 +166,13 @@ class FirestoreConfigLoader:
                 model = cat_config.get("groqModel")
                 if model:
                     break
-        return model or "llama-3.3-70b-versatile"
+        
+        # Validate the model is actually a Groq model (not Gemini)
+        if model and any(model.lower().startswith(prefix) for prefix in VALID_GROQ_PREFIXES):
+            return model
+        
+        # Default to reliable Groq model
+        return "llama-3.3-70b-versatile"
 
 
 # Global config loader instance

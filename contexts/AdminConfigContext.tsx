@@ -66,26 +66,7 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
                     data.model.name = 'gemini-2.5-flash';
                 }
 
-                // Migration: Fix incorrect IP address (Foreign IP -> Localhost)
-                const OLD_IP = '203.159.242.165';
-                if (data.apiKeys) {
-                    let needsUpdate = false;
-                    ['school', 'student'].forEach((cat) => {
-                        const url = data.apiKeys[cat]?.flaskApiUrl || '';
-                        if (url.includes(OLD_IP)) {
-                            console.log(`[Config] Migrating incorrect IP for ${cat}: ${url} -> http://127.0.0.1:5001`);
-                            data.apiKeys[cat].flaskApiUrl = 'http://127.0.0.1:5001';
-                            needsUpdate = true;
-                        }
-                    });
-
-                    if (needsUpdate) {
-                        const docRef = doc(db, 'settings', CONFIG_DOC_ID);
-                        setDoc(docRef, { apiKeys: data.apiKeys }, { merge: true }).catch(err =>
-                            console.error("[Config] Failed to save IP fix:", err)
-                        );
-                    }
-                }
+                // IP Migration logic removed to prevent overwriting localhost with unreachable IPs
 
                 // IMPORTANT: Force sync prompts if DEFAULT_CONFIG has newer version
                 const firestoreVersion = data.prompts?.version || 0;

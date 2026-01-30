@@ -1,8 +1,33 @@
 /**
  * Chatbot API Client
  * สำหรับเชื่อมต่อกับ Flask Chatbot API (Education Statistics)
- * @version 1.0.0
+ * @version 1.1.0
  */
+
+/**
+ * Auto-detect Flask API URL based on browser location
+ * - localhost/127.0.0.1 → http://127.0.0.1:5001
+ * - Network IP → Same IP with port 5001
+ * @param {number} port - Flask port (default: 5001)
+ * @returns {string} Flask API base URL
+ */
+export function getFlaskBaseUrl(port = 5001) {
+    if (typeof window === 'undefined') {
+        // Node.js environment - return localhost
+        return `http://127.0.0.1:${port}`;
+    }
+
+    const hostname = window.location.hostname;
+
+    // localhost or 127.0.0.1 → use localhost
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        return `http://127.0.0.1:${port}`;
+    }
+
+    // Network IP or domain → use same host with Flask port
+    return `http://${hostname}:${port}`;
+}
+
 
 /**
  * @typedef {Object} ChatMessage

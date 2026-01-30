@@ -68,37 +68,40 @@ const generateThinkingStatus = (question: string): string[] => {
 
   // School-related keywords
   if (lower.includes('โรงเรียน') || lower.includes('สถานศึกษา') || lower.includes('ร.ร.')) {
-    statuses.push('🔍 กำลังค้นหาข้อมูลโรงเรียน...');
-    statuses.push('📊 กำลังรวบรวมข้อมูลสถานศึกษา...');
+    statuses.push('น้องดีโอกำลังค้นหาข้อมูลโรงเรียนครับ...');
   }
 
   // Location keywords
   if (lower.includes('จังหวัด') || lower.includes('อำเภอ') || lower.includes('ตำบล') || lower.includes('เขต')) {
-    statuses.push('🗺️ กำลังค้นหาข้อมูลพื้นที่...');
+    statuses.push('น้องดีโอกำลังค้นหาข้อมูลพื้นที่ครับ...');
   }
 
   // Statistics keywords
   if (lower.includes('สถิติ') || lower.includes('จำนวน') || lower.includes('กี่')) {
-    statuses.push('📈 กำลังประมวลผลข้อมูลสถิติ...');
+    statuses.push('น้องดีโอกำลังประมวลผลข้อมูลครับ...');
   }
 
   // Comparison keywords
   if (lower.includes('เปรียบเทียบ') || lower.includes('มากที่สุด') || lower.includes('น้อยที่สุด')) {
-    statuses.push('⚖️ กำลังเปรียบเทียบข้อมูล...');
+    statuses.push('น้องดีโอกำลังเปรียบเทียบข้อมูลครับ...');
   }
 
   // Student keywords
   if (lower.includes('นักเรียน') || lower.includes('เด็ก') || lower.includes('นักศึกษา')) {
-    statuses.push('👨‍🎓 กำลังค้นหาข้อมูลนักเรียน...');
+    statuses.push('น้องดีโอกำลังค้นหาข้อมูลนักเรียนครับ...');
+  }
+
+  // Teacher keywords
+  if (lower.includes('ครู') || lower.includes('บุคลากร') || lower.includes('อาจารย์')) {
+    statuses.push('น้องดีโอกำลังค้นหาข้อมูลบุคลากรครับ...');
   }
 
   // Default
   if (statuses.length === 0) {
-    statuses.push('🤔 กำลังวิเคราะห์คำถาม...');
-    statuses.push('💭 กำลังคิดคำตอบ...');
+    statuses.push('น้องดีโอกำลังวิเคราะห์คำถามครับ...');
   }
 
-  statuses.push('✍️ กำลังเรียบเรียงคำตอบ...');
+  statuses.push('น้องดีโอกำลังเรียบเรียงคำตอบครับ...');
 
   return statuses;
 };
@@ -210,6 +213,30 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
     rawMain = rawMain.trim();
     rawMain = rawMain.replace(/([^\n])\n(-|\*|\d+\.)\s/g, '$1\n\n$2 ');
     rawMain = rawMain.replace(/([^\n])\n(#{1,6})\s/g, '$1\n\n$2 ');
+
+    // ✨ CLEANUP: If Chart exists, remove Markdown Tables to avoid redundancy
+    if (cStart !== -1) { // If chart was found
+      const lines = rawMain.split('\n');
+      rawMain = lines.filter(line => {
+        const trim = line.trim();
+        // 1. Remove standard pipe tables (Start with |)
+        if (trim.startsWith('|')) return false;
+        // 2. Remove separator lines (e.g. ---|---)
+        if (trim.match(/^-+\s*\|\s*-+$/) || trim.match(/^:?-+:?\s*\|\s*:?-+:?$/)) return false;
+        // 3. Remove rows that look like table data if they are adjacent to separators?
+        // Hard to do stateful filtering in single pass.
+        // Let's rely on standard practice: Most LLMs output | at start for clean tables.
+        // But just in case, catch common separator patterns.
+
+        // Heuristic: If line contains | and ---, it's likely a table part
+        if (trim.includes('|') && trim.includes('---')) return false;
+
+        return true;
+      }).join('\n');
+
+      // Remove empty lines left behind
+      rawMain = rawMain.replace(/\n{3,}/g, '\n\n');
+    }
 
     setThinkingContent(rawThink);
     setDisplayedMainContent(rawMain);
@@ -598,20 +625,22 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                         hr: () => (
                           <hr className="my-5 border-t border-gray-200/50" />
                         ),
-                        // Tables - Clean Gemini style
+                        // Tables - HIDE when Chart is present to avoid redundancy/clutter
                         table: ({ children }) => (
-                          <div className="my-4 overflow-x-auto rounded-xl border border-gray-200/60 shadow-sm">
-                            <table className="w-full text-[14px]">{children}</table>
-                          </div>
+                          chartData ? null : (
+                            <div className="my-4 overflow-x-auto rounded-xl border border-gray-200/60 shadow-sm">
+                              <table className="w-full text-[14px]">{children}</table>
+                            </div>
+                          )
                         ),
                         thead: ({ children }) => (
-                          <thead className="bg-gray-50/60">{children}</thead>
+                          chartData ? null : <thead className="bg-gray-50/60">{children}</thead>
                         ),
                         th: ({ children }) => (
-                          <th className="px-4 py-2 text-left font-semibold text-gray-700 border-b-2 border-gray-200">{children}</th>
+                          chartData ? null : <th className="px-4 py-2 text-left font-semibold text-gray-700 border-b-2 border-gray-200">{children}</th>
                         ),
                         td: ({ children }) => (
-                          <td className="px-4 py-2 border-b border-gray-100 text-gray-700">{children}</td>
+                          chartData ? null : <td className="px-4 py-2 border-b border-gray-100 text-gray-700">{children}</td>
                         ),
                       }}
                     >
@@ -642,6 +671,7 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                   longitude={mapData.longitude}
                   schoolName={mapData.schoolName}
                   address={mapData.address}
+                  markers={mapData.markers}
                 />
               </div>
             )}

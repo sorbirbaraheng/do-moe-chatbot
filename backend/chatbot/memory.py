@@ -36,6 +36,8 @@ class ConversationMemory:
             self.last_level = parsed.level
         if parsed.agency:
             self.last_agency = parsed.agency
+        if parsed.school_name:
+             self.last_school_name = parsed.school_name
         if original_query:
             self.last_query = original_query
     
@@ -126,6 +128,13 @@ class ConversationMemory:
             if self.last_intent and parsed.intent == QueryIntent.COUNT:
                 parsed.intent = self.last_intent
                 logger.info(f"   ✅ Applied intent: {self.last_intent.value}")
+        
+        # NEW: Restore school name context
+        # If we have a stored school name, and the user hasn't specified a new one,
+        # and hasn't specified a new location (province/region), assume they're still talking about the same school.
+        if self.last_school_name and not parsed.school_name and not parsed.province and not parsed.region:
+             parsed.school_name = self.last_school_name
+             logger.info(f"   🏫 Applied school name from memory: {self.last_school_name}")
         
         return parsed
     

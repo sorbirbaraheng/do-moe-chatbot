@@ -92,7 +92,7 @@ REGIONS["ภาคอีสาน"] = REGIONS["ภาคตะวันออก
 # =====================================================================
 COLLECTIONS = {
     # Primary v5 collections (recommended)
-    "schools": "edu_schools_v5",      # โรงเรียน + GPS + นักเรียนรวม + ครู
+    "schools": "edu_schools_v6",      # โรงเรียน + GPS + นักเรียนรวม + ครู
     "students": "edu_students_v5",    # นักเรียน แยกระดับชั้น + เพศ
     "teachers": "edu_teachers_v5",    # ครู แยกเพศ
     
@@ -112,8 +112,11 @@ COLLECTIONS = {
     "district": "education_statistics_district",
 }
 
+# Alias for cleaner imports in other modules
+COLLECTION_NAMES = COLLECTIONS
+
 # Primary collection for RAG queries
-PRIMARY_COLLECTION = "edu_schools_v5"
+PRIMARY_COLLECTION = "edu_schools_v6"
 
 # =====================================================================
 # SMART COLLECTION ROUTING
@@ -133,7 +136,7 @@ COLLECTION_KEYWORDS = {
         "ครูชาย", "ครูหญิง",
         "teacher", "teachers"
     ],
-    "edu_schools_v5": [
+    "edu_schools_v6": [
         "โรงเรียน", "ร.ร.", "รร", "สถานศึกษา",
         "ที่ตั้ง", "ที่อยู่", "อยู่ที่", "ตั้งอยู่",
         "พิกัด", "แผนที่", "GPS",
@@ -153,7 +156,7 @@ COLLECTION_KEYWORDS = {
 
 # Default search order when no specific keywords match
 COLLECTION_SEARCH_ORDER = [
-    "edu_schools_v5",
+    "edu_schools_v6",
     "edu_students_v5", 
     "edu_teachers_v5",
     "thailand_education"

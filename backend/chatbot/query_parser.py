@@ -5,7 +5,7 @@ Handles intent detection, entity extraction, and query normalization
 
 import re
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 from .types import QueryIntent, QueryLevel, ParsedQuery
 from .constants import (
@@ -85,6 +85,9 @@ class LLMIntentClassifier:
 
 ประเภทคำถาม (intent):
 - SCHOOL_COUNT: ถามจำนวนโรงเรียน เช่น "มีกี่โรง", "กี่โรงเรียน", "จำนวนเท่าไหร่"
+- STUDENT_COUNT: ถามจำนวนนักเรียน เช่น "มีนักเรียนกี่คน", "นักเรียนชายกี่คน", "นักเรียน ม.6 กี่คน"
+- TEACHER_COUNT: ถามจำนวนครู เช่น "มีครูกี่คน", "ครูผู้หญิงกี่คน", "จำนวนครู"
+- RATIO: ถามอัตราส่วนครูต่อนักเรียน
 - SCHOOL_LIST: ขอรายชื่อโรงเรียน เช่น "รายชื่อโรงเรียน", "โรงเรียนใน", "มีโรงเรียนอะไรบ้าง"
 - SCHOOL_DETAIL: ขอข้อมูลโรงเรียนเฉพาะ เช่น "ข้อมูลโรงเรียน...", "โรงเรียน...อยู่ที่ไหน", "เบอร์โทรโรงเรียน..."
 - SCHOOL_SEARCH: ค้นหาโรงเรียนจากชื่อบางส่วน เช่น "หาโรงเรียน...", "ค้นหาโรงเรียน..."
@@ -116,6 +119,12 @@ class LLMIntentClassifier:
 - ถ้ามี "ตำบล", "แขวง", "ต." → ใส่ชื่อตำบลใน subdistrict
 - ถ้ามี "อำเภอ", "เขต", "อ." → ใส่ชื่ออำเภอใน district  
 - ถ้ามี "จังหวัด", "จ." → ใส่ชื่อจังหวัดใน province
+
+**การดึงชื่อโรงเรียน (School Extraction):**
+- ให้ดึงชื่อเฉพาะออกมา แม้ไม่มีคำนำหน้า "โรงเรียน"
+- ตัวอย่าง: "ราชประชานุเคราะห์ 40" -> school_name: "ราชประชานุเคราะห์ 40"
+- ตัวอย่าง: "เตรียมอุดม" -> school_name: "เตรียมอุดม"
+- ตัวอย่าง: "เทพศิรินทร์" -> school_name: "เทพศิรินทร์"
 
 ตอบ JSON:
 {"intent": "...", "region": "..." หรือ null, "province": "..." หรือ null, "district": "..." หรือ null, "subdistrict": "..." หรือ null, "agency": "..." หรือ null, "school_name": "..." หรือ null, "threshold": ตัวเลข หรือ null}
@@ -196,7 +205,22 @@ class ResponseSynthesizer:
 • [ชื่อโรงเรียน 3]"
 
 ถ้าถามเปรียบเทียบ:
-"เปรียบเทียบแล้ว [พื้นที่ 1] มี XX แห่ง ส่วน [พื้นที่ 2] มี YY แห่ง..."
+"เปรียบเทียบแล้ว [พื้นที่ 1] มี โรงเรียน XX แห่ง ส่วน [พื้นที่ 2] มี YY แห่ง..."
+
+**กฎเหล็ก**: 
+1. 🚫 **ห้ามใช้ภาษาจีน (Chinese), ญี่ปุ่น (Japanese) หรือเกาหลี (Korean) เด็ดขาด** 
+2. 🚫 **ห้ามเติมคำว่า "学校" หรืออักษรต่างประเทศใดๆ ในชื่อโรงเรียน**
+3. ใช้ภาษาไทยเป็นหลักเท่านั้น (ยกเว้นคำทับศัพท์ที่จำเป็น)
+
+ถ้าเป็นการค้นหาแบบละเอียด (ADVANCED_SEARCH):
+"🔍 **ผลการค้นหา** [สรุปเงื่อนไขสั้นๆ] พบทั้งหมด **XX แห่ง** ครับ
+
+**รายชื่อโรงเรียน:**
+1. **[ชื่อโรงเรียน]** ([ตำบล/อำเภอ])
+   - 👥 นักเรียน: [จำนวน] คน | 👨‍🏫 ครู: [จำนวน] คน
+   - 🏢 สังกัด: [ชื่อเขตพื้นที่/สังกัด]
+   - 📍 [ทำลิงก์ Google Maps ถ้ามี lat,lon]
+2. [โรงเรียนที่ 2]... "
 
 **ห้าม**: ตอบแค่ตัวเลขรวมโดยไม่แยกตามสังกัด (ถ้าข้อมูลมี breakdown อยู่)
 
@@ -252,6 +276,7 @@ class SmartQueryParser:
         self._province_cache = {p.lower(): p for p in THAI_PROVINCES}
         self._alias_cache = {k.lower(): v for k, v in PROVINCE_ALIASES.items()}
         self.llm_classifier = LLMIntentClassifier()
+        self.llm = MultiProviderLLM(category="school")
         
         # Initialize LocationLookup for fuzzy province/district matching
         self.location_lookup = None
@@ -585,6 +610,9 @@ class SmartQueryParser:
         if llm_result:
             intent_mapping = {
                 'SCHOOL_COUNT': QueryIntent.SCHOOL_COUNT,
+                'STUDENT_COUNT': QueryIntent.STUDENT_COUNT,
+                'TEACHER_COUNT': QueryIntent.TEACHER_COUNT,
+                'RATIO': QueryIntent.RATIO,
                 'SCHOOL_LIST': QueryIntent.SCHOOL_LIST,
                 'SCHOOL_DETAIL': QueryIntent.SCHOOL_DETAIL,
                 'SCHOOL_SEARCH': QueryIntent.SCHOOL_SEARCH,
@@ -601,11 +629,110 @@ class SmartQueryParser:
             llm_intent = llm_result.get('intent', 'GENERAL')
             intent = intent_mapping.get(llm_intent, QueryIntent.UNKNOWN)
             
-            region = llm_result.get('region') or entities.get('region')
-            province = llm_result.get('province') or entities.get('province')
-            district = llm_result.get('district') or entities.get('district')
-            subdistrict = llm_result.get('subdistrict') or entities.get('subdistrict')
-            agency = llm_result.get('agency') or entities.get('agency')
+            # --- HYBRID EXTRACTION: Combine LLM entities with Regex fallback ---
+            llm_entities = {}
+            if self.llm:
+                # Use a specific prompt to extract detailed filters
+                llm_entities = self._extract_entities_llm(query)
+            
+            # Merge: LLM entities override Regex entities for complex fields, 
+            # but we keep Regex for basic location if LLM missed it
+            for k, v in llm_entities.items():
+                if v is not None and k not in entities: # Prioritize existing or new? Let's say LLM is smarter for areas
+                     entities[k] = v
+                elif v is not None and k in ['min_students', 'max_students', 'min_teachers', 'max_teachers', 'area_name', 'person_type']:
+                     entities[k] = v # Always trust LLM for these new fields
+            
+            # Extract standard fields
+            is_advanced_query = any(k in llm_entities for k in ['min_students', 'area_name', 'min_teachers', 'person_type'])
+            
+            if is_advanced_query:
+                # 🛑 STRICT MODE: For advanced queries, trust LLM 100% to avoid regex noise (e.g. "มากกว่า" -> district)
+                region = llm_result.get('region')
+                province = llm_result.get('province')
+                district = llm_result.get('district')
+                subdistrict = llm_result.get('subdistrict')
+                agency = llm_result.get('agency')
+                school_name = llm_result.get('school_name')
+            else:
+                # 🤝 HYBRID MODE: Fallback to regex for simple queries
+                region = llm_result.get('region') or entities.get('region')
+                province = llm_result.get('province') or entities.get('province')
+                district = llm_result.get('district') or entities.get('district')
+                subdistrict = llm_result.get('subdistrict') or entities.get('subdistrict')
+                agency = llm_result.get('agency') or entities.get('agency')
+                school_name = llm_result.get('school_name') or entities.get('school_name') 
+            
+            return ParsedQuery(
+                intent=intent,
+                original_query=query,
+                level=self.detect_level(query, entities),
+                province=province,
+                district=district,
+                subdistrict=subdistrict,
+                school_name=school_name,
+                agency=agency,
+                region=region,
+                # Populate new fields
+                min_students=entities.get('min_students'),
+                max_students=entities.get('max_students'),
+                min_teachers=entities.get('min_teachers'),
+                max_teachers=entities.get('max_teachers'),
+                area_name=entities.get('area_name'),
+                coordinates_intent=entities.get('coordinates_intent', False),
+                details_intent=entities.get('details_intent', False),
+                person_type=entities.get('person_type')
+            )
+
+    def _extract_entities_llm(self, query: str) -> Dict[str, Any]:
+        """Use LLM to extract advanced entities (students, teachers, area, etc.)"""
+        try:
+            prompt = f"""
+            Extract entities from this Thai education query.
+            Return ONLY a valid JSON object. No markdown.
+            
+            Query: "{query}"
+            
+            Fields to extract:
+            - min_students (int): e.g. "มากว่า 100 คน" -> 100
+            - max_students (int): e.g. "น้อยกว่า 500 คน" -> 500
+            - min_teachers (int)
+            - max_teachers (int)
+            - area_name (str): e.g. "สพป.ปัตตานี เขต 1", "สพม.สงขลา" (Normalize strictly if possible)
+            - person_type (str): e.g. "ลูกจ้างชั่วคราว", "พนักงานราชการ", "ครูอัตราจ้าง", "ครูธุรการ"
+            - coordinates_intent (bool): true if asking for map/location/gps
+            - details_intent (bool): true if asking for address/phone/details
+            - province (str): Thai province name
+            - district (str): Thai district name
+            - subdistrict (str): Thai subdistrict name
+            - school_name (str)
+            - agency (str)
+            
+            JSON:
+            """
+            
+            response = self.llm.generate_content(prompt)
+            if not response or not response.text:
+                return {}
+                
+            # Clean JSON
+            cleaned = response.text.strip()
+            if cleaned.startswith('```json'): prefix = 7
+            elif cleaned.startswith('```'): prefix = 3
+            else: prefix = 0
+            
+            if cleaned.endswith('```'): 
+                cleaned = cleaned[prefix:-3]
+            else:
+                cleaned = cleaned[prefix:]
+                
+            import json
+            data = json.loads(cleaned.strip())
+            return data
+            
+        except Exception as e:
+            logger.error(f"LLM Entity Extraction failed: {e}")
+            return {}
             school_name = llm_result.get('school_name')
             
             # Fix: If subdistrict is actually a region name, clear it and set region instead

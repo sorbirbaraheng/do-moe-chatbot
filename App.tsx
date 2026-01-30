@@ -910,38 +910,57 @@ const AppContent: React.FC = () => {
 
                 <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-32 pt-6">
                   {messages.length === 0 && (
-                    <div className="flex flex-col items-center justify-center min-h-[50vh] pt-8 md:pt-16 animate-in fade-in duration-700">
+                    <div className="flex flex-col items-center justify-center min-h-[60vh] pb-20 animate-in fade-in zoom-in-95 duration-1000 ease-out">
 
-                      {/* Unified DO AI Welcome */}
-                      <div className="text-center mb-10">
-                        <div className="w-20 h-20 mx-auto mb-6 rounded-3xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg">
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="white" className="w-10 h-10">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
-                          </svg>
+                      {/* Unified DO AI Welcome - Premium Apple Style */}
+                      <div className="text-center mb-12 relative group">
+                        {/* Ambient Glow */}
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-gradient-to-tr from-blue-400/30 to-purple-400/30 rounded-full blur-[60px] opacity-60 group-hover:opacity-100 transition-opacity duration-1000"></div>
+
+                        {/* Glass Icon Container */}
+                        <div className="relative w-24 h-24 mx-auto mb-8 rounded-[28px] bg-white/40 backdrop-blur-2xl border border-white/60 shadow-[0_20px_40px_-12px_rgba(0,0,0,0.1),inset_0_0_0_1px_rgba(255,255,255,0.5)] flex items-center justify-center overflow-hidden transition-transform duration-700 hover:scale-105 hover:rotate-3">
+                          <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-transparent opacity-50"></div>
+                          <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-[#007AFF] to-[#5856D6] flex items-center justify-center shadow-inner">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-8 h-8 drop-shadow-md">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
+                            </svg>
+                          </div>
                         </div>
-                        <h2 className="text-[28px] md:text-[34px] font-bold text-[#1D1D1F] tracking-tight mb-3">
-                          สวัสดีครับ! ผมคือ DO AI ✨
+
+                        <h2 className="text-[32px] md:text-[40px] font-bold text-[#1D1D1F] tracking-[-0.03em] mb-4 leading-tight">
+                          สวัสดีครับ! ผมคือ <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#007AFF] to-[#5856D6]">DO AI</span> ✨
                         </h2>
-                        <p className="text-[15px] md:text-[17px] text-[#86868B] font-medium max-w-lg mx-auto">
+                        <p className="text-[16px] md:text-[18px] text-gray-500 font-medium max-w-lg mx-auto leading-relaxed tracking-tight">
                           ถามได้ทุกเรื่องเกี่ยวกับข้อมูลการศึกษา ไม่ว่าจะเป็นโรงเรียน ครู นักเรียน หรือสถิติต่างๆ ผมพร้อมช่วยเหลือครับ!
                         </p>
                       </div>
 
-                      {/* Sample Questions Grid */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl">
+                      {/* Sample Questions Grid - Glassmorphism Cards */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl px-2">
                         {[
-                          "กรุงเทพมีโรงเรียนกี่แห่ง",
-                          "จำนวนครูในกรุงเทพ",
-                          "โรงเรียนที่มีนักเรียนมากที่สุด",
-                          "อัตราส่วนครูต่อนักเรียน"
-                        ].map((q, idx) => (
+                          { icon: "🏫", text: "กรุงเทพมีโรงเรียนกี่แห่ง" },
+                          { icon: "👨‍🏫", text: "จำนวนครูในกรุงเทพ" },
+                          { icon: "🏆", text: "โรงเรียนที่มีนักเรียนมากที่สุด" },
+                          { icon: "📊", text: "อัตราส่วนครูต่อนักเรียน" }
+                        ].map((item, idx) => (
                           <button
                             key={idx}
-                            onClick={() => handleSendMessage(q, null)}
-                            className="text-left px-5 py-4 rounded-2xl bg-gradient-to-br from-blue-50 to-purple-50 hover:from-blue-100 hover:to-purple-100 border border-blue-100 text-[14px] font-medium text-[#1D1D1F] hover:shadow-md transition-all duration-200"
+                            onClick={() => handleSendMessage(item.text, null)}
+                            className="group relative flex items-center gap-4 px-6 py-5 text-left rounded-[24px] bg-white/60 backdrop-blur-xl border border-white/60 shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_15px_40px_rgba(0,122,255,0.1),inset_0_0_0_1px_rgba(255,255,255,0.8)] hover:bg-white/80 hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
                           >
-                            <span className="text-blue-500 mr-2">💬</span>
-                            {q}
+                            <span className="w-10 h-10 flex items-center justify-center rounded-2xl bg-white shadow-sm text-lg border border-black/5 group-hover:scale-110 transition-transform duration-300">
+                              {item.icon}
+                            </span>
+                            <span className="text-[15px] font-semibold text-gray-700 group-hover:text-[#1D1D1F] transition-colors tracking-tight">
+                              {item.text}
+                            </span>
+
+                            {/* Hover Arrow */}
+                            <div className="absolute right-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300">
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="#007AFF" className="w-5 h-5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                              </svg>
+                            </div>
                           </button>
                         ))}
                       </div>

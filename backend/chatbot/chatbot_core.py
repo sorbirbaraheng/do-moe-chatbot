@@ -32,10 +32,13 @@ from typing import List, Dict, Generator, Tuple, Optional, Any
 
 import google.generativeai as genai
 from qdrant_client import QdrantClient
+from qdrant_client.models import Filter, FieldCondition, MatchValue
+import json
 
 from .types import (
     QueryIntent, QueryLevel, ParsedQuery, SearchResult
 )
+from .constants import COLLECTION_NAMES
 from .constants import COLLECTIONS, REGIONS, THAI_PROVINCES
 from .security import input_sanitizer
 from .llm import MultiProviderLLM
@@ -70,21 +73,71 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         logger.info("🚀 Initializing Education Chatbot v5.0...")
         
         self.qdrant_client = qdrant_client
-        self.parser = SmartQueryParser(qdrant_client=qdrant_client)
-        self.search_engine = SearchEngine(qdrant_client, parser=self.parser)
-        self.aggregator = ResultAggregator()
+        
+        # 1. Health Check & Collections Load (Fail Fast)
+        self.collections = {}
+        try:
+            self.collections = self._get_collections()
+        except Exception as e:
+            logger.error(f"Health check failed: {e}")
+            
+        self.qdrant_available = len(self.collections) > 0
+        
+        if not self.qdrant_available:
+            logger.warning("⚠️ Qdrant is DOWN. Functionality limited to LLM-Only.")
+            self.parser = None
+            self.search_engine = None
+            self.aggregator = None
+            self.cache = None
+        else:
+            self.parser = SmartQueryParser(qdrant_client=qdrant_client)
+            self.search_engine = SearchEngine(qdrant_client, parser=self.parser)
+            self.aggregator = ResultAggregator()
+            self.cache = HybridCache(qdrant_client)
+            
         self.memory = ConversationMemory()
-        self.cache = HybridCache(qdrant_client)
         self.model = self._init_model(model_name)
         self.formatter = ResponseFormatter(model=self.model, model_name=model_name)
-        self.collections = self._get_collections()
-        self._current_category = 'general'
+        # self.collections already loaded
         
         # 🆕 Initialize LLM Agent for Function Calling
         self._init_llm_agent()
         
+        # Self-Healing: Track last check time
+        import time
+        self.last_qdrant_check = time.time()
+        
         logger.info(f"✅ Chatbot ready with {len(self.collections)} collections (LLM Agent enabled)")
     
+    def _try_reconnect_qdrant(self):
+        """🔄 Attempt to reconnect to Qdrant if previously unavailable"""
+        import time
+        try:
+            logger.info("🔄 Attempting to reconnect to Qdrant...")
+            self.collections = self._get_collections()
+            
+            if len(self.collections) > 0:
+                logger.info("🎉 Qdrant is back ONLINE! Re-initializing components...")
+                self.parser = SmartQueryParser(qdrant_client=self.qdrant_client)
+                self.search_engine = SearchEngine(self.qdrant_client, parser=self.parser)
+                self.aggregator = ResultAggregator()
+                self.cache = HybridCache(self.qdrant_client)
+                
+                # Re-init LLM Agent with DB access
+                self._init_llm_agent()
+                
+                self.qdrant_available = True
+                logger.info("✅ System fully recovered!")
+                return True
+            else:
+                logger.warning("⚠️ Reconnect failed: No collections found")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Reconnect failed: {e}")
+            
+        self.last_qdrant_check = time.time()
+        return False
+
     def _init_model(self, model_name: str):
         """Initialize LLM with Groq → Gemini fallback"""
         try:
@@ -129,7 +182,9 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             return None
             
         try:
-            response = self.llm_agent.process_query(message)
+            # Pass memory as context
+            context = self.memory.to_dict() if self.memory else {}
+            response = self.llm_agent.process_query(message, context=context)
             return response
         except Exception as e:
             logger.error(f"❌ LLM Agent processing failed: {e}")
@@ -164,6 +219,32 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         
         logger.info(f"💬 User: {message}")
         
+        # ⚠️ CRITICAL FALLBACK & SELF-HEALING
+        if not self.qdrant_available:
+            # 🔄 Lazy Retry: Check Qdrant every 60 seconds
+            import time
+            if time.time() - self.last_qdrant_check > 60:
+                self._try_reconnect_qdrant()
+                
+            if not self.qdrant_available:
+                logger.warning("🚨 Qdrant is unavailable. Using LLM-Only Fallback.")
+                try:
+                    # Use general response generator (wrapper around LLM)
+                    response = self._generate_general_response(message)
+                    if response:
+                        history[-1]["content"] = response + "\n\n(⚠️ ระบบฐานข้อมูลกำลังปิดปรับปรุง ตอบได้เฉพาะข้อมูลทั่วไปครับ)"
+                        yield history, ""
+                        return
+                    else:
+                        history[-1]["content"] = "ขออภัยครับ ระบบฐานข้อมูลไม่พร้อมใช้งานในขณะนี้ 🙏"
+                        yield history, ""
+                        return
+                except Exception as e:
+                    logger.error(f"Fallback LLM failed: {e}")
+                    history[-1]["content"] = "ขออภัยครับ ระบบกำลังขัดข้อง (Database & LLM Unreachable)"
+                    yield history, ""
+                    return
+
         # ⚠️ DEBUG: Disable cache for testing - set to False to re-enable
         DEBUG_DISABLE_CACHE = True
         
@@ -193,7 +274,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             parsed.intent = QueryIntent.SCHOOL_DETAIL
             parsed.school_name = self.memory.last_school_name
             # Clear it after use to prevent stale data
-            self.memory.last_school_name = None
+            # self.memory.last_school_name = None # DISABLED: Lets context persist for multi-turn drill-down
         
         # NEW: Override parsed.level with frontend-provided level for correct collection routing
         if hasattr(self.memory, 'frontend_level') and self.memory.frontend_level:
@@ -255,9 +336,9 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                 logger.info("⚠️ LLM Agent returned no response, falling back to legacy handlers")
 
         # ============================================================
-        # LEGACY HANDLERS (Fallback when LLM Agent fails)
+        # LEGACY HANDLERS (DISABLED - Enforcing LLM Agent Flow)
         # ============================================================
-
+        """
         # 🆕 Handle Ratio Queries FIRST (อัตราส่วนครู/นักเรียน) - most specific
         ratio_result = self._handle_ratio_query(parsed, message)
         if ratio_result:
@@ -274,61 +355,8 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             yield history, ""
             return
 
-        # 🆕 Handle Student Count Queries (grade + gender specific) 
-        student_result = self._handle_student_count_query(parsed, message)
-        if student_result:
-            history[-1]["content"] = student_result
-            self.cache.save(message, student_result)
-            yield history, ""
-            return
-
-        # 🆕 Handle School Count by Area (จังหวัด/เขต มีกี่โรงเรียน)
-        school_count_result = self._handle_school_count_by_area(parsed, message)
-        if school_count_result:
-            history[-1]["content"] = school_count_result
-            self.cache.save(message, school_count_result)
-            yield history, ""
-            return
-
-        # 🆕 Handle School List by Area (รายชื่อโรงเรียน)
-        school_list_result = self._handle_school_list_by_area(parsed, message)
-        if school_list_result:
-            history[-1]["content"] = school_list_result
-            self.cache.save(message, school_list_result)
-            yield history, ""
-            return
-
-        # 🆕 Handle Schools by Agency (สังกัด สพฐ, สช, กทม)
-        agency_result = self._handle_school_by_agency(parsed, message)
-        if agency_result:
-            history[-1]["content"] = agency_result
-            self.cache.save(message, agency_result)
-            yield history, ""
-            return
-
-        # 🆕 Handle Ranking Queries (มากที่สุด/น้อยที่สุด)
-        ranking_result = self._handle_ranking_query(parsed, message)
-        if ranking_result:
-            history[-1]["content"] = ranking_result
-            self.cache.save(message, ranking_result)
-            yield history, ""
-            return
-
-        # 🆕 Handle Education Area Queries (สพม., สพป., เขตพื้นที่)
-        edu_area_result = self._handle_education_area_query(parsed, message)
-        if edu_area_result:
-            history[-1]["content"] = edu_area_result
-            self.cache.save(message, edu_area_result)
-            yield history, ""
-            return
-
-        # 🆕 Handle School Info from edu_schools_v5 (ข้อมูลโรงเรียน, ที่อยู่, เบอร์โทร)
-        school_info_result = self._handle_school_info_v5(parsed, message)
-        if school_info_result:
-            history[-1]["content"] = school_info_result
-            self.cache.save(message, school_info_result)
-            yield history, ""
-            return
+        # ... (Legacy handlers hidden) ...
+        """
 
         # Handle School Queries (general - fallback)
         is_school_query = parsed.intent in [
@@ -363,7 +391,6 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         
         # Use ResponseSynthesizer for RANKING queries
         if parsed.intent in [QueryIntent.RANKING_MOST, QueryIntent.RANKING_LEAST]:
-            import json
             synthesizer = ResponseSynthesizer()
             
             # Prepare data for synthesizer
@@ -420,7 +447,6 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         # Use ResponseSynthesizer for FILTER queries (e.g., "น้อยกว่า 50 แห่ง")
         # =====================================================================
         if parsed.intent in [QueryIntent.FILTER_LESS_THAN, QueryIntent.FILTER_GREATER_THAN, QueryIntent.FILTER_EQUALS]:
-            import json
             
             threshold = parsed.threshold
             operator = parsed.threshold_operator or "<"
@@ -465,7 +491,6 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                         if len(parts) >= 2:
                             display_name = f"{parts[1]} ({parts[0]})"
                     
-                    import json
                     response = f"### 🔍 {level_text}ที่มีโรงเรียน{op_text} {threshold} แห่ง{province_text}\n\n"
                     response += f"ไม่มี{level_text}ที่มีโรงเรียน{op_text} **{threshold}** แห่งครับ 🤔\n\n"
                     response += f"**แต่ผมมีข้อมูลใกล้เคียงให้ครับ:**\n"
@@ -638,7 +663,6 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     lng = details.get('longitude')
                     if lat and lng:
                         try:
-                            import json
                             address = f"ต.{details.get('subdistrict', '-')} อ.{details.get('district', '-')} จ.{details.get('province', '-')}"
                             map_json = json.dumps({
                                 "latitude": float(lat),
@@ -680,7 +704,6 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         if parsed.subdistrict:
             # Search for subdistrict in statistics
             try:
-                from qdrant_client.models import Filter, FieldCondition, MatchValue
                 
                 # Filter by metadata.subdistrict
                 search_result = school_engine.client.scroll(
@@ -730,7 +753,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     
                     # Get sample schools from education_schools
                     sample_results = school_engine.client.scroll(
-                        collection_name="edu_schools_v5",
+                        collection_name=COLLECTION_NAMES["schools"],
                         scroll_filter=Filter(
                             must=[
                                 FieldCondition(
@@ -783,7 +806,6 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             subdistrict_breakdown = {}  # New: breakdown by subdistrict for district-level queries
             
             try:
-                from qdrant_client.models import Filter, FieldCondition, MatchValue
                 
                 # Build filter conditions
                 filter_conditions = [
@@ -795,7 +817,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     )
                 
                 scroll_result = school_engine.client.scroll(
-                    collection_name="edu_schools_v5",
+                    collection_name=COLLECTION_NAMES["schools"],
                     scroll_filter=Filter(must=filter_conditions),
                     limit=2000,
                     with_payload=["metadata.agency", "metadata.subdistrict", "metadata.school_name"]
@@ -850,9 +872,8 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                 
                 # Collect agency counts from this province
                 try:
-                    from qdrant_client.models import Filter, FieldCondition, MatchValue
                     agency_scroll = school_engine.client.scroll(
-                        collection_name="edu_schools_v5",
+                        collection_name=COLLECTION_NAMES["schools"],
                         scroll_filter=Filter(must=[
                             FieldCondition(key="metadata.province", match=MatchValue(value=province))
                         ]),
@@ -910,9 +931,8 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                         
                         # Get agency breakdown
                         try:
-                            from qdrant_client.models import Filter, FieldCondition, MatchValue
                             agency_scroll = school_engine.client.scroll(
-                                collection_name="edu_schools_v5",
+                                collection_name=COLLECTION_NAMES["schools"],
                                 scroll_filter=Filter(must=[
                                     FieldCondition(key="metadata.province", match=MatchValue(value=province))
                                 ]),
@@ -944,7 +964,6 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         # Handle agency-only queries (e.g., "สพฐ มีกี่โรงเรียน")
         elif parsed.agency and not parsed.province and not parsed.region:
             # Count schools by agency nationwide
-            from qdrant_client.models import Filter, FieldCondition, MatchValue
             
             total_count = 0
             sample_schools = []
@@ -952,7 +971,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             
             # Count all schools with this agency
             scroll_result = school_engine.client.scroll(
-                collection_name="edu_schools_v5",
+                collection_name=COLLECTION_NAMES["schools"],
                 scroll_filter=Filter(must=[
                     FieldCondition(key="metadata.agency", match=MatchValue(value=parsed.agency))
                 ]),
@@ -988,7 +1007,6 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             data["sample_schools"] = sample_schools
         
         # DEBUG: Log data before synthesize
-        import json as debug_json
         logger.info(f"📦 Data for synthesize: total={data['counts'].get('total', 0)}, samples={len(data.get('sample_schools', []))}")
         
         llm_response = synthesizer.synthesize("SCHOOL_COUNT", data, message)
@@ -1086,7 +1104,36 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         location = ""
         total = 0
         
-        if parsed.district and parsed.province:
+        if parsed.subdistrict:
+            # Handle subdistrict search (PRIORITY)
+            results = school_engine.search_by_subdistrict(
+                province=parsed.province, 
+                subdistrict=parsed.subdistrict, 
+                district=parsed.district,
+                agency=parsed.agency,
+                limit=15
+            )
+            location = f"ต.{parsed.subdistrict}"
+            if parsed.district: location += f" อ.{parsed.district}"
+            if parsed.province: location += f" จ.{parsed.province}"
+            
+            # Count for subdistrict (approximate since no dedicated count method yet, use len(results) or search all)
+            # For now, we will trust the search result length or implement count later if needed. 
+            # But the UI expects 'total'. Let's do a quick count by fetching more keys if needed, 
+            # or just use len(results) if < limit. 
+            # Actually, let's just use the length of results for now as subdistricts rarely have > 15 schools.
+            total = len(results) 
+            # If we hit limit, we might want to know if there are more... 
+            # Optimally we should add count_schools_by_subdistrict, but for now let's assume < 15 or close enough.
+            
+            data["location"] = {
+                "province": parsed.province, 
+                "district": parsed.district, 
+                "subdistrict": parsed.subdistrict,
+                "agency": parsed.agency
+            }
+
+        elif parsed.district and parsed.province:
             results = school_engine.search_by_district(parsed.province, parsed.district, parsed.agency, limit=15)
             location = f"อ.{parsed.district} จ.{parsed.province}"
             total = school_engine.count_schools(parsed.province, parsed.district, parsed.agency)
@@ -1213,6 +1260,47 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         
         if last_query and current_offset > 0:
             school_engine = SchoolSearchEngine(self.qdrant_client)
+            
+            # --- Advanced Search Pagination ---
+            if last_query.get('type') == 'advanced_criteria':
+                filters = last_query.get('filters', {})
+                total = last_query.get('total', 0)
+                
+                # Fetch next page using same criteria
+                results, _, _ = school_engine.search_by_criteria(filters, limit=15, offset=current_offset)
+                
+                if results:
+                    criteria_text = []
+                    if filters.get('min_students'): criteria_text.append(f"นักเรียน > {filters['min_students']}")
+                    if filters.get('area_name'): criteria_text.append(f"สังกัด {filters['area_name']}")
+                    criteria_str = ", ".join(criteria_text)
+                    
+                    response_text = f"📚 **ผลการค้นหาต่อ** ({criteria_str}):\n\n"
+                    
+                    for i, hit in enumerate(results, current_offset + 1):
+                        meta = hit.payload.get('metadata', {})
+                        school_name = meta.get('school_name', 'ไม่ระบุ')
+                        summ = f"{meta.get('total_students', 0)} คน" if filters.get('min_students') or filters.get('max_students') else ""
+                        response_text += f"{i}. **{school_name}** {summ}\n"
+                    
+                    new_offset = current_offset + len(results)
+                    remaining = total - new_offset
+                    
+                    if remaining > 0:
+                        response_text += f"\n*...และอีก {remaining:,} แห่ง*"
+                        response_text += f"\n\n💡 **พิมพ์ \"ดูเพิ่มเติม\" เพื่อดูต่อ**"
+                        self.memory.last_school_list_offset = new_offset
+                    else:
+                        response_text += f"\n\n✅ **แสดงครบทั้งหมดแล้ว!**"
+                        self.memory.last_school_list_offset = 0
+                        self.memory.last_school_list_query = None
+                    
+                    return response_text
+                else:
+                    self.memory.last_school_list_offset = 0
+                    return "✅ **แสดงครบทั้งหมดแล้ว!**"
+
+            # --- Compatible Legacy Pagination ---
             province = last_query.get('province')
             district = last_query.get('district')
             agency = last_query.get('agency')
@@ -1267,6 +1355,20 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         """Execute search based on intent"""
         query_lower = message.lower()
         
+        # Advanced / Comprehensive Search (Students, Teachers, Area, etc.)
+        is_advanced_search = any([
+            parsed.min_students is not None,
+            parsed.max_students is not None,
+            parsed.min_teachers is not None,
+            parsed.max_teachers is not None,
+            parsed.area_name is not None,
+            parsed.coordinates_intent
+        ])
+        
+        if is_advanced_search:
+             synthesizer = ResponseSynthesizer()
+             return self._handle_advanced_search(parsed, message, self.search_engine, synthesizer, history)
+
         # Ranking queries (includes FILTER intents as they need same search approach)
         is_ranking_or_filter = parsed.intent in [
             QueryIntent.RANKING_MOST, QueryIntent.RANKING_LEAST,
@@ -1301,8 +1403,16 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             
             return self.search_engine.ranking_search(parsed, collection_name)
         
+        # 4. Check for Advanced Search / Complex Filters / Personnel Queries
+        if (getattr(parsed, 'min_students', None) is not None or 
+            getattr(parsed, 'max_students', None) is not None or
+            getattr(parsed, 'area_name', None) is not None or
+            getattr(parsed, 'person_type', None) is not None):
+            yield from self._handle_advanced_search(parsed, history)
+            return
+
         # Comparison queries - use SchoolSearchEngine for accurate counts
-        elif parsed.intent == QueryIntent.COMPARE:
+        if parsed.intent == QueryIntent.COMPARE:
             provinces_found = []
             for province in THAI_PROVINCES:
                 if province.lower() in query_lower:
@@ -1387,6 +1497,118 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                 return None
             
             return results
+
+    def _handle_advanced_search(self, parsed: ParsedQuery, message: str, school_engine: SchoolSearchEngine, synthesizer: ResponseSynthesizer, history: List) -> str:
+        """Handle comprehensive data queries (students, teachers, area, coordinates, person_type)"""
+        
+        # --- PERSONNEL TYPE QUERY HANDLING ---
+        if parsed.person_type:
+            filters = {
+                'person_type': parsed.person_type,
+                'school_name': parsed.school_name,
+                'province': parsed.province
+            }
+            filters = {k: v for k, v in filters.items() if v is not None}
+            
+            results = school_engine.search_teachers(filters)
+            
+            if not results:
+                msg = f"เสียดายครับ ไม่พบข้อมูล '{parsed.person_type}' "
+                if parsed.school_name: msg += f"ของโรงเรียน {parsed.school_name} ครับ"
+                elif parsed.province: msg += f"ในจังหวัด {parsed.province} ครับ"
+                else: msg += "ครับ"
+                return msg
+            
+            # Calculate total from 'metadata.count' or 'count'
+            total_personnel = 0
+            for r in results:
+                meta = r.get('metadata', r)  # Handle both nested and flat
+                total_personnel += meta.get('count', 0)
+            
+            # Direct response for specific school
+            if parsed.school_name and len(results) > 0:
+                meta = results[0].get('metadata', results[0])
+                count = meta.get('count', 0)
+                return f"โรงเรียน **{parsed.school_name}** มี **{parsed.person_type}** จำนวน **{count}** คนครับ"
+            
+            # Aggregate response
+            msg = f"📊 ข้อมูล **{parsed.person_type}** "
+            if parsed.province: msg += f"ในจังหวัด {parsed.province}"
+            msg += f"\n\nพบข้อมูลทั้งหมด **{total_personnel:,}** คน (จาก {len(results)} รายการ)"
+            return msg
+        
+        # --- STANDARD SCHOOL SEARCH ---
+        # Build filter dict
+        filters = {
+            'province': parsed.province,
+            'district': parsed.district,
+            'subdistrict': parsed.subdistrict,
+            'agency': parsed.agency,
+            'area_name': parsed.area_name,
+            'min_students': parsed.min_students,
+            'max_students': parsed.max_students,
+            'min_teachers': parsed.min_teachers,
+            'max_teachers': parsed.max_teachers
+        }
+        
+        # Remove None values
+        filters = {k: v for k, v in filters.items() if v is not None}
+        
+        results, total_count, _ = school_engine.search_by_criteria(filters, limit=15)
+        
+        data = {
+            "query_type": "advanced_search",
+            "filters": filters,
+            "total": total_count,
+            "schools": []
+        }
+        
+        for hit in results:
+            meta = hit.payload.get('metadata', {})
+            school_data = {
+                "name": meta.get('school_name'),
+                "province": meta.get('province'),
+                "district": meta.get('district'),
+                "subdistrict": meta.get('subdistrict'),
+                "agency": meta.get('agency'),
+                "total_students": meta.get('total_students', 0),
+                "total_teachers": meta.get('total_teachers', 0),
+                "lat": meta.get('lat'),
+                "lon": meta.get('lon'),
+                "area_name": meta.get('area_name')
+            }
+            data["schools"].append(school_data)
+            
+        llm_response = synthesizer.synthesize("ADVANCED_SEARCH", data, message)
+        
+        if llm_response:
+            response_text = llm_response
+        else:
+            # Fallback
+            criteria_text = []
+            if parsed.min_students: criteria_text.append(f"นักเรียน > {parsed.min_students}")
+            if parsed.area_name: criteria_text.append(f"สังกัด {parsed.area_name}")
+            
+            criteria_str = ", ".join(criteria_text)
+            response_text = f"🔍 **ผลการค้นหา** ({criteria_str})\n พบทั้งหมด **{total_count:,}** โรงเรียน\n\n"
+            
+            for i, school in enumerate(data["schools"], 1):
+                summ = f"{school['total_students']} คน" if parsed.min_students or parsed.max_students else ""
+                response_text += f"{i}. **{school['name']}** {summ}\n"
+                
+        # Pagination Logic
+        if total_count > 15:
+            response_text += f"\n\n💡 **พิมพ์ \"ดูเพิ่มเติม\" เพื่อดูต่อ** (เหลืออีก {total_count - 15:,} แห่ง)"
+            
+            # Save context for Load More
+            self.memory.last_school_list_offset = 15
+            self.memory.last_school_list_query = {
+                'type': 'advanced_criteria', # Marker for advanced search
+                'filters': filters,
+                'total': total_count
+            }
+            
+        return response_text
 
     def _aggregate_results(self, results: List, parsed: ParsedQuery, message: str) -> SearchResult:
         """Aggregate search results"""

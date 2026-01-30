@@ -92,8 +92,9 @@ class MultiProviderLLM:
                 genai.configure(api_key=self.gemini_keys[0])
                 logger.info(f"✅ Loaded {len(self.gemini_keys)} Gemini keys (unified mode)")
             elif GEMINI_API_KEY:
+                 self.gemini_keys = [GEMINI_API_KEY]
                  genai.configure(api_key=GEMINI_API_KEY)
-                 logger.info("✅ Gemini key loaded from .env")
+                 logger.info("✅ Gemini key loaded from .env (Fallback enabled)")
                 
         except Exception as e:
             logger.warning(f"⚠️ Firestore config load failed: {e}")
@@ -145,18 +146,28 @@ class MultiProviderLLM:
         except Exception as e:
             pass  # Silent fail, use existing keys
     
-    def generate_content(self, prompt: str, timeout: int = 30, **kwargs) -> LLMResponse:
-        """Generate content using Groq first (with key rotation), then Gemini as fallback"""
-        # Note: **kwargs absorbs arguments like 'stream' that might be passed but not supported yet
+    def _get_next_gemini_key(self) -> Optional[str]:
+        """Get next Gemini key in rotation"""
+        if not getattr(self, 'gemini_keys', []):
+             return None
         
-        # Hot-reload keys from config (picks up Admin Panel changes)
+        # Initialize index if not set
+        if not hasattr(self, 'gemini_key_index'):
+            self.gemini_key_index = 0
+            
+        key = self.gemini_keys[self.gemini_key_index]
+        self.gemini_key_index = (self.gemini_key_index + 1) % len(self.gemini_keys)
+        return key
+
+    def generate_content(self, prompt: str, timeout: int = 30, **kwargs) -> LLMResponse:
+        """Generate content using Groq first (with key rotation), then Gemini as fallback (with rotation)"""
+        
+        # Hot-reload keys from config
         self._reload_keys_if_needed()
         
-        # Try Groq first
+        # 1. Try Groq (Primary)
         if self.groq_keys:
-            # Try ALL available keys before giving up
             max_retries = len(self.groq_keys) 
-            
             for i in range(max_retries):
                 current_key = self._get_next_groq_key()
                 try:
@@ -164,21 +175,36 @@ class MultiProviderLLM:
                     if response:
                         return LLMResponse(text=response, provider="groq")
                 except Exception as e:
-                    # Only log warning if it's not the last retry
                     if i < max_retries - 1:
                          logger.warning(f"⚠️ Groq attempt {i+1} failed ({str(e)[:50]}...), retrying with next key...")
-                    else:
-                         logger.warning(f"⚠️ Groq all attempts failed: {e}")
         
-        # Fallback to Gemini
-        try:
-            if self.gemini_model:
-                logger.info("⚡ Falling back to Gemini...")
-                response = self.gemini_model.generate_content(prompt)
-                return LLMResponse(text=response.text, provider="gemini")
-        except Exception as e:
-            logger.error(f"❌ Gemini fallback also failed: {e}")
-            raise
+        # 2. Fallback to Gemini (Secondary)
+        # Now with Rotation Support!
+        if getattr(self, 'gemini_keys', []):
+            max_gemini_retries = len(self.gemini_keys)
+            for i in range(max_gemini_retries):
+                try:
+                    # Rotate Key
+                    current_key = self._get_next_gemini_key()
+                    if current_key:
+                        genai.configure(api_key=current_key)
+                        
+                        # Re-init model if needed (or just use existing instance which picks up new config?)
+                        # Safer to re-declare model to ensure key binding
+                        if not self.gemini_model:
+                             self._init_gemini(self.gemini_model_name)
+                        
+                        logger.info(f"⚡ Trying Gemini fallback (Attempt {i+1}/{max_gemini_retries}) with key ...{current_key[-4:]}")
+                        response = self.gemini_model.generate_content(prompt)
+                        return LLMResponse(text=response.text, provider="gemini")
+                        
+                except Exception as e:
+                     logger.warning(f"⚠️ Gemini attempt {i+1} failed: {e}")
+                     if i == max_gemini_retries - 1:
+                         logger.error("❌ All Gemini keys exhausted")
+                         raise e
+        
+        raise Exception("All providers and keys failed")
     
     def _call_groq(self, prompt: str, api_key: str, timeout: int = 30) -> Optional[str]:
         """Call Groq API with specific key"""

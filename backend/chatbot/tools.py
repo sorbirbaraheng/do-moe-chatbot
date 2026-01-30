@@ -45,52 +45,57 @@ class Tool:
 EDUCATION_TOOLS: List[Tool] = [
     Tool(
         name="search_schools",
-        description="ค้นหาข้อมูลโรงเรียน รวมถึงที่อยู่ จำนวนนักเรียน จำนวนครู สังกัด และข้อมูลทั่วไป",
+        description="ค้นหาข้อมูลโรงเรียนทั่วประเทศ (77 จังหวัด) เช่น ที่อยู่, จำนวนนักเรียน, ครู, สังกัด (สพฐ./สช./กทม./อาชีวะ) รองรับการค้นหาด้วยชื่อโรงเรียน",
         parameters=[
-            ToolParameter("school_name", "ชื่อโรงเรียน เช่น เตรียมอุดมศึกษา, สวนกุหลาบวิทยาลัย", required=False),
-            ToolParameter("province", "จังหวัด เช่น กรุงเทพมหานคร, เชียงใหม่", required=False),
-            ToolParameter("district", "อำเภอหรือเขต เช่น ปทุมวัน, ดินแดง", required=False),
-            ToolParameter("agency", "สังกัด เช่น สพฐ, สช, กทม, อาชีวศึกษา", required=False),
-            ToolParameter("limit", "จำนวนผลลัพธ์สูงสุด (default: 10)", required=False),
+            ToolParameter("school_name", "ชื่อโรงเรียน (ไม่ต้องมีคำนำหน้าก็ได้) เช่น เตรียมอุดม, สวนกุหลาบ", required=False),
+            ToolParameter("province", "จังหวัด (รองรับทั้ง 77 จังหวัด)", required=False),
+            ToolParameter("district", "อำเภอ/เขต", required=False),
+            ToolParameter("agency", "สังกัด", required=False),
+            ToolParameter("limit", "จำนวนผลลัพธ์ (default: 10)", required=False),
         ]
     ),
     
     Tool(
         name="count_teachers",
-        description="นับจำนวนครู อาจารย์ บุคลากร ข้าราชการ พนักงานราชการ ลูกจ้าง ในโรงเรียนหรือพื้นที่",
+        description="นับจำนวนครู/บุคลากร ทั่วประเทศ (77 จังหวัด) แยกตามเพศ/ตำแหน่งได้",
         parameters=[
             ToolParameter("school_name", "ชื่อโรงเรียน", required=False),
             ToolParameter("province", "จังหวัด", required=False),
             ToolParameter("district", "อำเภอ/เขต", required=False),
-            ToolParameter("gender", "เพศ", required=False, enum=["ชาย", "หญิง"]),
+            ToolParameter("gender", "เพศ (ชาย/หญิง)", required=False, enum=["ชาย", "หญิง"]),
+            ToolParameter("person_type", "ประเภทบุคลากร", required=False, 
+                         enum=["ข้าราชการครู", "ลูกจ้างชั่วคราว", "พนักงานราชการ", "บุคลากรโรงเรียนเอกชน", "ลูกจ้างประจำ", "บุคลากรทางการศึกษา"]),
+            ToolParameter("year", "ปีการศึกษา", required=False),
         ]
     ),
     
     Tool(
         name="count_students",
-        description="นับจำนวนนักเรียน ผู้เรียน เด็ก ในโรงเรียนหรือพื้นที่ แยกตามระดับชั้นและเพศได้",
+        description="นับจำนวนนักเรียน 'รวม' หรือเจาะจง 'ระดับชั้นใดระดับชั้นหนึ่ง' (เช่น ถามว่า ม.1 มีกี่คน)",
         parameters=[
             ToolParameter("school_name", "ชื่อโรงเรียน", required=False),
             ToolParameter("province", "จังหวัด", required=False),
             ToolParameter("district", "อำเภอ/เขต", required=False),
-            ToolParameter("grade", "ระดับชั้น เช่น ป.1, ม.1, ปวช.1", required=False),
+            ToolParameter("grade", "ระดับชั้น", required=False),
             ToolParameter("gender", "เพศ", required=False, enum=["ชาย", "หญิง"]),
+            ToolParameter("year", "ปีการศึกษา", required=False),
         ]
     ),
     
     Tool(
         name="count_schools",
-        description="นับจำนวนโรงเรียนในพื้นที่ แยกตามสังกัดได้",
+        description="นับจำนวนโรงเรียนทั่วประเทศ (77 จังหวัด) แยกตามสังกัด/พื้นที่",
         parameters=[
             ToolParameter("province", "จังหวัด", required=False),
             ToolParameter("district", "อำเภอ/เขต", required=False),
+            ToolParameter("subdistrict", "ตำบล/แขวง", required=False),
             ToolParameter("agency", "สังกัด", required=False),
         ]
     ),
     
     Tool(
         name="get_ratio",
-        description="หาอัตราส่วนนักเรียนต่อครู ของโรงเรียนหรือพื้นที่",
+        description="หาอัตราส่วนนักเรียนต่อครู ทั่วประเทศ (77 จังหวัด)",
         parameters=[
             ToolParameter("school_name", "ชื่อโรงเรียน", required=False),
             ToolParameter("province", "จังหวัด", required=False),
@@ -99,7 +104,7 @@ EDUCATION_TOOLS: List[Tool] = [
     
     Tool(
         name="compare",
-        description="เปรียบเทียบข้อมูลระหว่าง 2 โรงเรียน หรือ 2 จังหวัด เช่น จำนวนนักเรียน จำนวนครู จำนวนโรงเรียน",
+        description="เปรียบเทียบข้อมูล 2 แห่ง (โรงเรียน/จังหวัด/ภาค) ทั่วประเทศ",
         parameters=[
             ToolParameter("entity1", "โรงเรียนหรือจังหวัดแรก", required=True),
             ToolParameter("entity2", "โรงเรียนหรือจังหวัดที่สอง", required=True),
@@ -130,6 +135,160 @@ EDUCATION_TOOLS: List[Tool] = [
             ToolParameter("district", "อำเภอ/เขต", required=False),
             ToolParameter("agency", "สังกัด", required=False),
             ToolParameter("limit", "จำนวนที่แสดง (default: 10)", required=False),
+        ]
+    ),
+    
+    # ============================================================
+    # PHASE 1: NEW TOOLS (เพิ่มใหม่)
+    # ============================================================
+    
+    Tool(
+        name="search_education_areas",
+        description="ค้นหาข้อมูลเขตพื้นที่การศึกษา สพป. สพม. รวมถึงอำเภอที่ครอบคลุมและจำนวนโรงเรียน",
+        parameters=[
+            ToolParameter("area_name", "ชื่อเขตพื้นที่ เช่น สพป.เชียงใหม่ เขต 1, สพม.กรุงเทพมหานคร", required=False),
+            ToolParameter("province", "จังหวัดที่ต้องการค้นหาเขตพื้นที่", required=False),
+            ToolParameter("district", "อำเภอที่ต้องการหาว่าอยู่ในเขตใด", required=False),
+        ]
+    ),
+    
+    Tool(
+        name="get_school_full_details",
+        description="ดูรายละเอียดครบถ้วนของโรงเรียน รวมถึงที่ตั้ง พิกัด GPS จำนวนนักเรียน/ครู อัตราส่วน สังกัด",
+        parameters=[
+            ToolParameter("school_name", "ชื่อโรงเรียน", required=True),
+            ToolParameter("province", "จังหวัด", required=False),
+        ]
+    ),
+    
+    Tool(
+        name="get_province_summary",
+        description="สรุปภาพรวมข้อมูลการศึกษาของจังหวัด รวมจำนวนโรงเรียน นักเรียน ครู แยกตามสังกัด",
+        parameters=[
+            ToolParameter("province", "จังหวัดที่ต้องการดูสรุป", required=True),
+        ]
+    ),
+    
+    # ============================================================
+    # PHASE 2: NEW TOOLS (เพิ่มใหม่)
+    # ============================================================
+    
+    Tool(
+        name="count_by_system_type",
+        description="นับจำนวนโรงเรียนตามประเภทการศึกษา (ในระบบ/นอกระบบ) ในจังหวัดหรือพื้นที่",
+        parameters=[
+            ToolParameter("province", "จังหวัด", required=False),
+            ToolParameter("district", "อำเภอ/เขต", required=False),
+            ToolParameter("system_type", "ประเภทการศึกษา", required=False, enum=["ในระบบ", "นอกระบบ"]),
+        ]
+    ),
+    
+    Tool(
+        name="analyze_gender_ratio",
+        description="วิเคราะห์สัดส่วนนักเรียนชาย/หญิง ในจังหวัดหรือพื้นที่ รวมถึงหาตำบลที่มีสัดส่วนเพศต่างๆ",
+        parameters=[
+            ToolParameter("province", "จังหวัด", required=False),
+            ToolParameter("district", "อำเภอ/เขต", required=False),
+        ]
+    ),
+    
+    Tool(
+        name="get_grade_distribution",
+        description="ดูการกระจายตัวของนักเรียนตามระดับชั้น ในจังหวัดหรือพื้นที่ หาว่าชั้นไหนมีนักเรียนมาก/น้อย",
+        parameters=[
+            ToolParameter("province", "จังหวัด", required=False),
+            ToolParameter("district", "อำเภอ/เขต", required=False),
+            ToolParameter("grade", "ระดับชั้นที่สนใจ เช่น ป.1, ม.3", required=False),
+        ]
+    ),
+    
+    Tool(
+        name="find_best_ratio_schools",
+        description="หาโรงเรียนที่มีอัตราส่วนครูต่อนักเรียนดีที่สุด/แย่ที่สุด (ขาดแคลนครู) ในจังหวัด",
+        parameters=[
+            ToolParameter("province", "จังหวัด", required=False),
+            ToolParameter("order", "ลำดับ: best=ดีที่สุด, worst=แย่ที่สุด", required=True, enum=["best", "worst"]),
+            ToolParameter("limit", "จำนวนที่แสดง (default: 10)", required=False),
+        ]
+    ),
+    
+    # ============================================================
+    # PHASE 3: NEW TOOLS (เพิ่มใหม่)
+    # ============================================================
+    
+    Tool(
+        name="analyze_teacher_distribution",
+        description="วิเคราะห์การกระจายตัวของครู/บุคลากรตามประเภท (ข้าราชการครู/พนักงานราชการ/ลูกจ้าง) ในจังหวัดหรือพื้นที่",
+        parameters=[
+            ToolParameter("province", "จังหวัด", required=False),
+            ToolParameter("district", "อำเภอ/เขต", required=False),
+            ToolParameter("person_type", "ประเภทบุคลากรที่สนใจ", required=False),
+        ]
+    ),
+    
+    Tool(
+        name="ranking_by_agency",
+        description="จัดอันดับสังกัด (หน่วยงาน) ตามจำนวนโรงเรียน นักเรียน หรือครู เช่น สังกัดไหนมีโรงเรียนมากที่สุด",
+        parameters=[
+            ToolParameter("province", "จังหวัด (ถ้าไม่ระบุ = ทั้งประเทศ)", required=False),
+            ToolParameter("metric", "สิ่งที่จัดอันดับ", required=True, enum=["schools", "students", "teachers"]),
+            ToolParameter("limit", "จำนวนอันดับที่แสดง (default: 10)", required=False),
+        ]
+    ),
+    
+    Tool(
+        name="ranking_subdistricts",
+        description="จัดอันดับตำบล/แขวงตามจำนวนโรงเรียน นักเรียน หรือครู เช่น ตำบลไหนมีนักเรียนมากที่สุด",
+        parameters=[
+            ToolParameter("province", "จังหวัด", required=True),
+            ToolParameter("district", "อำเภอ/เขต (ถ้าไม่ระบุ = ทั้งจังหวัด)", required=False),
+            ToolParameter("metric", "สิ่งที่จัดอันดับ", required=True, enum=["schools", "students", "teachers"]),
+            ToolParameter("order", "ลำดับ: most=มากที่สุด, least=น้อยที่สุด", required=True, enum=["most", "least"]),
+            ToolParameter("limit", "จำนวนอันดับที่แสดง (default: 10)", required=False),
+        ]
+    ),
+    
+    Tool(
+        name="get_district_summary",
+        description="สรุปภาพรวมข้อมูลการศึกษาของอำเภอ รวมจำนวนโรงเรียน นักเรียน ครู ตำบลที่มี",
+        parameters=[
+            ToolParameter("province", "จังหวัด", required=True),
+            ToolParameter("district", "อำเภอที่ต้องการดูสรุป", required=True),
+        ]
+    ),
+    
+    Tool(
+        name="compare_provinces",
+        description="เปรียบเทียบข้อมูลการศึกษาระหว่างหลายจังหวัด เช่น เปรียบเทียบเชียงใหม่กับเชียงราย",
+        parameters=[
+            ToolParameter("provinces", "รายชื่อจังหวัดที่ต้องการเปรียบเทียบ (คั่นด้วย ,)", required=True),
+            ToolParameter("metrics", "สิ่งที่เปรียบเทียบ", required=False, enum=["all", "schools", "students", "teachers", "ratio"]),
+        ]
+    ),
+    
+    Tool(
+        name="find_nearby_schools",
+        description="ค้นหาโรงเรียนใกล้พิกัด GPS ในรัศมีที่กำหนด",
+        parameters=[
+            ToolParameter("latitude", "ละติจูด", required=True),
+            ToolParameter("longitude", "ลองจิจูด", required=True),
+            ToolParameter("radius_km", "รัศมี (กม.) default: 5", required=False),
+            ToolParameter("limit", "จำนวนผลลัพธ์สูงสุด (default: 10)", required=False),
+        ]
+    ),
+
+    Tool(
+        name="advanced_school_search",
+        description="ค้นหาโรงเรียนขั้นสูง (Advanced Search) ด้วยเงื่อนไขตัวเลข เช่น จำนวนนักเรียน/ครู (มากกว่า/น้อยกว่า)",
+        parameters=[
+            ToolParameter("province", "จังหวัด", required=False),
+            ToolParameter("district", "อำเภอ/เขต", required=False),
+            ToolParameter("min_students", "จำนวนนักเรียนขั้นต่ำ (มากกว่าหรือเท่ากับ)", required=False),
+            ToolParameter("max_students", "จำนวนนักเรียนสูงสุด (น้อยกว่าหรือเท่ากับ)", required=False),
+            ToolParameter("min_teachers", "จำนวนครูขั้นต่ำ", required=False),
+            ToolParameter("max_teachers", "จำนวนครูสูงสุด", required=False),
+            ToolParameter("agency", "สังกัด", required=False),
+            ToolParameter("limit", "จำนวนผลลัพธ์ (default: 10)", required=False),
         ]
     ),
 ]
@@ -166,10 +325,31 @@ TOOL_SELECTION_PROMPT = '''คุณเป็น AI ผู้ช่วยวิ�
 - ถ้าถามเกี่ยวกับ "นักเรียน", "ผู้เรียน", "เด็ก" → ใช้ count_students
 - ถ้าถาม "เปรียบเทียบ", "ระหว่าง", "กับ" → ใช้ compare
 - ถ้าถาม "มากที่สุด", "น้อยที่สุด", "อันดับ" → ใช้ ranking
-- ถ้าถาม "มีกี่โรงเรียน", "จำนวนโรงเรียน" → ใช้ count_schools
+- ถ้าถาม "มีกี่โรงเรียน", "จำนวนโรงเรียน", "กี่โรง" → ใช้ count_schools
 - ถ้าถาม "อัตราส่วน", "ต่อครู" → ใช้ get_ratio
 - ถ้าถาม "รายชื่อโรงเรียน", "โรงเรียนอะไรบ้าง" → ใช้ list_schools
 - ถ้าถามข้อมูลทั่วไปของโรงเรียน → ใช้ search_schools
+- ถ้าถาม "สพป.", "สพม.", "เขตพื้นที่การศึกษา", "ครอบคลุมอำเภอ" → ใช้ search_education_areas
+- ถ้าถาม "รายละเอียดโรงเรียน", "ข้อมูลเต็ม", "พิกัด GPS" → ใช้ get_school_full_details
+- ถ้าถาม "สรุป", "ภาพรวม", "ข้อมูลการศึกษาจังหวัด" → ใช้ get_province_summary
+- ถ้าถาม "ในระบบ", "นอกระบบ", "ประเภทการศึกษา" → ใช้ count_by_system_type
+- ถ้าถาม "สัดส่วนเพศ", "นักเรียนชาย", "นักเรียนหญิง" (ในภาพรวม) → ใช้ analyze_gender_ratio
+- ถ้าถาม "ระดับชั้น", "ป.1-6", "ม.1-6", "อนุบาล" (ภาพรวม) → ใช้ get_grade_distribution
+- ถ้าถาม "โรงเรียนที่ขาดแคลนครู", "อัตราส่วนดีที่สุด/แย่ที่สุด" → ใช้ find_best_ratio_schools
+- ถ้าถามเงื่อนไข "มากกว่า", "น้อยกว่า", "ช่วง" ของจำนวนนักเรียน/ครู → ใช้ advanced_school_search
+
+## IMPORTANT - Agency Parameter (สังกัด):
+- ถ้าผู้ใช้ระบุ "สังกัด สพฐ" หรือ "สพฐ" → **ต้องส่ง agency: "สพฐ"**
+- ถ้าผู้ใช้ระบุ "สังกัด สช" หรือ "เอกชน" → **ต้องส่ง agency: "สช"**
+- ถ้าผู้ใช้ระบุ "สังกัด อปท" หรือ "ท้องถิ่น" → **ต้องส่ง agency: "อปท"**
+- ถ้าผู้ใช้ระบุ "สังกัด กทม" → **ต้องส่ง agency: "กทม"**
+- ถ้าผู้ใช้ระบุ "อาชีวะ" หรือ "สอศ" → **ต้องส่ง agency: "สอศ"**
+- **ห้ามละเลย agency** ถ้าผู้ใช้ระบุมาในคำถาม!
+
+## IMPORTANT - Gender Parameter:
+- ถ้าผู้ใช้ถามจำนวน "ทั้งหมด", "รวม", "กี่คน" โดยไม่ได้ระบุเพศเฉพาะ → **ห้ามส่ง gender parameter** (จะได้ข้อมูลรวมทั้งสองเพศ)
+- ส่ง gender เฉพาะเมื่อผู้ใช้ถามเจาะจงว่า "นักเรียนชาย" หรือ "นักเรียนหญิง" เท่านั้น
+- ถ้าผู้ใช้ถาม "ทั้งชายและหญิง" = ถามรวมทั้งหมด → **ห้ามส่ง gender**
 
 ## User Question:
 {question}
@@ -180,34 +360,96 @@ TOOL_SELECTION_PROMPT = '''คุณเป็น AI ผู้ช่วยวิ�
 ]
 '''
 
-RESPONSE_GENERATION_PROMPT = '''คุณคือ "น้องดีโอ" (DO-MOE AI) ผู้ช่วยข้อมูลการศึกษาไทยที่เป็นมิตรและมีความรู้
 
-## ข้อมูลที่ได้จากระบบ:
+# PROMPT FOR TOOL SELECTION
+TOOL_SELECTION_PROMPT = """
+You are "Nong DO" (น้องดีโอ), an intelligent education assistant for the Ministry of Education (MOE) Thailand.
+Your mission is to find data for users using the available tools.
+
+### AVAILABLE TOOLS:
+{tools}
+
+### CONTEXT FROM PREVIOUS TURNS:
+{context}
+
+### CRITICAL INSTRUCTIONS:
+1. **USE CONTEXT**: 
+   - If the user asks a follow-up question (e.g., "how many students?", "and teachers?"), USE the `school_name` or `province` from the Context above.
+   - Do NOT ask the user for information that is already in the Context.
+
+2. **NATIONWIDE COVERAGE (77 PROVINCES)**: 
+   - You have access to data for **EVERY** province in Thailand (e.g., Yala, Mae Hong Son, Bueng Kan, Trat, etc.).
+   - **NEVER** assume a province is "out of scope" or "unknown".
+   - Treat small provinces with the same priority as Bangkok or Chiang Mai.
+
+3. **Specific Locations**:
+   - If the user mentions a province/district, you **MUST** include it in `params`.
+   - Normalize province names if possible, but the tool handles this too.
+
+4. **Implicit Scope**:
+   - If NO location is mentioned, assume **ALL PROVINCES** (do not set `province` param).
+
+5. **School Names**:
+   - If searching for a school, send the name found. (e.g. "หาข้อมูลรร.สวนกุหลาบ" -> `school_name='สวนกุหลาบ'`)
+   - **Partial Names OK**: The system supports fuzzy search. Send the name even if incomplete.
+
+6. **General Chat**:
+   - Only use `general_chat` if the question is purely conversational (greeting, thanks) or completely unrelated to education data.
+   - If the user asks about a school you "think" doesn't exist, **STILL TRY TO SEARCH**. Do not give up early.
+
+### OUTPUT FORMAT:
+Return ONLY a JSON array of tool calls. Do not return markdown or explanation.
+Example:
+[
+    {{"name": "search_schools", "params": {{"school_name": "เตรียมอุดม", "province": "กรุงเทพมหานคร"}}}},
+    {{"name": "count_students", "params": {{"grade": "ม.6", "province": "เชียงใหม่"}}}}
+]
+
+User Question: {question}
+"""
+
+RESPONSE_GENERATION_PROMPT = '''คุณคือ "น้องดีโอ" (DO AI) ผู้ช่วยวิเคราะห์ข้อมูลการศึกษามืออาชีพจากกระทรวงศึกษาธิการ
+
+**ข้อมูลดิบ:**
 {data}
 
-## คำถามของผู้ใช้:
-{question}
+**คำถามจากผู้ใช้:**
+"{question}"
 
-## Instructions:
-1. ตอบคำถามจากข้อมูลที่ให้มาเท่านั้น ห้ามสร้างข้อมูลเอง
-2. ใช้ภาษาไทยที่เป็นมิตร ลงท้ายด้วย "ครับ"
-3. เน้นตัวเลขสำคัญด้วย **bold**
-4. ถ้าไม่มีข้อมูล ให้บอกว่าไม่พบข้อมูล อย่าเดา
-5. ใช้ emoji เหมาะสม เช่น 📊 🏫 👨‍🏫 🎓
+**โครงสร้างคำตอบ (Balanced Structure) - พอดีๆ ไม่สั้นไม่ยาว:**
+1.  **กรณีข้อมูลน้อย (1-2 รายการ) หรือถามค่าเฉพาะ:**
+    -   **Intro:** ให้ตอบค่าที่ถามทันที แต่ให้มีลูกเล่นเล็กน้อย (ไม่ห้วนเกินไป)
+    -   **Body:** ขยายความ 1-2 ประโยค (เช่น เทียบเกณฑ์ หรือบอกว่าเยอะ/น้อย)
+    -   **Length:** ประมาณ 3-5 บรรทัด (กำลังดี)
+    -   **ถ้าไม่พบข้อมูล (0 items):** ตอบตามจริงและสุภาพ "เสียดายครับ ไม่พบข้อมูลในส่วนนี้..."
 
-## ⚠️ กฎสำคัญที่ต้องปฏิบัติ:
-- ถ้าข้อมูลมี **by_agency** → ต้องแสดงจำนวนโรงเรียนแยกตามสังกัดทุกอัน พร้อมตัวเลข!
-- ห้ามตอบแค่ตัวเลขรวมโดยไม่แยกสังกัด ถ้ามีข้อมูล by_agency
+2.  **กรณีข้อมูลเยอะ (3+ รายการ)/จัดอันดับ/เปรียบเทียบ/หลายโรงเรียน:**
+    -   **Intro:** สั้นๆ 1 ประโยค ("จากการวิเคราะห์ข้อมูลล่าสุด...")
+    -   **Body:** ใช้ **ตาราง Markdown** แสดงข้อมูลให้ชัดเจน (ห้าม Bullet Points ถ้า >= 3 รายการ)
+    -   **Analysis:** วิเคราะห์ความต่าง/สัดส่วน (เช่น "ทิ้งห่างที่ 2 ถึง xx%")
+    -   **Conclusion:** สรุปสั้นๆ
 
-## ตัวอย่างรูปแบบการตอบ:
-"[พื้นที่] มีโรงเรียนทั้งหมด **XX แห่ง** ครับ 🏫
+3.  **กรณีชื่อโรงเรียนคลุมเครือ (เช่น "สวนกุหลาบ", "เตรียมอุดม" ที่มีหลายสาขา):**
+    -   **ถ้าพบหลายโรงเรียนที่ตรงกัน:** ใช้ตาราง Markdown แสดงทุกโรงเรียนที่พบ พร้อมจังหวัด
+    -   **Format ตาราง:**
+        | ลำดับ | ชื่อโรงเรียน | จังหวัด | นักเรียน |
+        |:---:|:---|:---|---:|
+        | 1 | สวนกุหลาบวิทยาลัย | กรุงเทพมหานคร | 3,500 |
+    -   **Outro:** บอกผู้ใช้ว่า "หากต้องการข้อมูลเจาะจงโรงเรียนใด สามารถระบุชื่อเต็มหรือจังหวัดได้ครับ"
 
-📊 **แยกตามสังกัด:**
-• สำนักงานคณะกรรมการส่งเสริมการศึกษาเอกชน (สช.): XX แห่ง
-• สำนักงานคณะกรรมการการศึกษาขั้นพื้นฐาน (สพฐ.): XX แห่ง
-• สำนักการศึกษา กรุงเทพมหานคร: XX แห่ง
-[แสดงทุกสังกัดที่มีในข้อมูล by_agency]"
+**บุคลิกภาพ:** มืออาชีพ, เป็นกันเอง (ใช้ "ผม", "ครับ"), ไม่ใช้คำฟุ่มเฟือย
 
-## Response:
+**กฎเหล็ก (Critical Rules):**
+1.  **ใช้ Markdown Table** เมื่อมีข้อมูล >= 3 รายการ (Ranking, Compare, Multi-school results)
+2.  **ถ้าเป็นตาราง:** ต้องมีหัวตารางภาษาไทย ใช้ alignment (:--- ซ้าย, ---: ขวาสำหรับตัวเลข)
+3.  **ห้ามพูดว่า "จากข้อมูล JSON"** หรือ "จาก context" ให้พูดว่า "จากฐานข้อมูล" หรือ "จากรายงาน"
+4.  **Formatting:** ใช้ **ตัวหนา** กับตัวเลขสำคัญ หรือชื่อโรงเรียน
+5.  **กรณีรายละเอียดโรงเรียน:** แสดงพิกัด GPS เป็น "ละติจูด/ลองจิจูด" (ภาษาไทย) และใส่ลิงก์ Google Maps ถ้ามี
+
+**ตัวอย่างการวิเคราะห์ (Smart Insights):**
+*   *ไม่ดี:* "โรงเรียน A มีนักเรียน 1,000 คน โรงเรียน B มี 500 คน"
+*   *ดีมาก (Pro):* "โรงเรียน A มีนักเรียนถึง **1,000 คน** ซึ่งมากกว่าโรงเรียน B ถึง **2 เท่าตัว** เลยครับ สะท้อนถึงขนาดโรงเรียนที่ใหญ่กว่าอย่างชัดเจน"
+
+**ตอบเป็นภาษาไทยเท่านั้น:**
 '''
 

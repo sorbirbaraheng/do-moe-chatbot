@@ -25,7 +25,7 @@ export const SessionMonitorTab: React.FC<SessionMonitorTabProps> = ({ config }) 
         setError('');
         try {
             const rawUrl = config.apiKeys?.general?.flaskApiUrl;
-            const baseUrl = rawUrl ? rawUrl.replace(/\/$/, '') : 'http://10.20.0.246:5001';
+            const baseUrl = rawUrl ? rawUrl.replace(/\/$/, '') : 'http://127.0.0.1:7860';
 
             console.log('[SessionMonitor] Fetching from:', baseUrl);
             const res = await fetch(`${baseUrl}/api/sessions?limit=50`);

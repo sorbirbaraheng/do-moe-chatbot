@@ -374,7 +374,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
 
             // AUTO-SYNC to Flask Backend
             try {
-                const flaskUrl = cleanApiKeys.school.flaskApiUrl || 'http://127.0.0.1:5001';
+                const flaskUrl = cleanApiKeys.school.flaskApiUrl || 'http://127.0.0.1:7860';
                 const response = await fetch(`${flaskUrl}/api/sync-config`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

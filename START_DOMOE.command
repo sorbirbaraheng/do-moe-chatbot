@@ -23,6 +23,7 @@ echo ""
 # 1. Kill existing processes
 echo "🧹 Cleaning up old processes..."
 pkill -f "web_chatbot_v5.py" 2>/dev/null
+lsof -i :5001 -t | xargs kill -9 2>/dev/null
 lsof -i :3001 -t | xargs kill -9 2>/dev/null
 sleep 1
 

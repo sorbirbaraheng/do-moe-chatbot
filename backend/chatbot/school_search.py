@@ -4,12 +4,12 @@ Handles school-specific searches by name, province, district
 """
 
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from difflib import SequenceMatcher
 
 import google.generativeai as genai
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
 
 from .constants import COLLECTIONS, PRIMARY_COLLECTION
 
@@ -24,18 +24,52 @@ class SchoolSearchEngine:
         # Use unified collection (thailand_education) for all queries
         self.collection = PRIMARY_COLLECTION
     
+    def _normalize_name(self, name: str) -> str:
+        """Normalize school name for consistent matching
+        - Remove spaces
+        - Remove common prefixes
+        - Convert Thai numerals
+        """
+        if not name:
+            return ""
+            
+        # 1. Convert Thai numerals
+        thai_digits = "๐๑๒๓๔๕๖๗๘๙"
+        arabic_digits = "0123456789"
+        trans = str.maketrans(thai_digits, arabic_digits)
+        name = name.translate(trans)
+        
+        # 2. Remove common prefixes
+        prefixes = ["โรงเรียน", "รร.", "ร.ร.", "รร ", "ร.ร. "]
+        for p in prefixes:
+            if name.startswith(p):
+                name = name[len(p):]
+                break # Only remove one prefix
+                
+        # 3. Remove all whitespace
+        name = name.replace(" ", "")
+        
+        return name
+
     def search_by_name(self, name: str, limit: int = 10) -> List:
         """Search schools by name - try text match first, then semantic search (deduplicated by school_code)"""
         results = []
         
         def deduplicate(items, target_limit):
             """Helper to deduplicate by school_code"""
-            seen_codes = set()
+            seen_keys = set()
             unique = []
             for item in items:
-                code = item.payload.get('metadata', {}).get('school_code') if hasattr(item, 'payload') else None
-                if code and code not in seen_codes:
-                    seen_codes.add(code)
+                payload = item.payload.get('metadata', {}) if hasattr(item, 'payload') else {}
+                code = payload.get('school_id')
+                name = payload.get('school_name', '')
+                province = payload.get('province', '')
+                
+                # Use ID if available, otherwise use name+province
+                key = code if code else f"{name}_{province}"
+                
+                if key and key not in seen_keys:
+                    seen_keys.add(key)
                     unique.append(item)
                     if len(unique) >= target_limit:
                         break
@@ -43,6 +77,7 @@ class SchoolSearchEngine:
         
         # 1. Try text-match filter first
         try:
+            # 1a. Try EXACT text-match filter first
             response = self.client.scroll(
                 collection_name=self.collection,
                 scroll_filter=Filter(must=[
@@ -52,6 +87,31 @@ class SchoolSearchEngine:
                 with_payload=True
             )
             results = deduplicate(response[0], limit)
+            
+            # 1b. If no exact match, try NORMALIZED text match (strip space, prefix, numerals)
+            if not results:
+                norm_name = self._normalize_name(name)
+                if norm_name and norm_name != name:
+                    logger.info(f"Retrying with normalized name: '{norm_name}'")
+                    # Note: This checks strictly school_name. 
+                    # Ideally we want a specialized field like 'normalized_name' in DB.
+                    # But often names in DB are mixed "รร.บ้าน..." or "โรงเรียนบ้าน..."
+                    # So we try scanning common variations logic OR just relying on cleaned string 
+                    # implicitly if semantic search handles it (but semantic search failed here).
+                    # 
+                    # Hack: Since we can't easily query "normalized" against raw field efficiently without new index,
+                    # We will rely on Semantic Search to pick up the slack, BUT we can try 
+                    # matching against "รร.{norm_name}" or "{norm_name}" if stored without prefix.
+                    
+                    # Try fuzzy match manually? No, strict match on key variations?
+                    # Let's try matching 'start' using LIKE? Qdrant support match text?
+                    # Since we identified the issue is "รร.เทศบาล4..." vs "โรงเรียนเทศบาล 4...",
+                    # Normalized 'เทศบาล4...' should match if we could partial match.
+                    
+                    # Instead of complex logic, let's just use the NORMALIZED string for the SEMANTIC SEARCH too.
+                    # But first, let's pass the normalized name to semantic search if direct match fails.
+                    pass 
+            
             if results:
                 logger.info(f"🏫 Text match found {len(results)} unique schools for '{name}'")
                 return results
@@ -60,9 +120,12 @@ class SchoolSearchEngine:
         
         # 2. Fallback to semantic search
         try:
+            # Use normalized name for semantic search to reduce noise
+            search_query = f"โรงเรียน{self._normalize_name(name)}"
+            
             result = genai.embed_content(
                 model="models/text-embedding-004",
-                content=f"โรงเรียน{name}",
+                content=search_query,
                 task_type="retrieval_query"
             )
             query_vector = result['embedding']
@@ -150,12 +213,17 @@ class SchoolSearchEngine:
                 with_payload=True
             )
             
-            seen_codes = set()
+            seen_keys = set()
             unique_results = []
             for point in response[0]:
-                code = point.payload.get('metadata', {}).get('school_code')
-                if code and code not in seen_codes:
-                    seen_codes.add(code)
+                meta = point.payload.get('metadata', {})
+                code = meta.get('school_id')
+                name = meta.get('school_name', '')
+                # Fallback key
+                key = code if code else f"{name}_{meta.get('province','')}"
+                
+                if key and key not in seen_keys:
+                    seen_keys.add(key)
                     unique_results.append(point)
                     if len(unique_results) >= limit:
                         break
@@ -202,19 +270,186 @@ class SchoolSearchEngine:
                 with_payload=True
             )
             
-            seen_codes = set()
+            seen_keys = set()
             unique_results = []
             for point in response[0]:
-                code = point.payload.get('metadata', {}).get('school_code')
-                if code and code not in seen_codes:
-                    seen_codes.add(code)
+                meta = point.payload.get('metadata', {})
+                code = meta.get('school_id')
+                name = meta.get('school_name', '')
+                # Fallback key
+                key = code if code else f"{name}_{meta.get('province','')}"
+                
+                if key and key not in seen_keys:
+                    seen_keys.add(key)
+                    unique_results.append(point)
+                    if len(unique_results) >= limit:
+                        break
+            
+            
+            return unique_results
+        except Exception as e:
+            logger.error(f"School search by district error: {e}")
+            return []
+
+    
+    def search_by_criteria(self, filters: Dict[str, Any], limit: int = 15, offset: Any = None) -> Tuple[List, int, Any]:
+        """
+        Advanced search with multiple strict filters.
+        Returns: (results, total_count, next_offset)
+        """
+        conditions = []
+        
+        # 1. Location Filters
+        if filters.get('province'):
+            conditions.append(FieldCondition(key="metadata.province", match=MatchValue(value=filters['province'])))
+        if filters.get('district'):
+            base_dist = filters['district'].replace('อำเภอ', '').replace('อ.', '').strip()
+            # Strict or fuzzy? For filters, strict match on variants might be safer or just simple match
+            # Let's try simple match first, relying on parser to normalize
+            conditions.append(FieldCondition(key="metadata.district", match=MatchValue(value=filters['district']))) 
+        if filters.get('subdistrict'):
+            conditions.append(FieldCondition(key="metadata.subdistrict", match=MatchValue(value=filters['subdistrict'])))
+            
+        # 2. Agency/Area Filters
+        if filters.get('agency'):
+            conditions.append(FieldCondition(key="metadata.agency", match=MatchValue(value=filters['agency'])))
+        if filters.get('area_name'):
+             conditions.append(FieldCondition(key="metadata.area_name", match=MatchValue(value=filters['area_name'])))
+             
+        # 3. Numeric Filters (Range)
+        if filters.get('min_students') is not None or filters.get('max_students') is not None:
+            range_params = {}
+            if filters.get('min_students') is not None: range_params['gte'] = filters['min_students']
+            if filters.get('max_students') is not None: range_params['lte'] = filters['max_students']
+            conditions.append(FieldCondition(key="metadata.total_students", range=Range(**range_params)))
+            
+        if filters.get('min_teachers') is not None or filters.get('max_teachers') is not None:
+            range_params = {}
+            if filters.get('min_teachers') is not None: range_params['gte'] = filters['min_teachers']
+            if filters.get('max_teachers') is not None: range_params['lte'] = filters['max_teachers']
+            conditions.append(FieldCondition(key="metadata.total_teachers", range=Range(**range_params)))
+
+        query_filter = Filter(must=conditions) if conditions else None
+        
+        try:
+            # 1. Get Total Count (for user info)
+            count_result = self.client.count(
+                collection_name=self.collection,
+                count_filter=query_filter
+            )
+            total_count = count_result.count
+            
+            # 2. Get Page Data
+            response = self.client.scroll(
+                collection_name=self.collection,
+                scroll_filter=query_filter,
+                limit=limit,
+                offset=offset,
+                with_payload=True
+            )
+            points, next_offset = response
+            
+            return points, total_count, next_offset
+            
+        except Exception as e:
+            logger.error(f"Search by criteria error: {e}")
+            return [], 0, None
+            
+    def search_teachers(self, filters: Dict[str, Any]) -> List[Dict]:
+        """
+        Search specific teacher/personnel types in edu_teachers_v5
+        """
+        conditions = []
+        
+        # 1. School Name (Exact or Fuzzy?)
+        # For now, if school_name is provided, we try exact match on metadata
+        if filters.get('school_name'):
+             conditions.append(FieldCondition(key="metadata.school_name", match=MatchValue(value=filters['school_name'])))
+             
+        # 2. Location
+        if filters.get('province'):
+            conditions.append(FieldCondition(key="metadata.province", match=MatchValue(value=filters['province'])))
+            
+        # 3. Personnel Type (The main goal)
+        if filters.get('person_type'):
+             conditions.append(FieldCondition(key="metadata.person_type", match=MatchValue(value=filters['person_type'])))
+             
+        query_filter = Filter(must=conditions) if conditions else None
+        
+        try:
+            # We want to aggregate counts, but for now let's just return the raw rows
+            # The responder will sum them up.
+            response = self.client.scroll(
+                collection_name=COLLECTIONS["teachers"], # edu_teachers_v5
+                scroll_filter=query_filter,
+                limit=100, # Should be enough for a school's breakdown
+                with_payload=True
+            )
+            
+            return [p.payload for p in response[0]]
+            
+        except Exception as e:
+            logger.error(f"Search teachers error: {e}")
+            return []
+
+    def search_by_subdistrict(self, province: str, subdistrict: str, district: str = None, agency: str = None, limit: int = 20) -> List:
+        """List schools in a subdistrict with robust name matching"""
+        
+        base_subdistrict = subdistrict.replace('ตำบล', '').replace('ต.', '').replace('แขวง', '').strip()
+        
+        subdistrict_variants = {
+            base_subdistrict,
+            f"ตำบล{base_subdistrict}",
+            f"ต.{base_subdistrict}",
+            f"แขวง{base_subdistrict}",
+        }
+            
+        logger.info(f"🔎 Searching subdistrict variations for '{subdistrict}': {list(subdistrict_variants)}")
+
+        subdistrict_should = [
+            FieldCondition(key="metadata.subdistrict", match=MatchValue(value=d))
+            for d in subdistrict_variants
+        ]
+        
+        conditions = [
+            Filter(should=subdistrict_should)
+        ]
+        
+        if province:
+             conditions.insert(0, FieldCondition(key="metadata.province", match=MatchValue(value=province)))
+        
+        if district:
+             conditions.append(FieldCondition(key="metadata.district", match=MatchValue(value=district)))
+             
+        if agency:
+            conditions.insert(0, FieldCondition(key="metadata.agency", match=MatchValue(value=agency)))
+        
+        try:
+            response = self.client.scroll(
+                collection_name=self.collection,
+                scroll_filter=Filter(must=conditions),
+                limit=limit * 5,
+                with_payload=True
+            )
+            
+            seen_keys = set()
+            unique_results = []
+            for point in response[0]:
+                meta = point.payload.get('metadata', {})
+                code = meta.get('school_id')
+                name = meta.get('school_name', '')
+                # Fallback key
+                key = code if code else f"{name}_{meta.get('province','')}"
+                
+                if key and key not in seen_keys:
+                    seen_keys.add(key)
                     unique_results.append(point)
                     if len(unique_results) >= limit:
                         break
             
             return unique_results
         except Exception as e:
-            logger.error(f"School search by district error: {e}")
+            logger.error(f"School search by subdistrict error: {e}")
             return []
     
     def get_school_details(self, school_name: str) -> Optional[Dict]:
@@ -268,7 +503,7 @@ class SchoolSearchEngine:
                     scroll_filter=scroll_filter,
                     limit=1000,
                     offset=offset,
-                    with_payload=["metadata.school_code"]
+                    with_payload=["metadata.school_id"]
                 )
                 points, next_offset = response
                 
@@ -276,9 +511,14 @@ class SchoolSearchEngine:
                     break
                     
                 for point in points:
-                    code = point.payload.get('metadata', {}).get('school_code')
-                    if code:
-                        unique_codes.add(code)
+                    meta = point.payload.get('metadata', {})
+                    code = meta.get('school_id')
+                    name = meta.get('school_name', '')
+                    # Fallback key
+                    key = code if code else f"{name}_{meta.get('province','')}"
+                    
+                    if key:
+                        unique_codes.add(key)
                 
                 if next_offset is None:
                     break

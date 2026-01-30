@@ -78,7 +78,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")  # 8b has separate quota
 QDRANT_URL = os.getenv("QDRANT_URL", "http://203.159.242.144:6333")
-QDRANT_TIMEOUT = int(os.getenv("QDRANT_TIMEOUT", "60"))
+QDRANT_TIMEOUT = int(os.getenv("QDRANT_TIMEOUT", "5"))  # Lower timeout for fail-fast
 
 # Initialize Gemini
 if GEMINI_API_KEY:
@@ -91,7 +91,7 @@ else:
 if GROQ_API_KEY and GROQ_API_KEY != "your_groq_api_key_here":
     logger.info(f"✅ Groq API configured - Model: {GROQ_MODEL}")
 else:
-    logger.warning("⚠️ GROQ_API_KEY not found - Using Gemini only")
+    logger.info("ℹ️ Local GROQ_API_KEY not found - Will attempt to load from Cloud/Firestore")
 
 # Initialize Qdrant
 try:

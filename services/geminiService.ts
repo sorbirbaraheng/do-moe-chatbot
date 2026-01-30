@@ -1057,8 +1057,14 @@ export const sendMessageStream = async (
     const groqKey = groqQueue[0] || '';
 
     try {
-      const ChatbotAPI = (await import('./chatbot-api.js')).default;
-      const api = new ChatbotAPI(flaskConfig.flaskApiUrl, flaskConfig.flaskApiKey);
+      const ChatbotAPIModule = await import('./chatbot-api.js');
+      const ChatbotAPI = ChatbotAPIModule.default;
+      const getFlaskBaseUrl = ChatbotAPIModule.getFlaskBaseUrl;
+
+      // Use configured URL if available, otherwise fallback to dynamic
+      const dynamicFlaskUrl = flaskConfig.flaskApiUrl || getFlaskBaseUrl(5001);
+      console.log(`[Flask API] Using URL: ${dynamicFlaskUrl}`);
+      const api = new ChatbotAPI(dynamicFlaskUrl, flaskConfig.flaskApiKey);
 
       // ============================================
       // AI LAYER 1: Query Normalization
@@ -1115,20 +1121,29 @@ export const sendMessageStream = async (
             console.log(`[Flask API] ✅ Success!`);
 
             // Check if response has REAL data (success patterns)
+            // RELAXED CHECK: If response is long (>100 chars), trust it as a conversational answer
+            // This prevents analytical answers like "ถึงแม้จะไม่มีข้อมูล..." from being blocked
+            const isLongResponse = result.response.length > 100;
+
             const successPatterns = [
               'แห่งครับ',
               'ตัวอย่างโรงเรียน',
               'สรุปข้อมูล',
               'โรงเรียนทั้งหมด',
               'มีโรงเรียน',
-              'รายชื่อโรงเรียน'
+              'รายชื่อโรงเรียน',
+              'ครับ', // conversational marker
+              'คะ',   // conversational marker
+              'คือ',   // conversational marker
+              'อาจ',   // analysis marker
+              'ส่งผล'  // analysis marker
             ];
 
-            const hasRealData = successPatterns.some(pattern =>
+            const hasRealData = isLongResponse || successPatterns.some(pattern =>
               result.response.includes(pattern)
             );
 
-            // Only check for "not found" if there's NO real data
+            // Only check for "not found" if there's NO real data AND it's short
             if (!hasRealData) {
               const notFoundPatterns = [
                 'ไม่พบข้อมูล',
@@ -1217,6 +1232,62 @@ export const sendMessageStream = async (
         if (flaskResponse.startsWith('{') || flaskResponse.startsWith('[')) {
           console.log('[AI Layer 2] ⏭️ Using fallback formatter (raw JSON detected)');
           finalResponse = fallbackFormatResponse(flaskResponse, message);
+        } else if (flaskResponse.length < 300 && !flaskResponse.includes('\n')) {
+          // ⚠️ BACKEND FALLBACK DETECTED (Short & No Newlines)
+          // The backend likely hit a rate limit and returned a basic "Found X items".
+          // We MUST use Frontend AI to polish this to maintain "Pro" feel.
+
+          // ✨ OPTIMIZATION: Check if it's already conversational (has polite particles)
+          // If so, trust the backend and don't rewrite (saves Quota)
+          const isConversational = ['ครับ', 'ค่ะ', 'นะคะ', 'ผม', 'ดิฉัน', 'จ้า', 'นะ'].some(kw => flaskResponse.includes(kw));
+
+          if (isConversational) {
+            console.log('[AI Layer 2] ⏭️ Skipping rewrite (Conversational markers detected)');
+            // Use original response
+          } else {
+            console.log('[AI Layer 2] ⚠️ Backend returned dry response (Quota limit?). Rewriting with Frontend AI...');
+
+            try {
+              // Ensure AI is initialized
+              if (!ai) initializeGemini('school');
+
+              if (ai) {
+                const prompt = `
+                 คุณคือ "น้องดีโอ" ผู้ช่วยยอดอัจฉริยะ
+                 ข้อความจากระบบ (Backend): "${flaskResponse}"
+                 คำถามผู้ใช้: "${message}"
+                 
+                 หน้าที่ของคุณ:
+                 1. สรุปคำตอบให้ "พอดีคำ" (Balanced) ไม่สั้นห้วนเกินไป และไม่ยืดเยื้อ
+                 2. ถ้าเป็นตัวเลข ให้ทำตัวหนา
+                 3. เริ่มด้วยคำตอบที่ชัดเจน แล้วขยายความเล็กน้อย (1-2 ประโยค) ให้ดูเป็นธรรมชาติ
+                 4. ความยาวประมาณ 3-5 บรรทัด (กำลังดี)
+                 5. ใช้น้ำเสียงเป็นกันเอง น่าอ่าน (Friendly Professional)
+                 
+                 ตอบเป็นภาษาไทยเท่านั้น:
+                 `;
+
+                const result = await ai.models.generateContent({
+                  model: 'gemini-2.0-flash',
+                  contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                  config: {
+                    generationConfig: { maxOutputTokens: 2048, temperature: 0.7 }
+                  }
+                } as any);
+
+                if (result && result.response) {
+                  const rewriteText = result.response.text();
+                  if (rewriteText) {
+                    finalResponse = rewriteText;
+                    usedAiFormatting = true;
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn('[AI Layer 2] ❌ Frontend AI Rewrite failed:', e);
+              // Verify fall back to original
+            }
+          }
         } else {
           console.log('[AI Layer 2] ⏭️ Using Backend response directly (already formatted)');
           // Response is already formatted by Backend, use as-is

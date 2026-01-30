@@ -186,6 +186,17 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
             </button>
 
             {/* Desktop Admin Button - Hidden on Mobile */}
+            {/* LINE Chatbot Link */}
+            <a
+              href="https://line.me/R/ti/p/@203oozkj"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden md:flex items-center gap-2 px-4 py-2.5 ml-2 rounded-full bg-white text-[#06C755] border border-[#06C755]/30 text-[12px] font-bold hover:bg-[#06C755]/5 hover:shadow-[0_4px_12px_rgba(6,199,85,0.15)] hover:scale-105 active:scale-95 transition-all"
+            >
+              <img src="/line-logo.png" alt="LINE" className="w-5 h-5 object-contain" />
+              LINE Chat
+            </a>
+
             <button
               onClick={onAdminLogin}
               className="admin-desktop-only hidden md:flex px-4 py-2.5 rounded-full text-[12px] font-bold text-black/60 hover:text-black hover:bg-black/5 transition-all items-center gap-2"
