@@ -50,7 +50,7 @@ class MultiProviderLLM:
     Uses google-genai SDK (Client-based) but syncs with legacy global config.
     """
     
-    def __init__(self, category: str = "school", gemini_model: str = "gemini-2.0-flash"):
+    def __init__(self, category: str = "school", gemini_model: str = "gemini-2.5-flash"):
         self.category = category
         self.groq_model = GROQ_MODEL
         self.gemini_model_name = gemini_model
@@ -182,9 +182,9 @@ class MultiProviderLLM:
         
         self._reload_keys_if_needed()
         
-        # 1. Try Groq (Primary)
+        # 1. Try Groq (Primary) - Limit retries to avoid excessive waiting
         if self.groq_keys:
-            max_retries = len(self.groq_keys) 
+            max_retries = min(len(self.groq_keys), 5)  # Max 5 retries to fail fast
             for i in range(max_retries):
                 current_key = self._get_next_groq_key()
                 try:
@@ -192,8 +192,15 @@ class MultiProviderLLM:
                     if response:
                         return LLMResponse(text=response, provider="groq")
                 except Exception as e:
+                    error_str = str(e)
                     if i < max_retries - 1:
                          logger.warning(f"⚠️ Groq attempt {i+1} failed ({str(e)[:50]}...), retrying...")
+                         # Add delay between retries
+                         import time
+                         if "Rate limit" in error_str or "429" in error_str:
+                             time.sleep(5)  # Wait longer for rate limit
+                         else:
+                             time.sleep(1)
         
         # 2. Fallback to Gemini (Secondary)
         if self.gemini_keys:
@@ -213,9 +220,17 @@ class MultiProviderLLM:
                     return LLMResponse(text=response.text, provider="gemini")
                         
                 except Exception as e:
+                     error_str = str(e)
                      logger.warning(f"⚠️ Gemini attempt {i+1} failed: {e}")
                      if i < max_gemini_retries - 1:
                          self._rotate_gemini_key()
+                         # Backoff delay: wait before retrying (2, 4, 8... seconds)
+                         import time
+                         delay = min(2 ** (i + 1), 10)  # Max 10 seconds
+                         if "RESOURCE_EXHAUSTED" in error_str or "429" in error_str:
+                             delay = 15  # Wait longer for rate limit
+                             logger.info(f"⏳ Rate limit hit, waiting {delay}s before retry...")
+                         time.sleep(delay)
                      else:
                          logger.error("❌ All Gemini keys exhausted")
                          raise e

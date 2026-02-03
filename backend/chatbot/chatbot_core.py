@@ -69,7 +69,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
     """Production-ready Education Chatbot with mixin-based handlers"""
 
 
-    def __init__(self, qdrant_client: QdrantClient, model_name: str = 'gemini-2.0-flash'):  # 2.0-flash has more quota than 2.5-flash
+    def __init__(self, qdrant_client: QdrantClient, model_name: str = 'gemini-2.5-flash'):
         logger.info("🚀 Initializing Education Chatbot v5.0...")
         
         self.qdrant_client = qdrant_client
@@ -222,6 +222,28 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         
         logger.info(f"💬 User: {message}")
         
+        # 🧠 ACTIVE CONTEXT RESTORATION
+        # Look back at conversation history to find what we were talking about
+        if history and len(history) >= 4:
+            # history[-1] = Assistant (Placeholder)
+            # history[-2] = User (Current)
+            # history[-3] = Assistant (Last Response)
+            last_ai_response = history[-3].get("content", "")
+            
+            # Pattern 1: Bot explicitly stated data about a school
+            # e.g., "ข้อมูลโรงเรียนชุมชนบ้านปูยุด...", "โรงเรียนบ้านตะลุบัน มีนักเรียน..."
+            import re
+            school_match = re.search(r'(?:โรงเรียน|วิทยาลัย)(\s*[ก-๙a-zA-Z0-9]+(?:[ \t][ก-๙a-zA-Z0-9]+)*)', last_ai_response)
+            
+            if school_match:
+                extracted_name = school_match.group(1).strip()
+                # Check if it looks like a real school name (len > 3)
+                if len(extracted_name) > 3 and not any(x in extracted_name for x in ['คือ', 'มี', 'อยู่', 'เป็น']):
+                     # Store in memory if not already set or override if it looks fresh
+                     # But don't override if user is changing topic (will be handled by parser later)
+                     self.memory.last_school_name = extracted_name
+                     logger.info(f"🧠 Context Restored from History: {extracted_name}")
+        
         # ⚠️ CRITICAL FALLBACK & SELF-HEALING
         if not self.qdrant_available:
             # 🔄 Lazy Retry: Check Qdrant every 60 seconds
@@ -270,7 +292,21 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         # Parse query intent
         parsed = self.parser.parse(message)
         if not parsed:
-            logger.error("❌ Parser returned None")
+            logger.warning("⚠️ Parser returned None - trying LLM Agent fallback")
+            # Try LLM Agent for difficult queries (follow-ups, ambiguous queries)
+            if self.use_llm_agent and self.llm_agent:
+                try:
+                    context = self.memory.to_dict() if self.memory else {}
+                    llm_response = self.llm_agent.process_query(message, context=context)
+                    if llm_response and "ไม่สามารถ" not in llm_response:
+                        history[-1]["content"] = llm_response
+                        yield history, ""
+                        return
+                except Exception as e:
+                    logger.error(f"❌ LLM Agent fallback failed: {e}")
+            
+            # Final fallback
+            logger.error("❌ Both parser and LLM Agent failed")
             history[-1]["content"] = "ขออภัยครับ ไม่สามารถเข้าใจคำถามได้ โปรดลองอีกครั้ง"
             yield history, ""
             return

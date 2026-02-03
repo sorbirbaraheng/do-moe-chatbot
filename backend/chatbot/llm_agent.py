@@ -83,7 +83,14 @@ class LLMAgent:
                  return self._inject_widgets(self._format_fallback_response(results), results)
             
             # Step 4: Fallback to LLM for complex queries
+            suggestions_str = self._get_proactive_suggestions(tool_calls, results)
+            
+            # GENERATE RESPONSE WITHOUT SUGGESTIONS IN PROMPT (To keep it clean)
             response = self._generate_response(question, results)
+            
+            # FORCE APPEND SUGGESTIONS (Bypass LLM filtering)
+            if suggestions_str:
+                response += "\n\n" + suggestions_str
             
             return response
             
@@ -92,7 +99,7 @@ class LLMAgent:
             return self._error_response(str(e))
     
     def _select_tools(self, question: str, context: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Use LLM to select appropriate tools for the query with retry logic"""
+        """LLM-FIRST Tool Selection: LLM understands intent, then we enrich entities"""
         
         # Format context for prompt
         context_str = "None"
@@ -103,45 +110,37 @@ class LLMAgent:
             if context.get("last_district"): c_items.append(f"- District: {context['last_district']}")
             if context.get("last_agency"): c_items.append(f"- Agency: {context['last_agency']}")
             if c_items: context_str = "\n".join(c_items)
+        
+        # Debug log context
+        logger.info(f"📋 Context for LLM: {context_str}")
 
         prompt = TOOL_SELECTION_PROMPT.format(
-            tools=self.tools_prompt,
             context=context_str,
             question=question
         )
         
-        # ⚡ OPTIMIZATION: Try Regex/Keyword Inference FIRST (Save LLM Call)
-        # If keywords are strong enough to identify valid tools, skip the LLM selection step.
-        inferred_tools = self._infer_tools_from_keywords(question, context)
-        if inferred_tools:
-            logger.info(f"⚡ Fast-tracked tool selection via keywords: {[t['name'] for t in inferred_tools]}")
-            return inferred_tools
-            
-        logger.info("🤖 Keywords insufficient, falling back to LLM for tool selection...")
+        # ============================================================
+        # ⚡ LLM-FIRST: Let LLM understand intent and select tools
+        # ============================================================
+        logger.info("🧠 LLM-First Tool Selection: Understanding intent...")
         
-        # Retry logic: 2 attempts before falling back to keywords
         max_retries = 2
         for attempt in range(max_retries):
             try:
-                response = self.llm.generate_content(prompt, timeout=30)  # Increased timeout
+                response = self.llm.generate_content(prompt, timeout=30)
                 response_text = response.text.strip()
                 
                 # Extract JSON from response
                 tool_calls = self._parse_tool_calls(response_text)
                 
                 if tool_calls:
-                    logger.info(f"✅ LLM tool selection succeeded on attempt {attempt + 1}")
+                    logger.info(f"✅ LLM tool selection succeeded: {[t['name'] for t in tool_calls]}")
                     
-                    # 🧠 Context Injection for LLM results
-                    if context and context.get("last_school_name"):
-                        for tool in tool_calls:
-                            # Only inject for relevant tools if missing
-                            if tool['name'] in ['count_students', 'count_teachers', 'get_ratio', 'list_schools']:
-                                if 'school_name' not in tool.get('params', {}):
-                                    if 'params' not in tool: tool['params'] = {}
-                                    tool['params']['school_name'] = context.get("last_school_name")
-                                    logger.info(f"🧠 Injected school from context to LLM tool: {tool['params']['school_name']}")
-                                    
+                    # ============================================================
+                    # ENRICHMENT: Use keyword extraction to fill missing entities
+                    # ============================================================
+                    tool_calls = self._enrich_tool_params(question, tool_calls, context)
+                    
                     return tool_calls
                     
             except Exception as e:
@@ -150,9 +149,50 @@ class LLMAgent:
                     logger.info("🔄 Retrying tool selection...")
                     continue
         
-        # All retries failed - use keyword fallback
+        # ============================================================
+        # FALLBACK: Only use keywords if LLM completely fails
+        # ============================================================
         logger.warning("⚠️ LLM tool selection exhausted, using keyword fallback")
         return self._infer_tools_from_keywords(question, context)
+    
+    def _enrich_tool_params(self, question: str, tool_calls: List[Dict], context: Dict = None) -> List[Dict]:
+        """Enrich LLM tool selections with context from previous turns ONLY.
+        
+        LLM-FIRST APPROACH:
+        - LLM is now responsible for extracting entities (province, school_name) directly
+        - This method ONLY handles context injection for follow-up questions
+        - No more regex extraction or garbage filtering - LLM handles everything
+        """
+        
+        for tool in tool_calls:
+            params = tool.get('params', {})
+            
+            # Tools that accept province/school parameters
+            school_tools = ['count_students', 'count_teachers', 'count_schools', 'search_schools', 
+                           'get_school_full_details', 'get_ratio', 'list_schools', 'filter_schools']
+            aggregation_tools = ['count_students', 'count_teachers', 'count_schools']
+            skip_context_tools = ['compare', 'ranking', 'general_chat']
+            
+            # Context injection for follow-up questions ONLY
+            if context and tool['name'] not in skip_context_tools:
+                # Inject school_name from context only if LLM didn't provide one
+                if not params.get('school_name') and context.get('last_school_name'):
+                    if tool['name'] in school_tools:
+                        # Skip injection for aggregation tools if province is set (province-level query)
+                        if tool['name'] not in aggregation_tools or not params.get('province'):
+                            params['school_name'] = context['last_school_name']
+                            logger.info(f"🧠 Injected school from context: {params['school_name']}")
+                        
+                # Inject province from context only if LLM didn't provide one
+                if not params.get('province') and context.get('last_province'):
+                    last_prov = context.get('last_province')
+                    if isinstance(last_prov, str) and tool['name'] in school_tools:
+                        params['province'] = last_prov
+                        logger.info(f"🧠 Injected province from context: {params['province']}")
+            
+            tool['params'] = params
+        
+        return tool_calls
     
     def _parse_tool_calls(self, response_text: str) -> List[Dict[str, Any]]:
         """Parse tool calls from LLM response"""
@@ -491,14 +531,18 @@ class LLMAgent:
         # If no education-related keywords found, it's likely a general query
         education_keywords = [
             'โรงเรียน', 'นักเรียน', 'ครู', 'อาจารย์', 'สถานศึกษา', 'การศึกษา',
-            'วิทยาลัย','มหาวิทยาลัย', 'สพฐ', 'สังกัด', 'เขต', 'จังหวัด',
-            'กรุงเทพ', 'กระบี่', 'รายละเอียด', 'ที่อยู่', 'ติดต่อ'  # Known keywords
+            'วิทยาลัย','มหาวิทยาลัย', 'สพฐ', 'สังกัด', 'เขต', 'จังหวัด', 'ศพด',
+            'กรุงเทพ', 'กระบี่', 'รายละเอียด', 'ที่อยู่', 'ติดต่อ', # Known keywords
+            'วัด', 'บ้าน', 'ชุมชน', 'อนุบาล', 'เทศบาล' # Common school prefixes (prevent general fallback)
         ]
         has_education_context = any(kw in question for kw in education_keywords)
         
         # If no education keywords and no entities extracted, treat as GENERAL
-        if not has_education_context and not school_name and not province:
-            logger.info(f"🌐 Detected GENERAL query (no education keywords): {question}")
+        # BUT: Check context first - if user is in a school conversation, don't drop out!
+        has_active_context = context.get('last_school_name') is not None if context else False
+        
+        if not has_education_context and not school_name and not province and not has_active_context:
+            logger.info(f"🌐 Detected GENERAL query (no education keywords & no active context): {question}")
             return []  # Empty = no tools needed, LLM will respond directly
         
         # 9. DEFAULT: search schools (only if there's some context)
@@ -547,6 +591,17 @@ class LLMAgent:
                 logger.info(f"🏫 Extracted school (name+number pattern): '{candidate}'")
                 return candidate
         
+        # 2.5 NEW: Match "Thai Name + จังหวัด" pattern (e.g., "พัฒนาวิทยา จังหวัดยะลา")
+        # This catches school names BEFORE a province specification
+        match_before_province = re.search(r'^([ก-๙a-zA-Z]+)(?:\s+(?:จังหวัด|จ\.))', question)
+        if match_before_province:
+            candidate = match_before_province.group(1).strip()
+            # Filter out province names being confused as school names
+            from .thai_provinces import THAI_PROVINCES
+            if candidate not in THAI_PROVINCES and len(candidate) > 2:
+                logger.info(f"🏫 Extracted school (before-province pattern): '{candidate}'")
+                return candidate
+        
         # 3. NEW: Detect famous school name keywords (without prefix)
         # These are well-known school names that people often search without "โรงเรียน"
         famous_school_keywords = [
@@ -574,6 +629,8 @@ class LLMAgent:
             # Strict Technical College pattern: Must start with วิทยาลัยเทคนิค or just เทคนิค followed by province/name
             # Prevent matching "เทคนิคการสอน" (Teaching Technique)
             r'(?:วิทยาลัย)?เทคนิค([ก-๙a-zA-Z\s]+?)' + stop_words,
+            # New Prefixes for generic school names (Wat, Ban, Chumchon, etc.)
+            r'(?:วัด|บ้าน|ชุมชน|อนุบาล|เทศบาล)\s*([ก-๙a-zA-Z0-9\s]+)' + stop_words,
         ]
         
         for pattern in patterns:
@@ -770,14 +827,82 @@ class LLMAgent:
         # Pattern: เปรียบเทียบ...ระหว่าง X กับ Y (Support "เทียบ" alias)
         pattern = r'(?:ระหว่าง|เปรียบเทียบ|เทียบ)\s*(?:โรงเรียน)?([ก-๙a-zA-Z\s]+?)(?:กับ|และ)\s*(?:โรงเรียน)?([ก-๙a-zA-Z\s]+?)(?:$|\s)'
         match = re.search(pattern, question)
-        if match:
-            return (match.group(1).strip(), match.group(2).strip())
-        
         return ("", "")
     
-    def _generate_response(self, question: str, results: List[Dict]) -> str:
+    def _get_proactive_suggestions(self, tool_calls: List[Dict], results: List[Dict]) -> str:
+        """
+        Generate proactive follow-up suggestions based on tool results.
+        Returns a string of suggestions to be appended to the LLM prompt.
+        """
+        suggestions = []
+        
+        for tool_call, result in zip(tool_calls, results):
+            name = tool_call.get("name")
+            params = tool_call.get("params", {})
+            
+            # Scenario 1: User asked for school details
+            if name == "get_school_full_details" or (name == "search_schools" and result.get("total_count", 0) == 1):
+                school_name = params.get("school_name") or "โรงเรียนนี้"
+                suggestions.append(f"- เปรียบเทียบจำนวนนักเรียนของ {school_name} กับโรงเรียนใกล้เคียง")
+                suggestions.append(f"- ดูอัตราส่วนครูต่อนักเรียนของ {school_name}")
+                suggestions.append(f"- ดูจำนวนนักเรียนแยกตามระดับชั้น (ชาย/หญิง)")
+
+            # Scenario 2: User asked for student count (School level)
+            elif name == "count_students" and params.get("school_name"):
+                suggestions.append("- ดูจำนวนครูเพื่อหาอัตราส่วน")
+                suggestions.append("- ดูข้อมูลที่ตั้งและรายละเอียดโรงเรียนเพิ่มเติม")
+
+            # Scenario 3: User asked for student count (Province level)
+            elif name == "count_students" and params.get("province"):
+                prov = params.get("province")
+                suggestions.append(f"- จัดอันดับ 5 โรงเรียนที่มีนักเรียนมากที่สุดใน{prov}")
+                suggestions.append(f"- ดูจำนวนโรงเรียนทั้งหมดใน{prov}")
+            
+            # Scenario 4: Ranking
+            elif name == "ranking":
+                suggestions.append("- ดูรายละเอียดของโรงเรียนอันดับ 1")
+                suggestions.append("- เปรียบเทียบโรงเรียนอันดับ 1 กับอันดับ 2")
+
+        if not suggestions:
+            return ""
+            
+        return "\n💡 **Suggested Follow-up Actions (Proactive Assistance):**\n" + "\n".join(suggestions[:3])
+
+    def _generate_response(self, question: str, results: List[Dict], suggestions_str: str = "") -> str:
         """Use LLM to generate natural language response from tool results"""
         
+        # Convert results to JSON string
+        import json
+        data_str = json.dumps(results, ensure_ascii=False, indent=2)
+        
+        # Construct the dynamic prompt
+        system_instruction = RESPONSE_GENERATION_PROMPT
+        
+        if suggestions_str:
+            # Inject PROACTIVE INSTRUCTION
+            # We add a specific instruction to the prompt telling AI to use these suggestions naturally
+            suggestions_instruction = f"""
+            
+---
+**⚡ EXECUTIVE ASSISTANT MODE ACTIVE:**
+The system has identified these potential follow-up actions for the user:
+{suggestions_str}
+
+**YOUR TASK:**
+After answering the main question, please **NATURALLY** suggest 1-2 of these actions to the user.
+- Do NOT just copy-paste the list.
+- Weave it into your closing sentence.
+- Example: "If you're interested, I can also compare this school with..."
+- Make it sound helpful, not robotic.
+---
+"""
+            system_instruction += suggestions_instruction
+
+        context_vars = {
+            "data": data_str,
+            "question": question
+        }
+
         # Helper: Check if this is a general chat fallback
         is_general_chat = any(r.get("type") == "general_knowledge" or r.get("tool") == "general_chat" for r in results)
         
@@ -797,7 +922,7 @@ class LLMAgent:
         else:
             # Standard Data Response
             data_str = json.dumps(results, ensure_ascii=False, indent=2)
-            prompt = RESPONSE_GENERATION_PROMPT.format(
+            prompt = system_instruction.format(
                 data=data_str,
                 question=question
             )
@@ -872,25 +997,33 @@ class LLMAgent:
             for res in results:
                 tool = res.get("tool")
                 
-                # 1. Map Widget Injection
-                if tool == "get_school_full_details" and res.get("lat") and res.get("lon"):
-                    # Single result map
-                    school = {
-                        "name": res.get("school_name", "School"),
-                        "lat": res.get("lat"),
-                        "lon": res.get("lon"),
-                        "subdistrict": res.get("subdistrict"),
-                        "district": res.get("district"),
-                        "province": res.get("province"),
-                        "postcode": res.get("postcode")
-                    }
-                    map_json = self._generate_map_json([school])
-                    if "<map>" not in text:
-                        text += f"\n\n<map>{map_json}</map>"
+                # ============================================
+                # LLM-DRIVEN FORMAT SELECTION (NEW APPROACH)
+                # ============================================
+                # Map and Chart widgets are now handled by LLM via RESPONSE_GENERATION_PROMPT
+                # The LLM decides whether to include <map> or <chart> based on context
+                # Keeping this code as fallback (commented out) if LLM fails to include widgets
                 
-                # 2. Chart Widget Injection (Restoring Rich UI)
-                # Ranking Chart - ALWAYS SHOW (Implied Comparison)
-                if tool == "ranking" and res.get("ranking"):
+                # FALLBACK: Map Widget Injection (only if LLM didn't include one)
+                if tool == "get_school_full_details" and res.get("lat") and res.get("lon"):
+                    # Only inject if LLM didn't already include a map
+                    if "<map>" not in text:
+                        school = {
+                            "name": res.get("school_name", "School"),
+                            "lat": res.get("lat"),
+                            "lon": res.get("lon"),
+                            "subdistrict": res.get("subdistrict"),
+                            "district": res.get("district"),
+                            "province": res.get("province"),
+                            "postcode": res.get("postcode")
+                        }
+                        map_json = self._generate_map_json([school])
+                        text += f"\n\n<map>{map_json}</map>"
+                        logger.info("📍 Map widget added as fallback (LLM didn't include)")
+                
+                # FALLBACK: Chart Widget Injection (only if LLM didn't include one)
+                # Ranking Chart - fallback for ranking tool
+                if tool == "ranking" and res.get("ranking") and "<chart>" not in text:
                     ranking_data = res.get("ranking", [])
                     chart_data = []
                     for item in ranking_data[:10]: # Top 10
@@ -907,8 +1040,8 @@ class LLMAgent:
                             "data": chart_data,
                             "title": f"สถิติ{title}"
                         }, ensure_ascii=False)
-                        if "<chart>" not in text:
-                            text += f"\n\n<chart>{chart_json}</chart>"
+                        text += f"\n\n<chart>{chart_json}</chart>"
+                        logger.info("📊 Chart widget added as fallback (LLM didn't include)")
                         
                 # Count Schools Chart (Breakdown) - RESTRICTED
                 elif tool == "count_schools":

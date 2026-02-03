@@ -28,18 +28,80 @@ class SchoolSearchEngine:
         self.llm_provider = llm_provider
         # Use unified collection (thailand_education) for all queries
         self.collection = PRIMARY_COLLECTION
-    
+        
+        # In-Memory Cache for Global Fuzzy Search (Loaded lazily)
+        self._school_names_cache = [] 
+        self._cache_loaded = False
+        self._cache_lock = None  # Lazy init to avoid pickling issues if any
+        
+    def _ensure_cache_lock(self):
+        import threading
+        if self._cache_lock is None:
+            self._cache_lock = threading.Lock()
+            
+    def _load_school_names_cache(self):
+        """Load minimal school data into memory for global fuzzy search"""
+        self._ensure_cache_lock()
+        with self._cache_lock:
+            if self._cache_loaded:
+                return
+
+            logger.info("💾 Loading school names into memory cache for global fuzzy search...")
+            try:
+                # Scroll all schools (approx 30k - fast enough)
+                offset = None
+                while True:
+                    response = self.client.scroll(
+                        collection_name=self.collection,
+                        scroll_filter=None,
+                        limit=5000,
+                        offset=offset,
+                        with_payload=True,
+                        with_vectors=False
+                    )
+                    
+                    points, next_offset = response
+                    
+                    for p in points:
+                        meta = p.payload.get('metadata', {})
+                        name = meta.get('school_name')
+                        if name:
+                            self._school_names_cache.append({
+                                'name': name,
+                                'province': meta.get('province'),
+                                'id': p.id,
+                                'payload': p.payload
+                            })
+                            
+                    offset = next_offset
+                    if offset is None:
+                        break
+                        
+                self._cache_loaded = True
+                logger.info(f"✅ Loaded {len(self._school_names_cache)} schools into memory.")
+                
+            except Exception as e:
+                logger.error(f"Failed to load school cache: {e}")
+
     def _normalize_name(self, name: str) -> str:
-        """Normalize school name for consistent matching
+        """
+        Normalize school name for consistent matching
         - Remove spaces
         - Remove common prefixes
         - Convert Thai numerals
         - Fix common typos
         """
-        if not name:
-            return ""
-            
-        # 0. Fix common typos
+        if not name: return ""
+        name = name.strip()
+        
+        # NEW: Handle specific prefixes before normalization
+        prefixes = ["โรงเรียน", "ร.ร.", "รร.", "วิทยาลัย", "มหาวิทยาลัย", "ศูนย์", "มูลนิธิ"]
+        for p in prefixes:
+            if name.startswith(p):
+                name = name[len(p):].strip()
+                break # Remove only the first matching prefix
+        
+        # Existing normalization logic continues...
         name = name.replace("อนุบาน", "อนุบาล")
         name = name.replace("วิทยลัย", "วิทยาลัย")
         name = name.replace("เชียงหม่", "เชียงใหม่")
@@ -160,114 +222,107 @@ class SchoolSearchEngine:
             logger.error(f"Fuzzy search fallback error: {e}")
             return []
 
-    def find_similar_schools_fuzzy(self, query_name: str, limit: int = 5, threshold: int = 60) -> List:
+    def find_similar_schools_fuzzy(self, query_name: str, limit: int = 5, threshold: int = 60):
         """
         Perform fuzzy search on school names using RapidFuzz.
         Strategy:
         1. Extract province from query if present.
         2. If province found: Fetch ALL schools in that province and fuzzy match. (Very accurate)
-        3. If no province: Fetch candidates using broad semantic search and fuzzy match.
+        3. If no province: Use In-Memory Cache for Global Fuzzy Search.
         """
         try:
-            candidates = []
+            # Check if query contains province in Thai provinces list
+            province = None
             norm_name = self._normalize_name(query_name)
             
-            # Step 1: Detect province
-            detected_province = None
             for prov in THAI_PROVINCES:
-                if prov in query_name or prov in norm_name: # Check raw query and normalized (typo-fixed) query
-                    detected_province = prov
+                if prov in query_name:
+                    province = prov
+                    # Remove province from query for better name matching
+                    query_name = query_name.replace(prov, "").strip()
+                    norm_name = self._normalize_name(query_name)
                     break
             
-            if detected_province:
-                logger.info(f"📍 Detected province in query: '{detected_province}'")
-                # Step 2: Fetch schools in province
-                response = self.client.scroll(
-                    collection_name=self.collection,
-                    scroll_filter=Filter(must=[
-                        FieldCondition(key="metadata.province", match=MatchValue(value=detected_province))
-                    ]),
-                    limit=1000, # Should cover most schools in a province for fuzzy matching
-                    with_payload=True
-                )
-                
-                # Convert Record objects (from scroll) to ScoredPoint-like objects for consistency
-                candidates = []
-                for record in response[0]:
-                    # Scroll returns Record, which has id, payload, vector, no version/score usually
-                    candidates.append(ScoredPoint(
-                        id=record.id,
-                        version=getattr(record, 'version', 0),
-                        score=0.0, 
-                        payload=record.payload,
-                        vector=None
-                    ))
-            else:
-                # Step 3: No province, use broad semantic search to get candidates
-                logger.info("⚠️ No province detected, using broad semantic search for candidates")
-                
-                # Smart prefixing: Don't add 'โรงเรียน' if it's a college or center
-                if any(x in norm_name for x in ["วิทยาลัย", "มหาวิทยาลัย", "ศูนย์"]):
-                    search_query = norm_name
-                else:
-                    search_query = f"โรงเรียน{norm_name}"
-                
-                if self.llm_provider:
-                    query_vector = self.llm_provider.embed_content(search_query)
-                else:
-                     result = genai.embed_content(
-                        model="models/text-embedding-004",
-                        content=search_query,
-                        task_type="retrieval_query"
+            candidates = []
+            
+            if province:
+                # Step 2: Fetch all schools in province
+                logger.info(f"🧩 Fuzzy search in province: {province}")
+                try:
+                    response = self.client.scroll(
+                        collection_name=self.collection,
+                        scroll_filter=Filter(
+                            must=[FieldCondition(key="metadata.province", match=MatchValue(value=province))]
+                        ),
+                        limit=1000, # Should cover most schools in a province
+                        with_payload=True,
+                        with_vectors=False
                     )
-                     query_vector = result['embedding']
+                    
+                    raw_candidates = response[0]
+                    
+                    # RapidFuzz logic for province scope
+                    # Extract school names
+                    choices = [p.payload.get('metadata', {}).get('school_name', '') for p in raw_candidates]
+                    
+                    # Use RapidFuzz extract
+                    matches = process.extract(
+                        norm_name,
+                        choices,
+                        limit=limit * 3, # Get more candidates since we use WRatio
+                        scorer=fuzz.WRatio,
+                        processor=self._normalize_name 
+                    )
+                    
+                    for name, score, idx in matches:
+                        if score >= threshold:
+                            p = raw_candidates[idx]
+                            candidates.append(ScoredPoint(
+                                id=p.id,
+                                version=0,
+                                score=score / 100.0,
+                                payload=p.payload,
+                                vector=None
+                            ))
+                            
+                except Exception as e:
+                    logger.error(f"Error fetching schools in province {province}: {e}")
+                    return []
+                        
+            else:
+                # Step 3: No province - Use In-Memory Cache for Global Fuzzy Search
+                self._load_school_names_cache()
+                
+                if not self._school_names_cache:
+                    return []
 
-                response = self.client.query_points(
-                    collection_name=self.collection,
-                    query=query_vector,
-                    score_threshold=0.4, # Lower threshold to get candidates (typos usually have low semantic score)
-                    limit=100,
-                    with_payload=True
+                logger.info(f"🧩 Global Fuzzy Search in memory ({len(self._school_names_cache)} schools)...")
+                
+                # Extract cache names for matching
+                cache_names = [s['name'] for s in self._school_names_cache]
+                
+                matches = process.extract(
+                    norm_name,
+                    cache_names,
+                    limit=limit * 2, # Get more candidates to filter by threshold
+                    scorer=fuzz.WRatio,
+                    processor=self._normalize_name
                 )
-                candidates = response.points
-            
-            logger.info(f"🧩 Fuzzy search processing {len(candidates)} candidates...")
+                
+                for name, score, idx in matches:
+                    if score >= threshold:
+                        cached_item = self._school_names_cache[idx]
+                        # Create ScoredPoint-like object
+                        candidates.append(ScoredPoint(
+                            id=cached_item['id'],
+                            version=0,
+                            score=score / 100.0,
+                            payload=cached_item['payload'],
+                            vector=None
+                        ))
 
-
-            if not candidates:
-                return []
-                
-            # Re-rank with RapidFuzz
-            scored_candidates = []
-            seen_ids = set()
-            
-            for point in candidates:
-                meta = point.payload.get('metadata', {})
-                school_name = meta.get('school_name', '')
-                school_id = meta.get('school_id')
-                
-                if not school_name or school_id in seen_ids:
-                    continue
-                seen_ids.add(school_id)
-                
-                # Calculate simple ratio
-                # Use normalized names for comparison to ignore spacing/prefix diffs
-                score = fuzz.ratio(norm_name, self._normalize_name(school_name))
-                
-                # Bonus for partial containment (helps with "อนุบาน" vs "โรงเรียนอนุบาล")
-                if norm_name in self._normalize_name(school_name):
-                    score += 15
-                
-                if score >= threshold:
-                    # Monkey patch score to reflect fuzzy score for UI sorting
-                    point.score = score / 100.0 
-                    scored_candidates.append(point)
-            
-            # Sort by fuzzy score
-            scored_candidates.sort(key=lambda x: x.score, reverse=True)
-            
-            logger.info(f"🧩 Fuzzy search matched {len(scored_candidates)} candidates")
-            return scored_candidates[:limit]
+            logger.info(f"🧩 Fuzzy search matched {len(candidates)} candidates")
+            return candidates[:limit]
 
         except Exception as e:
             logger.error(f"Fuzzy internal error: {e}")

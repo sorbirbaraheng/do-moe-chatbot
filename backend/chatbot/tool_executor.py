@@ -820,7 +820,39 @@ class ToolExecutor:
         """Count teachers with various filters including person_type (ประเภทบุคลากร) and year"""
         conditions = []
         
+        resolved_school_id = None
+        
         if school_name:
+             # Disambiguation / Resolution
+             ambiguity_check = self._resolve_school_ambiguity(school_name, province)
+             if ambiguity_check['type'] == 'single':
+                 resolved_school_id = ambiguity_check['data'].payload.get('metadata', {}).get('school_id')
+                 logger.info(f"🎯 [CountTeachers] Resolved specific school ID: {resolved_school_id}")
+
+             elif ambiguity_check['type'] == 'ambiguous':
+                 exact_in_choices = [c for c in ambiguity_check['choices'] if c.get('school_name') == school_name]
+                 if len(exact_in_choices) == 1:
+                     target = exact_in_choices[0]
+                     logger.info(f"🎯 [CountTeachers] Exact match found in ambiguous list. Overriding.")
+                     resolved_school_id = target.get('school_id')
+                 else:
+                     logger.info(f"🤔 [CountTeachers] Ambiguous school name '{school_name}' -> Found {len(ambiguity_check['choices'])} matches")
+                     return {
+                         "tool": "count_teachers",
+                         "ambiguous": True,
+                         "choices": ambiguity_check['choices'],
+                         "query": {"school_name": school_name}
+                     }
+
+        conditions = []
+        
+        if resolved_school_id:
+            # PREFERRED: Filter by ID
+            conditions.append(
+                FieldCondition(key="metadata.school_id", match=MatchValue(value=str(resolved_school_id)))
+            )
+        elif school_name:
+            # FALLBACK
             school_name, _ = self._normalize_school_name(school_name)
             conditions.append(
                 FieldCondition(key="metadata.school_name", match=MatchText(text=school_name))
@@ -1000,22 +1032,29 @@ class ToolExecutor:
     
     def _count_students(self, school_name: str = None, province: str = None,
                         district: str = None, grade: str = None, 
-                        gender: str = None, year: str = None) -> Dict[str, Any]:
+                        gender: str = None, year: str = None, 
+                        agency: str = None, **kwargs) -> Dict[str, Any]:
         """Count students with various filters including year"""
         
         # 0. DISAMBIGUATION CHECK
         # Only if searching by specific school name, and NOT by year/grade/gender deeply yet (to fail fast)
+        resolved_school_id = None
+
         if school_name:
              # If user supplied province, it reduces ambiguity, pass it.
              ambiguity_check = self._resolve_school_ambiguity(school_name, province)
-             if ambiguity_check['type'] == 'ambiguous':
+             if ambiguity_check['type'] == 'single':
+                 resolved_school_id = ambiguity_check['data'].payload.get('metadata', {}).get('school_id')
+                 logger.info(f"🎯 Resolved specific school ID: {resolved_school_id}")
+
+             elif ambiguity_check['type'] == 'ambiguous':
                  # SMART RESOLUTION: Check if one choice exactly matches the query
                  exact_in_choices = [c for c in ambiguity_check['choices'] if c.get('school_name') == school_name]
                  if len(exact_in_choices) == 1:
                      # Found exact match! Override ambiguity and use this one.
+                     target = exact_in_choices[0]
                      logger.info(f"🎯 Exact match '{school_name}' found in ambiguous list. Overriding.")
-                     # Update school_name to ensure downstream logic uses this exact name
-                     # We let the rest of the function run normally, it will find only this school.
+                     resolved_school_id = target.get('school_id')
                  else:
                      logger.info(f"🤔 Ambiguous school name '{school_name}' -> Found {len(ambiguity_check['choices'])} matches")
                      return {
@@ -1027,7 +1066,13 @@ class ToolExecutor:
         
         conditions = []
         
-        if school_name:
+        if resolved_school_id:
+            # PREFERRED: Filter by ID if we successfully resolved it
+            conditions.append(
+                FieldCondition(key="metadata.school_id", match=MatchValue(value=str(resolved_school_id)))
+            )
+        elif school_name:
+            # FALLBACK: Filter by name if ID resolution failed for some reason
             school_name, extracted_grade = self._normalize_school_name(school_name)
             conditions.append(
                 FieldCondition(key="metadata.school_name", match=MatchText(text=school_name))
@@ -1035,7 +1080,10 @@ class ToolExecutor:
             # Use extracted grade if main grade is missing
             if not grade and extracted_grade:
                 grade = extracted_grade
-        if province:
+        
+        if province and not resolved_school_id:
+            # Only add province filter if we haven't already locked onto a specific ID
+            # (ID implies province, so redundant, but safer to keep if ID missing)
             province = self._normalize_province(province)
             conditions.append(
                 FieldCondition(key="metadata.province", match=MatchValue(value=province))
@@ -1444,7 +1492,7 @@ class ToolExecutor:
             "found": False if not ratios and school_name else True
         }
     
-    def _compare(self, entity1: str, entity2: str, metric: str) -> Dict[str, Any]:
+    def _compare(self, entity1: str, entity2: str, metric: str = "students") -> Dict[str, Any]:
         """Compare two entities (schools, provinces, or regions)"""
         result1 = None
         result2 = None
@@ -1536,9 +1584,15 @@ class ToolExecutor:
             "metric": metric
         }
     
-    def _ranking(self, metric: str, order: str, scope: str = "school",
-                 province: str = None, limit: int = 5) -> Dict[str, Any]:
+    def _ranking(self, metric: str = None, order: str = "most", scope: str = "school",
+                 province: str = None, limit: int = 5, type: str = None) -> Dict[str, Any]:
         """Get ranking of schools or provinces by a metric"""
+        # Handle parameter alias: 'type' -> 'metric' (LLM sometimes sends 'type' instead of 'metric')
+        if not metric and type:
+            metric = type
+        if not metric:
+            metric = "students"  # default
+        
         limit = int(limit)
         
         if metric == "students":
