@@ -126,18 +126,57 @@ class FirestoreConfigLoader:
         return DEFAULT_CONFIG
     
     def get_groq_keys(self, category: str = "school") -> List[str]:
-        """Get Groq API keys for a category"""
+        """Get Groq API keys with fallback to other categories"""
         config = self.get_config()
+        
+        # 1. Try requested category
         api_keys = config.get("apiKeys", {}).get(category, {})
         keys = api_keys.get("groqKeys", [])
-        return [k for k in keys if k and k.strip()]
+        valid_keys = [k for k in keys if k and k.strip()]
+        
+        # 2. If empty, try 'school' (default)
+        if not valid_keys and category != 'school':
+            api_keys = config.get("apiKeys", {}).get("school", {})
+            keys = api_keys.get("groqKeys", [])
+            valid_keys = [k for k in keys if k and k.strip()]
+            
+        # 3. If still empty, try ANY category (Unified Mode)
+        if not valid_keys:
+            for cat in ['general', 'student', 'school']:
+                api_keys = config.get("apiKeys", {}).get(cat, {})
+                keys = api_keys.get("groqKeys", [])
+                found = [k for k in keys if k and k.strip()]
+                if found:
+                    valid_keys.extend(found)
+                    
+        # Deduplicate
+        return list(set(valid_keys))
     
     def get_gemini_keys(self, category: str = "school") -> List[str]:
-        """Get Gemini API keys for a category"""
+        """Get Gemini API keys with fallback to other categories"""
         config = self.get_config()
+        
+        # 1. Try requested category
         api_keys = config.get("apiKeys", {}).get(category, {})
         keys = api_keys.get("geminiKeys", [])
-        return [k for k in keys if k and k.strip()]
+        valid_keys = [k for k in keys if k and k.strip()]
+        
+        # 2. If empty, try 'school' (default)
+        if not valid_keys and category != 'school':
+            api_keys = config.get("apiKeys", {}).get("school", {})
+            keys = api_keys.get("geminiKeys", [])
+            valid_keys = [k for k in keys if k and k.strip()]
+
+        # 3. If still empty, try ANY category (Unified Mode)
+        if not valid_keys:
+            for cat in ['general', 'student', 'school']:
+                api_keys = config.get("apiKeys", {}).get(cat, {})
+                keys = api_keys.get("geminiKeys", [])
+                found = [k for k in keys if k and k.strip()]
+                if found:
+                    valid_keys.extend(found)
+
+        return list(set(valid_keys))
     
     def get_best_groq_key(self, category: str = "school") -> Optional[str]:
         """Get the first available Groq key"""

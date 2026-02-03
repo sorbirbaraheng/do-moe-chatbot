@@ -95,7 +95,9 @@ class LLMAgent:
             return response
             
         except Exception as e:
+            import traceback
             logger.error(f"❌ LLM Agent error: {e}")
+            logger.error(f"❌ Full traceback:\n{traceback.format_exc()}")
             return self._error_response(str(e))
     
     def _select_tools(self, question: str, context: Dict[str, Any] = None) -> List[Dict[str, Any]]:

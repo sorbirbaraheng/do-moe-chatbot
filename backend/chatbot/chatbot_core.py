@@ -50,6 +50,7 @@ from .aggregators import ResultAggregator
 from .formatters import ResponseFormatter
 from .memory import ConversationMemory
 from .llm_agent import LLMAgent
+from .context_manager import ContextManager
 
 # Import handler mixins
 from .handlers import LLMHandlersMixin, StatsHandlersMixin
@@ -105,6 +106,10 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         
         # 🆕 Initialize LLM Agent for Function Calling
         self._init_llm_agent()
+        
+        # 🆕 Initialize Advanced Context Manager (LLM-based with Redis storage)
+        redis_client = self.cache.redis_client if self.cache else None
+        self.context_manager = ContextManager(self.model, redis_client=redis_client)
         
         # Self-Healing: Track last check time
         import time
@@ -222,27 +227,42 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         
         logger.info(f"💬 User: {message}")
         
-        # 🧠 ACTIVE CONTEXT RESTORATION
-        # Look back at conversation history to find what we were talking about
-        if history and len(history) >= 4:
-            # history[-1] = Assistant (Placeholder)
-            # history[-2] = User (Current)
-            # history[-3] = Assistant (Last Response)
-            last_ai_response = history[-3].get("content", "")
+        # 🧠 ADVANCED CONTEXT MANAGEMENT (LLM-based)
+        # Use ContextManager for intelligent context extraction and coreference resolution
+        session_id = hash(str(history[:2])) if history else "default"  # Simple session ID
+        try:
+            context_result = self.context_manager.get_context_for_query(
+                query=message,
+                history=history[:-2] if len(history) > 2 else [],  # Exclude current exchange
+                session_id=str(session_id)
+            )
             
-            # Pattern 1: Bot explicitly stated data about a school
-            # e.g., "ข้อมูลโรงเรียนชุมชนบ้านปูยุด...", "โรงเรียนบ้านตะลุบัน มีนักเรียน..."
-            import re
-            school_match = re.search(r'(?:โรงเรียน|วิทยาลัย)(\s*[ก-๙a-zA-Z0-9]+(?:[ \t][ก-๙a-zA-Z0-9]+)*)', last_ai_response)
+            # Use resolved query (with coreferences replaced)
+            resolved_message = context_result.get("resolved_query", message)
+            if resolved_message != message:
+                logger.info(f"🔄 Query resolved: '{message}' → '{resolved_message}'")
+                message = resolved_message
             
-            if school_match:
-                extracted_name = school_match.group(1).strip()
-                # Check if it looks like a real school name (len > 3)
-                if len(extracted_name) > 3 and not any(x in extracted_name for x in ['คือ', 'มี', 'อยู่', 'เป็น']):
-                     # Store in memory if not already set or override if it looks fresh
-                     # But don't override if user is changing topic (will be handled by parser later)
-                     self.memory.last_school_name = extracted_name
-                     logger.info(f"🧠 Context Restored from History: {extracted_name}")
+            # Update legacy memory for backward compatibility
+            ctx = context_result.get("context")
+            if ctx:
+                if ctx.current_school:
+                    self.memory.last_school_name = ctx.current_school
+                if ctx.current_province:
+                    self.memory.last_province = ctx.current_province
+                logger.info(f"🧠 Context: schools={ctx.schools[-3:]}, provinces={ctx.provinces[-3:]}, focus={ctx.current_school or ctx.current_province}")
+        except Exception as e:
+            logger.warning(f"⚠️ Context extraction failed, using fallback: {e}")
+            # Fallback to old rule-based extraction
+            if history and len(history) >= 4:
+                import re
+                last_ai_response = history[-3].get("content", "")
+                school_match = re.search(r'(?:โรงเรียน|วิทยาลัย)(\s*[ก-๙a-zA-Z0-9]+(?:[ \t][ก-๙a-zA-Z0-9]+)*)', last_ai_response)
+                if school_match:
+                    extracted_name = school_match.group(1).strip()
+                    if len(extracted_name) > 3 and not any(x in extracted_name for x in ['คือ', 'มี', 'อยู่', 'เป็น']):
+                        self.memory.last_school_name = extracted_name
+                        logger.info(f"🧠 Context Restored (fallback): {extracted_name}")
         
         # ⚠️ CRITICAL FALLBACK & SELF-HEALING
         if not self.qdrant_available:

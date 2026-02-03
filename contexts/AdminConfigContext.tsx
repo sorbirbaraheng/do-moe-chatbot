@@ -25,7 +25,7 @@ export type { AdminConfig } from '../types/admin.types';
 interface AdminConfigContextType {
     config: AdminConfig;
     updateConfig: (newConfig: Partial<AdminConfig>) => Promise<boolean>;
-    updateApiKeys: (category: 'general' | 'school' | 'student', apiKeys: Partial<AdminConfig['apiKeys']['general']>) => void;
+    updateApiKeys: (category: 'general' | 'school' | 'student', apiKeys: Partial<AdminConfig['apiKeys']['general']>) => Promise<void>;
     updatePrompts: (prompts: Partial<AdminConfig['prompts']>) => void;
     updateModel: (model: Partial<AdminConfig['model']>) => void;
     updateRAG: (rag: Partial<AdminConfig['rag']>) => void;
@@ -50,6 +50,8 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
         student: []
     });
 
+    const [isLoaded, setIsLoaded] = useState(false);
+
     useEffect(() => {
         const docRef = doc(db, 'settings', CONFIG_DOC_ID);
         const unsubscribe = onSnapshot(docRef, (docSnap) => {
@@ -65,8 +67,6 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
                     console.log(`[Config] Migrating deprecated model ${data.model.name} to gemini-2.5-flash`);
                     data.model.name = 'gemini-2.5-flash';
                 }
-
-                // IP Migration logic removed to prevent overwriting localhost with unreachable IPs
 
                 // IMPORTANT: Force sync prompts if DEFAULT_CONFIG has newer version
                 const firestoreVersion = data.prompts?.version || 0;
@@ -86,14 +86,66 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
                 }
 
                 setConfig(prev => ({ ...prev, ...data }));
+                setIsLoaded(true); // ✅ Mark as loaded
             } else {
                 setDoc(docRef, DEFAULT_CONFIG).catch(err => console.error("Failed to init config:", err));
+                setIsLoaded(true); // ✅ Mark as loaded (default)
             }
         }, (error) => {
             console.error("Firestore sync error:", error);
         });
         return () => unsubscribe();
     }, []);
+
+    // 🌐 Auto-detect Flask API URL from browser hostname when not set
+    // Priority: Admin-set production URL > Auto-detect for development
+    useEffect(() => {
+        if (typeof window === 'undefined' || !isLoaded) return; // 🛡️ Wait for Firestore load
+
+        const schoolUrl = config.apiKeys.school?.flaskApiUrl;
+        const studentUrl = config.apiKeys.student?.flaskApiUrl;
+
+        // Check if URL is a production URL (should NOT be overwritten)
+        const isProductionUrl = (url: string | undefined) => {
+            if (!url) return false;
+            // Production URLs: https:// or any domain that's not localhost/127.x/private IP
+            if (url.startsWith('https://')) return true;
+            // Check for real domains (not localhost, 127.x, 192.168.x, 10.x)
+            const urlHost = url.replace(/https?:\/\//, '').split(':')[0];
+            const isPrivateIp = urlHost === 'localhost' ||
+                urlHost.startsWith('127.') ||
+                urlHost.startsWith('192.168.') ||
+                urlHost.startsWith('10.');
+            return !isPrivateIp && urlHost.includes('.');
+        };
+
+        // Skip auto-detect if Admin has set a production URL
+        if (isProductionUrl(schoolUrl) || isProductionUrl(studentUrl)) {
+            console.log(`[Auto IP] Skipped - Using production URL: ${schoolUrl}`);
+            return;
+        }
+
+        // Only auto-detect if URLs are empty or localhost when accessing from LAN
+        const currentHost = window.location.hostname;
+        const isLan = currentHost !== 'localhost' && currentHost !== '127.0.0.1';
+        const needsAutoDetect = (
+            !schoolUrl ||
+            !studentUrl ||
+            (isLan && (schoolUrl?.includes('127.0.0.1') || schoolUrl?.includes('localhost')))
+        );
+
+        if (needsAutoDetect && config.apiKeys.school?.flaskApiEnabled) {
+            const detectedUrl = isLan
+                ? `http://${currentHost}:5001`
+                : 'http://127.0.0.1:5001';
+
+            console.log(`[Auto IP] Detected Flask API URL: ${detectedUrl} (LAN: ${isLan})`);
+
+            // Update both categories
+            updateApiKeys('school', { flaskApiUrl: detectedUrl });
+            updateApiKeys('student', { flaskApiUrl: detectedUrl });
+        }
+    }, [config.apiKeys.school?.flaskApiUrl, config.apiKeys.student?.flaskApiUrl, isLoaded]);
 
     const updateConfig = async (newConfig: Partial<AdminConfig>): Promise<boolean> => {
         setConfig(prev => {
@@ -143,13 +195,37 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
         updateConfig({ uxPolicy: { ...config.uxPolicy, ...uxPolicy } });
     };
 
-    const updateApiKeys = (category: 'general' | 'school' | 'student', apiKeys: Partial<AdminConfig['apiKeys']['general']>) => {
-        updateConfig({
+    const updateApiKeys = async (category: 'general' | 'school' | 'student', updates: Partial<AdminConfig['apiKeys']['general']>) => {
+        // 1. Optimistic Update (Local State)
+        setConfig(prev => ({
+            ...prev,
             apiKeys: {
-                ...config.apiKeys,
-                [category]: { ...config.apiKeys[category], ...apiKeys }
+                ...prev.apiKeys,
+                [category]: { ...prev.apiKeys[category], ...updates }
             }
-        });
+        }));
+
+        // 2. Safe Firestore Update (Dot Notation)
+        // Using dot notation (e.g. "apiKeys.school.flaskApiUrl") ensures we ONLY update specific fields
+        // and NEVER overwrite the entire map if our local state is stale.
+        try {
+            const docRef = doc(db, 'settings', CONFIG_DOC_ID);
+            const dotNotationUpdates: Record<string, any> = {};
+
+            Object.entries(updates).forEach(([key, value]) => {
+                dotNotationUpdates[`apiKeys.${category}.${key}`] = value;
+            });
+
+            // Use updateDoc for atomic field updates
+            // (Use setDoc with merge if document might not exist, but updateDoc is safer for existing docs)
+            const { updateDoc } = await import('firebase/firestore');
+            await updateDoc(docRef, dotNotationUpdates);
+
+            console.log(`[Config] Safe update for ${category}:`, Object.keys(updates));
+        } catch (error) {
+            console.error('[Config] Failed to update API keys:', error);
+            // Revert or retry could be added here
+        }
     };
 
     const resetToDefault = async () => {

@@ -539,6 +539,10 @@ class ToolExecutor:
         if len(clean_name) > 4:
             search_terms.append(clean_name[:4]) # First 4 chars often identify the school (e.g. "เตรียม")
         
+        # Strategy 3: Aggressive Fuzzy (First 2-3 chars) - Fallback for typos like "อะมานะ"
+        if len(clean_name) >= 3:
+             search_terms.append(clean_name[:2]) if len(clean_name) < 5 else search_terms.append(clean_name[:3])
+        
         for term in search_terms:
             if len(suggestions) >= limit: break
             
@@ -592,7 +596,10 @@ class ToolExecutor:
         if province:
             count_conditions.append(FieldCondition(key="metadata.province", match=MatchValue(value=self._normalize_province(province))))
         if district:
-            count_conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=district)))
+            # Normalize district by removing common prefixes
+            district_clean = district.replace('อำเภอ', '').replace('อ.', '').replace('เขต', '').strip()
+            # Use MatchText which should match "พญาไท" against "เขตพญาไท" or "พญาไท"
+            count_conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=district_clean)))
         if agency:
             count_conditions.append(FieldCondition(key="metadata.agency", match=MatchText(text=self._normalize_agency(agency))))
         
@@ -628,11 +635,18 @@ class ToolExecutor:
                 "agency": meta.get("agency")
              })
              
+        # SUGGESTION LOGIC: If no results found, try to find similar schools
+        suggestions = []
+        if len(formatted) == 0 and actual_total_count == 0 and original_school_name:
+             logger.info(f"🤔 No results for '{original_school_name}', trying suggestions...")
+             suggestions = self._suggest_schools(original_school_name)
+             
         return {
             "tool": "search_schools",
             "found": len(formatted) > 0,
             "total_found": actual_total_count, 
-            "results": formatted
+            "results": formatted,
+            "suggestions": suggestions
         }
 
     def _advanced_school_search(self, province: str = None, district: str = None, 
@@ -840,6 +854,7 @@ class ToolExecutor:
                      return {
                          "tool": "count_teachers",
                          "ambiguous": True,
+                         "total_found": len(ambiguity_check['choices']),
                          "choices": ambiguity_check['choices'],
                          "query": {"school_name": school_name}
                      }
@@ -907,6 +922,7 @@ class ToolExecutor:
                 "tool": "count_teachers",
                 "query": {"school_name": school_name, "province": province},
                 "total_teachers": total_all,
+                "total_found": len(ranked),  # Number of schools with teacher data
                 "by_gender": {},
                 "by_person_type": {},
                 "by_school": top_10,
@@ -1014,6 +1030,7 @@ class ToolExecutor:
             "tool": "count_teachers",
             "query": {"school_name": school_name, "province": province, "gender": gender, "person_type": person_type},
             "total_teachers": total_count,
+            "total_found": len(schools),  # Number of schools with data
             "by_gender": {"male": total_male, "female": total_female},
             "by_person_type": by_person_type, 
             "by_school": dict(sorted(schools.items(), key=lambda x: x[1]['total'], reverse=True)[:10]), # Keep top 10 for by_school
@@ -1060,6 +1077,8 @@ class ToolExecutor:
                      return {
                          "tool": "count_students",
                          "ambiguous": True,
+                         "total_students": 0,  # Add for consistent access
+                         "total_found": len(ambiguity_check['choices']),
                          "choices": ambiguity_check['choices'],
                          "query": {"school_name": school_name}
                      }
@@ -1534,12 +1553,28 @@ class ToolExecutor:
                 
                 # Check school first
                 res_school = self._count_students(school_name=entity)
-                if res_school["total_students"] > 0:
+                
+                # Handle ambiguous case - try to pick best match
+                if res_school.get("ambiguous") and res_school.get("choices"):
+                    choices = res_school["choices"]
+                    # Find exact name match in choices
+                    clean_entity = entity.replace("โรงเรียน", "").strip()
+                    for choice in choices:
+                        if choice.get("school_name") == entity or choice.get("school_name") == clean_entity:
+                            logger.info(f"🎯 [Compare] Auto-resolved ambiguous '{entity}' to exact match")
+                            # Re-query with school_id
+                            return self._count_students(school_name=choice.get("school_name"), province=choice.get("province"))
+                    # If no exact match, use first choice (best semantic match)
+                    best = choices[0]
+                    logger.info(f"🎯 [Compare] Auto-resolved ambiguous '{entity}' to best match: {best.get('school_name')}")
+                    return self._count_students(school_name=best.get("school_name"), province=best.get("province"))
+                
+                if res_school.get("total_students", 0) > 0:
                     return res_school
                 
                 # Try province if school failed
                 res_prov = self._count_students(province=entity)
-                if res_prov["total_students"] > 0:
+                if res_prov.get("total_students", 0) > 0:
                     return res_prov
                 
                 # If both failed, prefer school result if it has suggestions
@@ -1551,11 +1586,24 @@ class ToolExecutor:
                      return self._count_teachers(province=prov_norm)
 
                 res_school = self._count_teachers(school_name=entity)
-                if res_school["total_teachers"] > 0:
+                
+                # Handle ambiguous case - try to pick best match
+                if res_school.get("ambiguous") and res_school.get("choices"):
+                    choices = res_school["choices"]
+                    clean_entity = entity.replace("โรงเรียน", "").strip()
+                    for choice in choices:
+                        if choice.get("school_name") == entity or choice.get("school_name") == clean_entity:
+                            logger.info(f"🎯 [Compare] Auto-resolved ambiguous '{entity}' to exact match")
+                            return self._count_teachers(school_name=choice.get("school_name"), province=choice.get("province"))
+                    best = choices[0]
+                    logger.info(f"🎯 [Compare] Auto-resolved ambiguous '{entity}' to best match: {best.get('school_name')}")
+                    return self._count_teachers(school_name=best.get("school_name"), province=best.get("province"))
+                
+                if res_school.get("total_teachers", 0) > 0:
                     return res_school
 
                 res_prov = self._count_teachers(province=entity)
-                if res_prov["total_teachers"] > 0:
+                if res_prov.get("total_teachers", 0) > 0:
                     return res_prov
 
                 # If both failed, prefer school result if it has suggestions

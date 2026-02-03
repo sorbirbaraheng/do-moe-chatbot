@@ -41,7 +41,7 @@ class LLMHandlersMixin:
             
             Return ONLY the word "GENERAL" or "EDUCATION".
             """
-            response = self.model.generate_content(prompt)
+            response = self.model.generate_content(prompt, timeout=10)
             return response.text.strip().upper()
         except Exception as e:
             logger.error(f"LLM Classification failed: {e}")
@@ -93,7 +93,7 @@ class LLMHandlersMixin:
             - Be helpful, friendly, and speak as "น้องดีโอ".
             """
             
-            response = self.model.generate_content(prompt)
+            response = self.model.generate_content(prompt, timeout=30)
             return response.text
             
         except Exception as e:
@@ -128,7 +128,7 @@ class LLMHandlersMixin:
             
             ตอบกลับสั้นๆ กระชับ (ไม่เกิน 2-3 บรรทัด):"""
 
-            response = self.model.generate_content(prompt, max_tokens=300)
+            response = self.model.generate_content(prompt, max_tokens=300, timeout=15)
             if response and hasattr(response, 'text') and response.text:
                 logger.info(f"✅ General response generated successfully")
                 return response.text
@@ -304,7 +304,7 @@ class LLMHandlersMixin:
 
 **เริ่มตอบ:**"""
 
-            response = self.model.generate_content(prompt)
+            response = self.model.generate_content(prompt, timeout=30)
             logger.info(f"🤖 LLM formatted {data_type} response")
             return response.text.strip()
             

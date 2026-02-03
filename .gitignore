@@ -61,3 +61,13 @@ Thumbs.db
 .cache/
 .parcel-cache/
 .npm/
+
+# Archive folder (debug scripts)
+archive/
+
+# Log files
+*.log
+
+# Debug outputs
+debug_*.txt
+test_results*.txt

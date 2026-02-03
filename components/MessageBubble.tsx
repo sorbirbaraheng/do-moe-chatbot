@@ -431,7 +431,7 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                     remarkPlugins={[remarkGfm, remarkBreaks]}
                     components={{
                       p: ({ children }) => (
-                        <p className="text-[15px] leading-[1.8] mb-3 last:mb-0" style={{ color: '#1D1D1F' }}>{children}</p>
+                        <p className="text-[16px] leading-[1.8] mb-4 last:mb-0 font-normal tracking-wide text-[#1d1d1f] antialiased opacity-90">{children}</p>
                       ),
                       strong: ({ children }) => (
                         <strong className="font-bold text-gradient-warm">
@@ -468,9 +468,11 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                   </ReactMarkdown>
                 </div>
 
-                {/* Right Column - Chart (Sticky) */}
-                <div className="lg:w-[380px] lg:flex-shrink-0 lg:sticky lg:top-4 self-start animate-fade-in-up">
-                  <ChartWidget type={chartData.type} data={chartData.data} title={chartData.title} />
+                {/* Right Column - Chart (Sticky) with Apple Card Style */}
+                <div className="lg:w-[400px] lg:flex-shrink-0 lg:sticky lg:top-4 self-start animate-fade-in-up">
+                  <div className="bg-white/80 backdrop-blur-xl rounded-[24px] p-1.5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] border border-white/60">
+                    <ChartWidget type={chartData.type} data={chartData.data} title={chartData.title} />
+                  </div>
                 </div>
               </div>
             ) : (
@@ -542,7 +544,7 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                       components={{
                         // Paragraphs - Good spacing, readable line-height
                         p: ({ children }) => (
-                          <p className="text-[15px] leading-[1.8] mb-3 last:mb-0" style={{ color: '#1D1D1F' }}>{children}</p>
+                          <p className="text-[16px] leading-[1.8] mb-4 last:mb-0 font-normal tracking-wide text-[#1d1d1f] antialiased opacity-90">{children}</p>
                         ),
                         // Bold text - Indigo accent like Gemini
                         strong: ({ children }) => (
@@ -628,7 +630,7 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                         // Tables - HIDE when Chart is present to avoid redundancy/clutter
                         table: ({ children }) => (
                           chartData ? null : (
-                            <div className="my-4 overflow-x-auto rounded-xl border border-gray-200/60 shadow-sm">
+                            <div className="my-4 overflow-x-auto rounded-xl border border-gray-200/60 shadow-sm w-full clear-both block">
                               <table className="w-full text-[14px]">{children}</table>
                             </div>
                           )

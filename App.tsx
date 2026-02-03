@@ -21,6 +21,7 @@ import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
 import AdminPanel from './components/admin/AdminPanel';
 import AdminLogin from './components/admin/AdminLogin';
+import MobileMenu from './components/MobileMenu';
 import { Category, Message, User } from './types';
 import { sendMessageStream, startChat, updateGeminiConfig, resetChatSession, getLastRagDebugInfo, abortCurrentStream } from './services/geminiService';
 import { chatService, ChatSession } from './services/chatService';
@@ -681,99 +682,17 @@ const AppContent: React.FC = () => {
           </div>
 
           {/* ✨ Mobile Drawer Overlay - Smooth iOS-style transitions */}
-          <div
-            className={`fixed inset-0 z-50 md:hidden font-sans transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${isMobileMenuOpen ? 'pointer-events-auto' : 'pointer-events-none'
-              }`}
-          >
-            {/* Backdrop with smooth fade */}
-            <div
-              className={`absolute inset-0 bg-black/40 backdrop-blur-xl transition-opacity duration-500 ease-out ${isMobileMenuOpen ? 'opacity-100' : 'opacity-0'
-                }`}
-              onClick={() => setIsMobileMenuOpen(false)}
-            ></div>
-
-            {/* Drawer Panel - iOS-style slide with spring animation */}
-            <div
-              className={`absolute inset-y-0 left-0 w-[85%] max-w-[340px] bg-white/95 backdrop-blur-3xl shadow-[0_25px_80px_-15px_rgba(0,0,0,0.4)] border-r border-white/30 flex flex-col transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
-                }`}
-              style={{
-                backdropFilter: 'blur(60px) saturate(180%)',
-              }}
-            >
-              {/* Header with ambient glow */}
-              <div className="relative flex items-center justify-between p-5 border-b border-black/5">
-                <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 via-purple-500/5 to-transparent"></div>
-                <div
-                  className="relative flex items-center gap-3 active:scale-95 transition-transform cursor-pointer"
-                  onClick={() => {
-                    navigateTo('home');
-                    setIsMobileMenuOpen(false);
-                  }}
-                >
-                  <div className="w-11 h-11 rounded-2xl bg-white/90 p-1 shadow-lg border border-white/60 ring-1 ring-black/5">
-                    <img src="/do-mascot.png" alt="DO" className="w-full h-full object-contain" />
-                  </div>
-                  <div>
-                    <span className="font-bold text-[18px] tracking-tight text-[#1D1D1F] block">MOE - One</span>
-                    <span className="text-[9px] font-bold text-black/40 uppercase tracking-[0.15em]">ศทส. • สป.</span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setIsMobileMenuOpen(false)}
-                  className="relative w-9 h-9 rounded-full bg-black/5 flex items-center justify-center text-black/50 hover:bg-black/10 active:scale-90 transition-all"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-              </div>
-
-              {/* New Chat Button - Apple 2026 Style */}
-              <div className="px-4 py-4">
-                <button
-                  onClick={() => {
-                    handleNewChat();
-                    setIsMobileMenuOpen(false);
-                  }}
-                  className="flex items-center justify-center gap-2.5 w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#007AFF] to-[#5856D6] text-white shadow-lg shadow-blue-500/25 active:scale-[0.97] transition-all font-semibold text-[15px]"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-                  เริ่มการสนทนาใหม่
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-4 pb-4">
-                <div className="text-xs font-bold text-black/40 uppercase tracking-widest mb-3 px-2">ประวัติการสนทนา</div>
-                {pastChats.map(chat => (
-                  <div
-                    key={chat.sessionId}
-                    onClick={() => {
-                      loadPastChat(chat);
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`px-4 py-3 rounded-2xl text-[14px] font-medium transition-all duration-300 ease-out mb-2 truncate flex items-center gap-3 cursor-pointer transform
-                      ${currentChatId === chat.sessionId
-                        ? 'bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-600 shadow-[0_4px_12px_rgba(59,130,246,0.15)] scale-[1.02] border border-blue-100/50'
-                        : 'hover:bg-white/60 active:bg-white/80 active:scale-[0.98] text-black/70 hover:text-black hover:shadow-sm border border-transparent hover:border-white/60'
-                      }`}
-                  >
-                    <span className="truncate">{chat.title}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Logout Button */}
-              <div className="p-4 border-t border-black/5 bg-gradient-to-t from-white/60 to-transparent">
-                <button
-                  onClick={handleLogout}
-                  className="flex items-center gap-3 w-full px-4 py-3.5 rounded-2xl text-[#FF3B30] font-semibold bg-red-50/80 hover:bg-red-100 transition-all active:scale-[0.97] border border-red-100/50"
-                >
-                  <div className="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" /></svg>
-                  </div>
-                  ออกจากระบบ
-                </button>
-              </div>
-            </div>
-          </div>
+          <MobileMenu
+            isOpen={isMobileMenuOpen}
+            onClose={() => setIsMobileMenuOpen(false)}
+            user={user}
+            currentChatId={currentChatId}
+            pastChats={pastChats}
+            onNewChat={handleNewChat}
+            onLoadChat={loadPastChat}
+            onLogout={handleLogout}
+            onNavigateHome={() => navigateTo('home')}
+          />
 
           {/* Main Layout - Full Height Flex */}
           <div className="relative z-10 flex-1 flex overflow-hidden">

@@ -141,7 +141,7 @@ class LLMIntentClassifier:
         try:
             prompt = self.CLASSIFICATION_PROMPT + query
             
-            llm_response = self.llm.generate_content(prompt)
+            llm_response = self.llm.generate_content(prompt, timeout=10)
             result_text = llm_response.text if llm_response else None
             
             if result_text:
@@ -245,7 +245,7 @@ class ResponseSynthesizer:
             
             prompt = self.SYNTHESIS_PROMPT + context
             
-            llm_response = self.llm.generate_content(prompt)
+            llm_response = self.llm.generate_content(prompt, timeout=30)
             result = llm_response.text if llm_response else None
             
             # DEBUG: Log first 200 chars of LLM response
@@ -711,7 +711,7 @@ class SmartQueryParser:
             JSON:
             """
             
-            response = self.llm.generate_content(prompt)
+            response = self.llm.generate_content(prompt, timeout=15)
             if not response or not response.text:
                 return {}
                 

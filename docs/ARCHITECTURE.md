@@ -1,222 +1,116 @@
-# 🏗️ DO-MOE Architecture Guide
+# 🏗️ MOE-One Architecture
 
-## สำหรับโปรแกรมเมอร์ที่ต้องการเข้าใจระบบ
+## Overview
 
----
-
-## 📊 System Overview (ภาพรวม)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         User (Browser)                          │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Frontend (React + Vite)                       │
-│                      localhost:5173                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │  App.tsx    │  │ MessageBubble│ │  geminiService.ts       │  │
-│  │  (หน้าหลัก) │  │ (แสดงข้อความ)│ │  (เรียก LLM APIs)       │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼ HTTP REST API
-┌─────────────────────────────────────────────────────────────────┐
-│                    Backend (Flask API)                           │
-│                      localhost:5001                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │ web_chatbot │  │ chatbot_core│  │     search_engine       │  │
-│  │ _v5.py      │  │ .py         │  │     .py                 │  │
-│  │ (Entry)     │  │ (หลักตอบคำถาม)│ │  (ค้นหา Qdrant)         │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-            ┌───────────────────┼───────────────────┐
-            ▼                   ▼                   ▼
-┌───────────────────┐ ┌───────────────────┐ ┌───────────────────┐
-│     Qdrant        │ │     Redis         │ │   Groq/Gemini     │
-│  (Vector DB)      │ │  (Sessions)       │ │   (LLM APIs)      │
-│  ข้อมูลโรงเรียน    │ │  เก็บความจำ        │ │   สร้างคำตอบ       │
-└───────────────────┘ └───────────────────┘ └───────────────────┘
-```
+MOE-One เป็น AI Chatbot สำหรับค้นหาข้อมูลการศึกษาของประเทศไทย ประกอบด้วย:
+- **Frontend**: React + Vite (TypeScript)
+- **Backend**: Flask + Python
+- **Database**: Qdrant Vector Database
+- **Auth/Config**: Firebase Firestore
 
 ---
 
-## 🔄 Flow การทำงาน (เมื่อ User ถามคำถาม)
+## Directory Structure
 
-### ขั้นตอน 1: User พิมพ์คำถาม
 ```
-User: "สตูลมีกี่โรงเรียน"
-```
-
-### ขั้นตอน 2: Frontend ส่งไป Backend
-```javascript
-// services/geminiService.ts
-fetch('http://localhost:5001/chat', {
-  method: 'POST',
-  body: JSON.stringify({
-    message: "สตูลมีกี่โรงเรียน",
-    category: "school",
-    session_id: "abc123"
-  })
-})
-```
-
-### ขั้นตอน 3: Backend วิเคราะห์คำถาม
-```python
-# backend/chatbot/query_parser.py
-parsed = {
-    "province": "สตูล",
-    "query_type": "count",
-    "entity": "school"
-}
-```
-
-### ขั้นตอน 4: ค้นหาข้อมูลจาก Qdrant
-```python
-# backend/chatbot/search_engine.py
-results = qdrant_client.query_points(
-    collection="education_statistics_province",
-    query_vector=embed("สตูล"),
-    limit=5
-)
-# ได้ข้อมูล: {"province": "สตูล", "school_count": 348, ...}
-```
-
-### ขั้นตอน 5: สร้างคำตอบด้วย LLM
-```python
-# ใช้ Groq (เร็ว) หรือ Gemini (fallback)
-prompt = f"""
-ข้อมูลที่ค้นพบ: {results}
-คำถาม: สตูลมีกี่โรงเรียน
-ตอบเป็นภาษาไทย สุภาพ เข้าใจง่าย
-"""
-answer = groq.chat(prompt)
-```
-
-### ขั้นตอน 6: ส่งคำตอบกลับ
-```json
-{
-  "response": "จังหวัดสตูลมีโรงเรียนทั้งหมด 348 แห่งครับ 🏫"
-}
+moe-one---ict-hub/
+├── 📱 Frontend (React/Vite)
+│   ├── App.tsx             # Main application entry
+│   ├── components/         # UI Components
+│   │   ├── admin/          # Admin panel components
+│   │   ├── chat/           # Chat interface components
+│   │   └── common/         # Shared components
+│   ├── contexts/           # React Context providers
+│   ├── services/           # API client services
+│   ├── config/             # Frontend configuration
+│   └── types/              # TypeScript type definitions
+│
+├── 🐍 Backend (Flask/Python)
+│   └── backend/
+│       ├── chatbot/        # Core chatbot logic
+│       │   ├── chatbot_core.py   # Main chatbot engine
+│       │   ├── llm_agent.py      # LLM orchestration
+│       │   ├── tool_executor.py  # Tool execution (search, etc.)
+│       │   ├── tools.py          # Tool definitions
+│       │   └── query_parser.py   # Query parsing & NLU
+│       ├── rag/            # RAG (Retrieval-Augmented Generation)
+│       └── web_chatbot_v5.py     # Flask API server
+│
+├── 📚 docs/                # Documentation
+├── 🧪 tests/               # Test files
+├── 📦 archive/             # Archived debug scripts
+└── 🔧 Config Files
+    ├── package.json        # NPM dependencies
+    ├── requirements.txt    # Python dependencies
+    └── vite.config.ts      # Vite configuration
 ```
 
 ---
 
-## 📁 โครงสร้างไฟล์สำคัญ
+## Key Files
 
-### Frontend (React)
-| ไฟล์ | หน้าที่ |
-|------|--------|
-| `App.tsx` | Component หลัก จัดการ state, routing |
-| `components/MessageBubble.tsx` | แสดงข้อความ chat (markdown, chart) |
-| `components/ChatInput.tsx` | ช่องพิมพ์ข้อความ |
-| `services/geminiService.ts` | เรียก Backend API + fallback logic |
-| `services/firebase.ts` | Authentication (Google Login) |
-| `config/systemPrompts.ts` | Prompt templates สำหรับ AI |
-
-### Backend (Python Flask)
-| ไฟล์ | หน้าที่ |
-|------|--------|
-| `web_chatbot_v5.py` | Entry point, Flask API routes |
-| `chatbot/chatbot_core.py` | Logic หลักในการตอบคำถาม |
-| `chatbot/search_engine.py` | Query Qdrant vector database |
-| `chatbot/query_parser.py` | วิเคราะห์คำถาม (NLP) |
-| `chatbot/memory.py` | จัดการ conversation memory |
-| `redis_session.py` | เก็บ session ใน Redis |
+| File | Purpose |
+|------|---------|
+| `web_chatbot_v5.py` | Flask API entry point |
+| `chatbot/chatbot_core.py` | Main chatbot logic |
+| `chatbot/tool_executor.py` | Database query execution |
+| `chatbot/llm_agent.py` | LLM orchestration |
+| `services/geminiService.ts` | Gemini/Groq API client |
+| `contexts/AdminConfigContext.tsx` | Config management |
 
 ---
 
-## 🗄️ Data Flow
+## Data Flow
 
 ```
-                    ┌──────────────────────────┐
-                    │       Qdrant             │
-                    │  (Vector Database)       │
-                    │                          │
-                    │  Collections:            │
-                    │  • education_statistics  │
-                    │    _province             │
-                    │  • education_statistics  │
-                    │    _district             │
-                    │  • education_schools     │
-                    └──────────────────────────┘
-                              ▲
-                              │ Semantic Search
-                              │
-┌──────────────┐    ┌──────────────────────────┐
-│   User       │───▶│    Flask Backend         │
-│   Question   │    │                          │
-└──────────────┘    │  1. Parse question       │
-                    │  2. Search Qdrant        │
-                    │  3. Call LLM (Groq)      │
-                    │  4. Format response      │
-                    └──────────────────────────┘
-                              │
-                              ▼
-                    ┌──────────────────────────┐
-                    │       Redis              │
-                    │   (Session Storage)      │
-                    │                          │
-                    │  • User memory           │
-                    │  • Chat history          │
-                    │  • Response cache        │
-                    └──────────────────────────┘
+User Message → Frontend (React)
+     ↓
+Flask API (/api/chat)
+     ↓
+LLM Agent (tool selection)
+     ↓
+Tool Executor (Qdrant queries)
+     ↓
+Response Formatting
+     ↓
+Stream back to Frontend
 ```
 
 ---
 
-## 🔑 API Keys ที่ใช้
+## Configuration
 
-| Key | ใช้ทำอะไร | ที่มา |
-|-----|----------|-------|
-| `GEMINI_API_KEY` | LLM หลัก/สำรอง | Google AI Studio |
-| `GROQ_API_KEY` | LLM เร็ว (primary) | console.groq.com |
-| `QDRANT_URL` | Vector Database | Self-hosted server |
-| `REDIS_URL` | Session storage | Redis Cloud |
+- **API Keys**: Stored in Firebase Firestore (`settings/main-config`)
+- **Prompts**: Configurable via Admin Panel → Prompt Management
+- **Model**: Groq (primary) + Gemini (backup)
 
 ---
 
-## 🛠️ Tech Stack
+## Running Locally
 
-| Layer | Technology |
-|-------|------------|
-| Frontend | React 18, TypeScript, Vite |
-| Styling | TailwindCSS |
-| Auth | Firebase (Google Sign-in) |
-| Backend | Python 3.9+, Flask |
-| Vector DB | Qdrant |
-| Session | Redis |
-| LLM | Groq (llama-3.3-70b), Gemini (fallback) |
+```bash
+# Frontend
+npm install
+npm run dev
 
----
-
-## 📝 วิธีเพิ่ม Feature ใหม่
-
-### เพิ่ม Component UI:
-```
-1. สร้างไฟล์ใน components/
-2. Import ใน App.tsx
-3. ใช้ state management ที่มีอยู่
-```
-
-### เพิ่ม API Endpoint:
-```python
-# ใน web_chatbot_v5.py
-@app.route('/new-endpoint', methods=['POST'])
-def new_endpoint():
-    data = request.json
-    # logic here
-    return jsonify({"result": "..."})
-```
-
-### เพิ่ม Collection ใหม่ใน Qdrant:
-```python
-# ใน search_engine.py
-COLLECTIONS['new_data'] = 'collection_name'
+# Backend
+cd backend
+pip install -r requirements.txt
+python web_chatbot_v5.py
 ```
 
 ---
 
-> 📌 **หมายเหตุ**: อ่าน README.md และ docs/SETUP.md สำหรับวิธี setup
+## Environment Variables
+
+### Frontend (.env.local)
+```
+VITE_FIREBASE_API_KEY=...
+```
+
+### Backend (backend/.env)
+```
+GEMINI_API_KEY=...
+QDRANT_HOST=...
+QDRANT_PORT=...
+```

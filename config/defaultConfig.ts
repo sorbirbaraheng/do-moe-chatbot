@@ -41,20 +41,20 @@ export const DEFAULT_CONFIG: AdminConfig = {
         school: {
             ...DEFAULT_CATEGORY_API_KEYS,
             ragCollection: 'moe_data_school',
-            // Flask API v5.0 for school queries
-            flaskApiUrl: 'http://127.0.0.1:5001',
+            // Flask API v5.0 for school queries - URL auto-detected at runtime
+            flaskApiUrl: '',
             flaskApiKey: '',
             flaskApiEnabled: true,
-            flaskApiConnected: true,
+            flaskApiConnected: false,
         },
         student: {
             ...DEFAULT_CATEGORY_API_KEYS,
             ragCollection: 'moe_data_student',
-            // Flask API v5.0 for student queries
-            flaskApiUrl: 'http://127.0.0.1:5001',
+            // Flask API v5.0 for student queries - URL auto-detected at runtime
+            flaskApiUrl: '',
             flaskApiKey: '',
             flaskApiEnabled: true,
-            flaskApiConnected: true,
+            flaskApiConnected: false,
         },
     },
     prompts: {

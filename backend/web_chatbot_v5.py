@@ -593,3 +593,13 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# =====================================================================
+# GUNICORN WSGI ENTRY POINT
+# =====================================================================
+# For production deployment with Gunicorn:
+#   gunicorn -c gunicorn.conf.py web_chatbot_v5:app
+# 
+# This creates the Flask app at module level so Gunicorn can import it
+# =====================================================================
+app = create_flask_api()

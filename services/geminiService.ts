@@ -1062,7 +1062,20 @@ export const sendMessageStream = async (
       const getFlaskBaseUrl = ChatbotAPIModule.getFlaskBaseUrl;
 
       // Use configured URL if available, otherwise fallback to dynamic
-      const dynamicFlaskUrl = flaskConfig.flaskApiUrl || getFlaskBaseUrl(5001);
+      let dynamicFlaskUrl = flaskConfig.flaskApiUrl || getFlaskBaseUrl(5001);
+
+      // 🛡️ SMART OVERRIDE: If config says localhost (saved by server) but we are on LAN, 
+      // ignore config and use the detected LAN IP. This prevents "Connection Refused" on mobile/remote devices.
+      const isConfigLocal = dynamicFlaskUrl.includes('localhost') || dynamicFlaskUrl.includes('127.0.0.1');
+      const isBrowserLan = typeof window !== 'undefined' &&
+        window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1';
+
+      if (isConfigLocal && isBrowserLan) {
+        console.log('[Flask API] 🛡️ Ignoring saved localhost URL in favor of detected LAN IP');
+        dynamicFlaskUrl = getFlaskBaseUrl(5001);
+      }
+
       console.log(`[Flask API] Using URL: ${dynamicFlaskUrl}`);
       const api = new ChatbotAPI(dynamicFlaskUrl, flaskConfig.flaskApiKey);
 

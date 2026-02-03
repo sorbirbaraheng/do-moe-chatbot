@@ -107,6 +107,26 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
             setDraftUX(config.uxPolicy);
             hasInitializedDraft.current = true;
         }
+
+        // 🌐 AUTO-IP FIX: If config updates with a detected Flask URL (and draft is still localhost/empty), update draft
+        // This handles the race condition where AdminPanel loads before Auto-IP finishes
+        if (hasInitializedDraft.current && config.apiKeys?.school?.flaskApiUrl) {
+            const currentDraftUrl = draftApiKeys.school?.flaskApiUrl;
+            const newConfigUrl = config.apiKeys.school.flaskApiUrl;
+
+            // If draft is empty OR localhost, but new config has a real IP (LAN)
+            const isDraftInvalid = !currentDraftUrl || currentDraftUrl.includes('localhost') || currentDraftUrl.includes('127.0.0.1');
+            const isConfigBetter = newConfigUrl !== currentDraftUrl && !newConfigUrl.includes('localhost') && !newConfigUrl.includes('127.0.0.1');
+
+            if (isDraftInvalid && isConfigBetter) {
+                console.log(`[AdminPanel] Auto-updating draft URL to: ${newConfigUrl}`);
+                setDraftApiKeys(prev => ({
+                    ...prev,
+                    school: { ...prev.school, flaskApiUrl: newConfigUrl },
+                    student: { ...prev.student, flaskApiUrl: newConfigUrl }
+                }));
+            }
+        }
     }, [config]);
 
     // Check for unsaved changes
@@ -384,7 +404,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
 
             // AUTO-SYNC to Flask Backend
             try {
-                const flaskUrl = cleanApiKeys.school.flaskApiUrl || 'http://127.0.0.1:7860';
+                let flaskUrl = cleanApiKeys.school.flaskApiUrl;
+
+                // 🛡️ SMART SYNC OVERRIDE: 
+                // If on LAN (not localhost) but config says localhost, force use of LAN IP for sync
+                if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                    if (!flaskUrl || flaskUrl.includes('localhost') || flaskUrl.includes('127.0.0.1')) {
+                        console.log('[AdminPanel] 🛡️ Smart Sync: Overriding localhost with LAN IP for backend sync');
+                        flaskUrl = `http://${window.location.hostname}:5001`;
+                    }
+                }
+
+                flaskUrl = flaskUrl || 'http://127.0.0.1:5001'; // Default to 5001 (Flask), not 7860
+
                 const response = await fetch(`${flaskUrl}/api/sync-config`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -486,7 +518,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-50 hidden md:flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-300">
             <div className="w-full max-w-6xl h-[90vh] bg-[#F2F2F7] rounded-3xl shadow-2xl overflow-hidden flex animate-in zoom-in-95 duration-300">
                 {/* Sidebar */}
                 <div className="w-64 bg-white/80 backdrop-blur-lg border-r border-black/5 p-4 flex flex-col">
