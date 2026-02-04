@@ -830,8 +830,19 @@ class ToolExecutor:
         return name.strip(), extracted_grade
 
     def _count_teachers(self, school_name: str = None, province: str = None,
-                        district: str = None, gender: str = None, person_type: str = None, year: str = None) -> Dict[str, Any]:
-        """Count teachers with various filters including person_type (ประเภทบุคลากร) and year"""
+                        district: str = None, gender: str = None, person_type: str = None, 
+                        year: str = None, region: str = None) -> Dict[str, Any]:
+        """Count teachers with various filters including person_type (ประเภทบุคลากร), year, and region"""
+        
+        # FIX: Detect if 'province' parameter is actually a region name
+        from .constants import REGIONS
+        if province and not region:
+            # Check if the province value starts with "ภาค" or is in REGIONS dict
+            if province.startswith("ภาค") or province in REGIONS:
+                logger.info(f"🗺️ [CountTeachers] Detected region in province param: '{province}' -> Moving to region")
+                region = province
+                province = None
+        
         conditions = []
         
         resolved_school_id = None
@@ -894,6 +905,20 @@ class ToolExecutor:
             conditions.append(
                 FieldCondition(key="metadata.year", match=MatchValue(value=int(year)))
             )
+        
+        # Region filter - expand to multiple provinces
+        if region:
+            region_provinces = REGIONS.get(region, [])
+            if region_provinces:
+                logger.info(f"🗺️ [CountTeachers] Expanding region '{region}' to {len(region_provinces)} provinces")
+                # Use "should" (OR) for multiple provinces
+                province_conditions = [
+                    FieldCondition(key="metadata.province", match=MatchValue(value=prov))
+                    for prov in region_provinces
+                ]
+                conditions.append(
+                    Filter(should=province_conditions)
+                )
             
         scroll_filter = self._build_filter(conditions)
         
@@ -1410,11 +1435,32 @@ class ToolExecutor:
         return result
     
     def _count_schools(self, province: str = None, district: str = None,
-                       subdistrict: str = None, agency: str = None) -> Dict[str, Any]:
-        """Count schools in an area including subdistrict (ตำบล/แขวง)"""
+                       subdistrict: str = None, agency: str = None, region: str = None) -> Dict[str, Any]:
+        """Count schools in an area including subdistrict (ตำบล/แขวง) and region"""
+        
+        # FIX: Detect if 'province' parameter is actually a region name
+        from .constants import REGIONS
+        if province and not region:
+            if province.startswith("ภาค") or province in REGIONS:
+                logger.info(f"🗺️ [CountSchools] Detected region in province param: '{province}' -> Moving to region")
+                region = province
+                province = None
+        
         conditions = []
         
-        if province:
+        # Region filter - expand to multiple provinces
+        if region:
+            region_provinces = REGIONS.get(region, [])
+            if region_provinces:
+                logger.info(f"🗺️ [CountSchools] Expanding region '{region}' to {len(region_provinces)} provinces")
+                province_conditions = [
+                    FieldCondition(key="metadata.province", match=MatchValue(value=prov))
+                    for prov in region_provinces
+                ]
+                conditions.append(
+                    Filter(should=province_conditions)
+                )
+        elif province:
             province = self._normalize_province(province)
             conditions.append(
                 FieldCondition(key="metadata.province", match=MatchValue(value=province))

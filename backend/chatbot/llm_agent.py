@@ -364,7 +364,7 @@ class LLMAgent:
         is_policy_question = any(kw in question for kw in policy_keywords)
         is_data_query = any(kw in question_lower for kw in ['กี่คน', 'กี่แห่ง', 'กี่โรง', 'จำนวน', 'เท่าไหร่', 'มีกี่', 'รายชื่อ', 'ค้นหา', 'อยู่ที่ไหน', 'พิกัด'])
         
-        if is_policy_question and not is_data_query:
+        if is_policy_question and not is_data_query and not school_name:
             logger.info(f"🎓 Detected EDUCATION POLICY question (LLM will answer directly): {question[:50]}...")
             return []  # Empty = no tools needed, LLM responds directly
         

@@ -212,7 +212,7 @@ class ContextManager:
         
         return existing_context
     
-    def resolve_coreferences(self, query: str, context: SessionContext) -> str:
+    def resolve_coreferences(self, query: str, context: SessionContext, history: List[Dict] = None) -> str:
         """
         Phase 3: Resolve pronouns/references to actual entities
         
@@ -226,8 +226,20 @@ class ContextManager:
         
         needs_resolution = any(p in query for p in pronoun_patterns)
         
-        if not needs_resolution or (not context.schools and not context.provinces):
+        if not needs_resolution:
             return query  # No resolution needed
+        
+        # 🆕 TRY RULE-BASED FIRST for follow-up patterns like "แล้วXละ"
+        # Rule-based is more reliable for these specific patterns
+        if "แล้ว" in query:
+            rule_resolved = self._rule_based_coreference(query, context, history or [])
+            if rule_resolved != query:
+                logger.info(f"🔧 Rule-based priority: '{query}' → '{rule_resolved}'")
+                return rule_resolved
+        
+        # Need context for LLM resolution
+        if not context.schools and not context.provinces:
+            return query
         
         prompt = f"""แปลงคำถามให้ชัดเจนโดยใส่ชื่อจริงแทน "มัน/เขา/ที่นั่น"
 
@@ -255,7 +267,9 @@ class ContextManager:
         except Exception as e:
             logger.warning(f"⚠️ Coreference resolution failed: {e}")
         
-        return query
+        # Final fallback to rule-based
+        return self._rule_based_coreference(query, context, history or [])
+
     
     def summarize_memory(self, history: List[Dict], context: SessionContext) -> Optional[str]:
         """
@@ -310,8 +324,8 @@ class ContextManager:
         # Phase 1: Extract context with LLM
         context = self.extract_context_with_llm(query, history, context)
         
-        # Phase 3: Resolve coreferences
-        resolved_query = self.resolve_coreferences(query, context)
+        # Phase 3: Resolve coreferences (pass history for topic extraction)
+        resolved_query = self.resolve_coreferences(query, context, history)
         
         # Phase 4: Summarize if needed
         if len(history) >= 15 and not context.long_term_summary:
@@ -398,3 +412,98 @@ class ContextManager:
                 school_name = match.group(1)
                 context.add_entity("schools", school_name)
                 context.current_school = school_name
+
+    def _rule_based_coreference(self, query: str, context: SessionContext, history: List[Dict] = None) -> str:
+        """
+        Rule-based fallback for coreference resolution when LLM is unavailable.
+        Handles common Thai follow-up patterns.
+        Now extracts topic from conversation history.
+        """
+        import re
+        history = history or []
+        
+        # 🆕 Extract topic from previous USER messages in history
+        topic = None
+        for msg in reversed(history):
+            if msg.get("role") == "user":
+                prev_query = msg.get("content", "")
+                # Detect topic from previous question
+                if "โรงเรียน" in prev_query or "กี่แห่ง" in prev_query:
+                    topic = "schools"
+                    break
+                elif "ครู" in prev_query or "อาจารย์" in prev_query or "บุคลากร" in prev_query:
+                    topic = "teachers"
+                    break
+                elif "นักเรียน" in prev_query or "เด็ก" in prev_query:
+                    topic = "students"
+                    break
+        
+        # Fallback to context.current_topic if history parsing failed
+        if not topic and context.current_topic:
+            if "โรงเรียน" in context.current_topic or "school" in context.current_topic.lower():
+                topic = "schools"
+            elif "ครู" in context.current_topic or "teacher" in context.current_topic.lower():
+                topic = "teachers"
+            elif "นักเรียน" in context.current_topic or "student" in context.current_topic.lower():
+                topic = "students"
+        
+        # Default topic
+        if not topic:
+            topic = "schools"  # Most common query type
+        
+        logger.info(f"🔧 Rule-based: Extracted topic='{topic}' from history")
+        
+        # Regions for detection
+        REGIONS = ["ภาคเหนือ", "ภาคใต้", "ภาคตะวันออก", "ภาคตะวันตก", "ภาคกลาง", 
+                   "ภาคตะวันออกเฉียงเหนือ", "ภาคอีสาน"]
+        
+        # Pattern 1: "แล้วXละ" or "แล้วXล่ะ" - follow-up with new entity
+        followup_match = re.search(r'แล้ว(.+?)(?:ละ|ล่ะ|ล่ะครับ|ละครับ)?$', query)
+        if followup_match:
+            entity = followup_match.group(1).strip()
+            
+            # Detect if entity is a region
+            for region in REGIONS:
+                if region in entity:
+                    # Use extracted topic
+                    if topic == "schools":
+                        resolved = f"{region}มีโรงเรียนกี่แห่ง"
+                    elif topic == "teachers":
+                        resolved = f"{region}มีครูกี่คน"
+                    elif topic == "students":
+                        resolved = f"{region}มีนักเรียนกี่คน"
+                    else:
+                        resolved = f"{region}มีโรงเรียนกี่แห่ง"
+                    
+                    logger.info(f"🔧 Rule-based: '{query}' → '{resolved}' (topic={topic})")
+                    return resolved
+            
+            # If it's a province
+            from .constants import THAI_PROVINCES
+            for prov in THAI_PROVINCES:
+                if prov in entity:
+                    if topic == "schools":
+                        resolved = f"{prov}มีโรงเรียนกี่แห่ง"
+                    elif topic == "teachers":
+                        resolved = f"{prov}มีครูกี่คน"
+                    elif topic == "students":
+                        resolved = f"{prov}มีนักเรียนกี่คน"
+                    else:
+                        resolved = f"{prov}มีโรงเรียนกี่แห่ง"
+                    
+                    logger.info(f"🔧 Rule-based: '{query}' → '{resolved}' (province, topic={topic})")
+                    return resolved
+        
+        # Pattern 2: Short question like "มีกี่คน?" with no subject
+        if len(query) < 15 and ("มีกี่คน" in query or "มีกี่แห่ง" in query or "เท่าไหร่" in query):
+            if context.current_school:
+                resolved = f"โรงเรียน{context.current_school}{query}"
+                logger.info(f"🔧 Rule-based: '{query}' → '{resolved}' (school context)")
+                return resolved
+            elif context.current_province:
+                resolved = f"{context.current_province}{query}"
+                logger.info(f"🔧 Rule-based: '{query}' → '{resolved}' (province context)")
+                return resolved
+        
+        # No resolution possible
+        return query
