@@ -28,6 +28,9 @@ class SessionContext:
     current_school: Optional[str] = None
     current_province: Optional[str] = None
     
+    # Active Query Memory (Phase 5 - Follow-up Actions)
+    last_active_query: Optional[Dict[str, Any]] = None  # { "tool": "name", "params": {...} }
+    
     # Memory summarization (Phase 4)
     long_term_summary: Optional[str] = None
     
@@ -58,6 +61,7 @@ class SessionContext:
             "current_topic": self.current_topic,
             "current_school": self.current_school,
             "current_province": self.current_province,
+            "last_active_query": self.last_active_query,
             "long_term_summary": self.long_term_summary
         }
     
@@ -72,6 +76,7 @@ class SessionContext:
         ctx.current_topic = data.get("current_topic")
         ctx.current_school = data.get("current_school")
         ctx.current_province = data.get("current_province")
+        ctx.last_active_query = data.get("last_active_query")
         ctx.long_term_summary = data.get("long_term_summary")
         return ctx
 
@@ -461,6 +466,44 @@ class ContextManager:
         followup_match = re.search(r'แล้ว(.+?)(?:ละ|ล่ะ|ล่ะครับ|ละครับ)?$', query)
         if followup_match:
             entity = followup_match.group(1).strip()
+            
+            # 🆕 Active Query Substitution (Phase 5)
+            # Use exact tool capability from previous turn to reconstruct query
+            if context.last_active_query:
+                try:
+                    last_tool = context.last_active_query.get("name")
+                    # last_params = context.last_active_query.get("params", {}) # Not used yet for simple reconstruction
+                    
+                    # Detect entity type
+                    is_region = any(region in entity for region in REGIONS)
+                    from .constants import THAI_PROVINCES
+                    is_province = any(prov in entity for prov in THAI_PROVINCES)
+                    
+                    if is_region or is_province:
+                        # Handle Count Tools
+                        tool_map = {
+                            "count_schools": "โรงเรียน",
+                            "count_teachers": "ครู",
+                            "count_students": "นักเรียน",
+                            "get_ratio": "อัตราส่วนครูต่อนักเรียน"
+                        }
+                        
+                        if last_tool in tool_map:
+                            subject = tool_map[last_tool]
+                            unit = "แห่ง" if subject == "โรงเรียน" else "คน"
+                            if last_tool == "get_ratio":
+                                resolved = f"{subject}ใน{entity}เป็นเท่าไหร่"
+                            else:
+                                resolved = f"{entity}มี{subject}กี่{unit}"
+                                
+                            logger.info(f"🧠 Active Query Substitution: Tool='{last_tool}' -> '{resolved}'")
+                            return resolved
+
+                except Exception as e:
+                    logger.warning(f"⚠️ Active Query Substitution failed: {e}")
+
+            # Fallback to Topic-based Logic (Legacy Phase 3)
+            # Detect if entity is a region
             
             # Detect if entity is a region
             for region in REGIONS:

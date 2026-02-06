@@ -10,7 +10,6 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
     handleTestGemini,
     handleTestGroq,
     handleTestRAG,
-    handleTestPinecone,
     handleTestFlask,
     handleOptimizeQueue,
     isTesting,
@@ -390,127 +389,7 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
                 </p>
             </div>
 
-            {/* Native Pinecone Connection (NEW!) */}
-            <div className="bg-white p-6 rounded-2xl border-2 border-teal-200 mt-6">
-                <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 flex items-center justify-center shadow-lg">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-5 h-5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-                            </svg>
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-bold text-[#1D1D1F]">🚀 Pinecone Direct Connection</h3>
-                            <p className="text-xs text-black/50">เชื่อมต่อ Pinecone โดยตรง ไม่ต้องใช้ n8n</p>
-                        </div>
-                    </div>
-                    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${draftApiKeys[activeApiCategory].pineconeConnected ? 'bg-teal-100 text-teal-700' : 'bg-gray-100 text-gray-500'}`}>
-                        <div className={`w-2 h-2 rounded-full ${draftApiKeys[activeApiCategory].pineconeConnected ? 'bg-teal-500' : 'bg-gray-400'}`}></div>
-                        <span className="text-xs font-bold">{draftApiKeys[activeApiCategory].pineconeConnected ? 'Connected' : 'Not Connected'}</span>
-                    </div>
-                </div>
 
-                <div className="space-y-4">
-                    <div>
-                        <label className="text-xs font-bold text-black/40 uppercase tracking-wider ml-1">Pinecone API Key</label>
-                        <input
-                            type="password"
-                            name="pinecone_key_nomoreautofill"
-                            autoComplete="new-password"
-                            value={draftApiKeys[activeApiCategory].pineconeApiKey || ''}
-                            onChange={(e) => updateDraftApiKey(activeApiCategory, 'pineconeApiKey', e.target.value)}
-                            placeholder="pcsk_..."
-                            className="w-full px-4 py-3 bg-[#F5F5F7] border-none rounded-xl text-[14px] font-mono focus:ring-2 focus:ring-teal-500/20"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="text-xs font-bold text-black/40 uppercase tracking-wider ml-1">Host URL (Index Endpoint)</label>
-                        <input
-                            type="text"
-                            value={draftApiKeys[activeApiCategory].pineconeHost || ''}
-                            onChange={(e) => updateDraftApiKey(activeApiCategory, 'pineconeHost', e.target.value)}
-                            placeholder="xxx-yyy.svc.aped-1234-a56b.pinecone.io"
-                            className="w-full px-4 py-3 bg-[#F5F5F7] border-none rounded-xl text-[14px] font-medium focus:ring-2 focus:ring-teal-500/20"
-                        />
-                        <p className="text-[10px] text-black/30 mt-1 ml-1">หาได้จาก Pinecone Console → Indexes → Connect</p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className="text-xs font-bold text-black/40 uppercase tracking-wider ml-1">Index Name</label>
-                            <input
-                                type="text"
-                                value={draftApiKeys[activeApiCategory].pineconeIndex || ''}
-                                onChange={(e) => updateDraftApiKey(activeApiCategory, 'pineconeIndex', e.target.value)}
-                                placeholder="moe-knowledge"
-                                className="w-full px-4 py-3 bg-[#F5F5F7] border-none rounded-xl text-[14px] font-medium focus:ring-2 focus:ring-teal-500/20"
-                            />
-                        </div>
-                        <div>
-                            <label className="text-xs font-bold text-black/40 uppercase tracking-wider ml-1">Namespace (Optional)</label>
-                            <input
-                                type="text"
-                                value={draftApiKeys[activeApiCategory].pineconeNamespace || ''}
-                                onChange={(e) => updateDraftApiKey(activeApiCategory, 'pineconeNamespace', e.target.value)}
-                                placeholder="default"
-                                className="w-full px-4 py-3 bg-[#F5F5F7] border-none rounded-xl text-[14px] font-medium focus:ring-2 focus:ring-teal-500/20"
-                            />
-                        </div>
-                    </div>
-
-                    {/* Dedicated Embedding API Key */}
-                    <div className="p-4 rounded-xl bg-amber-50 border border-amber-200">
-                        <label className="text-xs font-bold text-amber-700 uppercase tracking-wider ml-1 flex items-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-                            </svg>
-                            Embedding API Key (Gemini)
-                        </label>
-                        <input
-                            type="password"
-                            name="embedding_key_nomoreautofill"
-                            autoComplete="new-password"
-                            value={draftApiKeys[activeApiCategory].embeddingApiKey || ''}
-                            onChange={(e) => updateDraftApiKey(activeApiCategory, 'embeddingApiKey', e.target.value)}
-                            placeholder="AIzaSy... (สำหรับสร้าง Embedding โดยเฉพาะ)"
-                            className="w-full mt-2 px-4 py-3 bg-white border border-amber-200 rounded-xl text-[14px] font-mono focus:ring-2 focus:ring-amber-500/20"
-                        />
-                        <p className="text-[10px] text-amber-600 mt-2 ml-1">
-                            ⚡ ใช้ Gemini API Key สำหรับแปลงคำถามเป็น Vector ก่อน Query Pinecone (แยกจาก Key ตอบคำถาม)
-                        </p>
-                    </div>
-
-                    <button
-                        onClick={() => handleTestPinecone(activeApiCategory)}
-                        disabled={!draftApiKeys[activeApiCategory].pineconeApiKey || !draftApiKeys[activeApiCategory].pineconeHost || isTesting === 'pinecone'}
-                        className="w-full py-3.5 bg-gradient-to-r from-teal-500 to-cyan-600 text-white rounded-xl text-sm font-bold hover:from-teal-600 hover:to-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-teal-500/20 flex items-center justify-center gap-2"
-                    >
-                        {isTesting === 'pinecone' ? (
-                            <>
-                                <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                </svg>
-                                Testing Connection...
-                            </>
-                        ) : (
-                            <>
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
-                                </svg>
-                                Test Pinecone Connection
-                            </>
-                        )}
-                    </button>
-                </div>
-
-                <div className="mt-4 p-4 rounded-xl bg-teal-50 border border-teal-100">
-                    <p className="text-xs text-teal-800 font-medium">
-                        ✨ <strong>New!</strong> ระบบจะใช้ Gemini สร้าง Embedding แล้ว Query Pinecone โดยตรง ไม่ต้องตั้ง n8n หรือ Proxy อีกต่อไป!
-                    </p>
-                </div>
-            </div>
 
             {/* Flask Chatbot API Section (for School/Student) */}
             {(activeApiCategory === 'school' || activeApiCategory === 'student') && (
@@ -705,7 +584,7 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
                 <ul className="text-sm text-black/60 space-y-2">
                     <li>• <strong>Groq API (Primary):</strong> แรงเร็ว แต่มี Limit แนะนำให้ใส่ 2-3 Keys</li>
                     <li>• <strong>Gemini API (Backup):</strong> ใช้เป็นตัวสำรองอัตโนมัติเมื่อ Groq ล่ม</li>
-                    <li>• <strong>Pinecone Direct:</strong> เชื่อมฐานข้อมูลเวกเตอร์โดยตรง (แนะนำ!)</li>
+
                 </ul>
             </div>
         </div >

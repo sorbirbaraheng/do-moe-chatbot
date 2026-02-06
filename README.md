@@ -79,6 +79,11 @@ REDIS_URL=redis://...
 │   │   └── handlers/            # Mixin handlers
 │   ├── firebase_config.py       # Firebase/Firestore config
 │   └── web_chatbot_v5.py        # Flask API entry point
+├── tests/                       # Verification & Regression Tests
+│   ├── regression/              # Automated verification scripts
+│   └── repro/                   # Bug reproduction scripts
+├── scripts/                     # Utility scripts
+│   └── perf/                    # Performance benchmarks
 ├── services/
 │   └── geminiService.ts         # Frontend AI service
 ├── components/

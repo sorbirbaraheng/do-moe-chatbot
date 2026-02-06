@@ -83,7 +83,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
     } = useAdminConfig();
     const [isSaving, setIsSaving] = useState(false);
     const [saveMessage, setSaveMessage] = useState('');
-    const [isTesting, setIsTesting] = useState<'gemini' | 'rag' | 'groq' | 'pinecone' | 'flask' | null>(null);
+    const [isTesting, setIsTesting] = useState<'gemini' | 'rag' | 'groq' | 'flask' | null>(null);
     const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
     const [isResetting, setIsResetting] = useState(false);
 
@@ -288,42 +288,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
         setIsTesting(null);
     };
 
-    const handleTestPinecone = async (category: 'general' | 'school' | 'student') => {
-        setIsTesting('pinecone');
-        setSaveMessage('🔄 กำลังตรวจสอบการเชื่อมต่อ Pinecone...');
 
-        try {
-            const { testPineconeConnection } = await import('../../services/pineconeService');
-            const result = await testPineconeConnection(
-                draftApiKeys[category].pineconeApiKey,
-                draftApiKeys[category].pineconeHost
-            );
-
-            setDraftApiKeys(prev => ({
-                ...prev,
-                [category]: {
-                    ...prev[category],
-                    pineconeConnected: result.success,
-                    // Auto-populate index and namespace if successful
-                    ...(result.success && result.indexName ? { pineconeIndex: result.indexName } : {}),
-                    ...(result.success && result.namespaces && result.namespaces.length > 0
-                        ? { pineconeNamespace: result.namespaces[0] === '' ? '' : result.namespaces[0] }
-                        : {})
-                }
-            }));
-
-            setSaveMessage(result.message);
-        } catch (error) {
-            setSaveMessage('❌ เกิดข้อผิดพลาด');
-            setDraftApiKeys(prev => ({
-                ...prev,
-                [category]: { ...prev[category], pineconeConnected: false }
-            }));
-        }
-
-        setTimeout(() => setSaveMessage(''), 5000);
-        setIsTesting(null);
-    };
 
     const handleTestFlask = async (category: 'general' | 'school' | 'student') => {
         setIsTesting('flask');
@@ -490,7 +455,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
                         handleTestGemini={handleTestGemini}
                         handleTestGroq={handleTestGroq}
                         handleTestRAG={handleTestRAG}
-                        handleTestPinecone={handleTestPinecone}
                         handleTestFlask={handleTestFlask}
                         handleOptimizeQueue={handleOptimizeQueue}
                         keyStatuses={keyStatuses}
@@ -513,7 +477,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
                 return <UserManagementTab />;
 
             default:
-                return <ApiSettingsTab {...sharedProps} activeApiCategory={activeApiCategory} setActiveApiCategory={setActiveApiCategory} handleTestGemini={handleTestGemini} handleTestGroq={handleTestGroq} handleTestRAG={handleTestRAG} handleTestPinecone={handleTestPinecone} handleTestFlask={handleTestFlask} handleOptimizeQueue={handleOptimizeQueue} keyStatuses={keyStatuses} keyErrorMessages={keyErrorMessages} keyErrorTypes={keyErrorTypes} testingKeyIndex={testingKeyIndex} />;
+                return <ApiSettingsTab {...sharedProps} activeApiCategory={activeApiCategory} setActiveApiCategory={setActiveApiCategory} handleTestGemini={handleTestGemini} handleTestGroq={handleTestGroq} handleTestRAG={handleTestRAG} handleTestFlask={handleTestFlask} handleOptimizeQueue={handleOptimizeQueue} keyStatuses={keyStatuses} keyErrorMessages={keyErrorMessages} keyErrorTypes={keyErrorTypes} testingKeyIndex={testingKeyIndex} />;
         }
     };
 

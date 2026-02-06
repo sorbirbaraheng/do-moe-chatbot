@@ -573,6 +573,10 @@ const AppContent: React.FC = () => {
       // Pass the CURRENT history state (including the new user message implicitly via context management logic, 
       // but here we pass the PREVIOUS history to initialize if needed. 
       // The new message itself is sent as the prompt.)
+      const stableSessionId = firebaseUser?.uid
+        ? `${firebaseUser.uid}_${currentChatId}`
+        : `guest_${currentChatId}`;
+
       await sendMessageStream(
         text,
         category,
@@ -582,6 +586,7 @@ const AppContent: React.FC = () => {
           fullContent += chunk;
           batchedUpdate(fullContent);
         },
+        stableSessionId,
         formattedHistory,
         (debugInfo) => {
           // Immediate RAG Debug Update - less frequent, no need to batch

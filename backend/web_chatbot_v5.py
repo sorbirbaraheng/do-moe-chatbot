@@ -161,7 +161,7 @@ def create_gradio_ui() -> Optional['gr.Blocks']:
                 """)
         
         def respond(message, history):
-            for hist, _ in chatbot.chat(message, history):
+            for hist, _ in chatbot.chat(message, history, session_id=session_id):
                 yield hist, ""
         
         msg.submit(respond, [msg, chatbox], [chatbox, msg]).then(lambda: "", None, msg)
@@ -302,7 +302,7 @@ def create_flask_api():
         chatbot._current_category = category
         
         response_text = ""
-        for hist, _ in chatbot.chat(message, history):
+        for hist, _ in chatbot.chat(message, history, session_id=session_id):
             if hist:
                 response_text = hist[-1].get('content', '')
         

@@ -725,7 +725,7 @@ export const rotateKey = (category: string, provider: 'gemini' | 'groq' = 'gemin
 // RAG Debug Info type
 interface RAGRetrievalResult {
   context: string;
-  source: 'pinecone' | 'legacy_rag' | 'ai_only';
+  source: 'legacy_rag' | 'ai_only' | 'small_talk_skip';
   contextPreview?: string;
   matchCount?: number;
   retrievalTimeMs?: number;
@@ -740,54 +740,8 @@ const retrieveRAGContext = async (query: string, category: string): Promise<RAGR
 
   const ragConfig = currentConfig.apiKeys?.[catKey];
 
-  // DEBUG: Log RAG configuration
-  console.log('[RAG DEBUG] Category:', catKey);
-  console.log('[RAG DEBUG] RAG Config exists:', !!ragConfig);
-  console.log('[RAG DEBUG] Pinecone API Key exists:', !!ragConfig?.pineconeApiKey);
-  console.log('[RAG DEBUG] Pinecone Host:', ragConfig?.pineconeHost);
-  console.log('[RAG DEBUG] Pinecone Index:', ragConfig?.pineconeIndex);
-  console.log('[RAG DEBUG] Embedding Key exists:', !!ragConfig?.embeddingApiKey);
-
-  if (ragConfig?.pineconeApiKey && ragConfig?.pineconeHost) {
-    try {
-      console.log('[RAG] Using native Pinecone connection...');
-      const { getPineconeContext } = await import('./pineconeService');
-      const embeddingKey = ragConfig.embeddingApiKey || activeKeyQueues[catKey]?.[0];
-
-      if (!embeddingKey) {
-        console.warn('[RAG] No embedding key available!');
-        return { context: '', source: 'ai_only' };
-      }
-
-      console.log('[RAG] Querying Pinecone with:', query.substring(0, 50) + '...');
-      const context = await getPineconeContext(query, {
-        pineconeApiKey: ragConfig.pineconeApiKey,
-        pineconeHost: ragConfig.pineconeHost,
-        pineconeIndex: ragConfig.pineconeIndex || '',
-        pineconeNamespace: ragConfig.pineconeNamespace || '',
-        ragTopK: ragConfig.ragTopK || 5
-      }, embeddingKey);
-
-      const retrievalTime = Date.now() - startTime;
-      const matchCount = context ? (context.match(/【.*?】/g) || []).length : 0;
-
-      console.log('[RAG] Context retrieved, length:', context?.length || 0, 'matches:', matchCount);
-
-      return {
-        context,
-        source: context ? 'pinecone' : 'ai_only',
-        contextPreview: context ? context.substring(0, 200) + '...' : undefined,
-        matchCount,
-        retrievalTimeMs: retrievalTime,
-        embeddingModel: 'text-embedding-004'
-      };
-    } catch (error) {
-      console.error('[RAG ERROR]', error);
-      return { context: '', source: 'ai_only' };
-    }
-  } else {
-    console.log('[RAG] Pinecone not configured, checking legacy RAG...');
-  }
+  // RAG Logic simplified - removed native Pinecone support as we moved to Qdrant/Flask
+  console.log('[RAG] Checking for external RAG endpoint...');
 
   const endpoint = ragConfig?.ragEndpoint;
   const apiKey = ragConfig?.ragApiKey;
@@ -834,7 +788,7 @@ const retrieveRAGContext = async (query: string, category: string): Promise<RAGR
 export interface ChatResponse {
   text: string;
   ragDebugInfo?: {
-    source: 'pinecone' | 'legacy_rag' | 'ai_only';
+    source: 'legacy_rag' | 'ai_only' | 'small_talk_skip';
     contextPreview?: string;
     matchCount?: number;
     retrievalTimeMs?: number;
@@ -1011,6 +965,7 @@ export const sendMessageStream = async (
   imageData: string | null,
   systemInstruction: string,
   onChunk: (text: string) => void,
+  sessionId?: string,
   history: ChatHistoryItem[] = [],
   onDebugInfo?: (info: ChatResponse['ragDebugInfo']) => void
 ) => {
@@ -1112,13 +1067,13 @@ export const sendMessageStream = async (
           // Buffer chunks first, don't stream immediately
           let bufferedResponse = '';
 
-          const result = await api.sendStream(queryToSend, {
-            history: flaskHistory,
-            collection_name: catKey === 'school' ? 'education_schools' : 'education_students',
-            system_prompt: systemInstruction,
-            saveHistory: false,
-            session_id: `session_${catKey}_${Date.now().toString(36).slice(-6)}`,
-            category: catKey,
+      const result = await api.sendStream(queryToSend, {
+        history: flaskHistory,
+        collection_name: catKey === 'school' ? 'education_schools' : 'education_students',
+        system_prompt: systemInstruction,
+        saveHistory: false,
+        session_id: sessionId || `session_${catKey}_${Date.now().toString(36).slice(-6)}`,
+        category: catKey,
             // Enhanced: Pass parsed query metadata for better backend routing
             intent: parsedQuery?.intent || null,
             school_name: parsedQuery?.school_name || null,
@@ -1280,13 +1235,11 @@ export const sendMessageStream = async (
                  ตอบเป็นภาษาไทยเท่านั้น:
                  `;
 
-                const result = await ai.models.generateContent({
+                const result = (await ai.models.generateContent({
                   model: 'gemini-2.0-flash',
                   contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                  config: {
-                    generationConfig: { maxOutputTokens: 2048, temperature: 0.7 }
-                  }
-                } as any);
+                  config: { maxOutputTokens: 2048, temperature: 0.7 }
+                } as any)) as any;
 
                 if (result && result.response) {
                   const rewriteText = result.response.text();
@@ -1325,7 +1278,7 @@ export const sendMessageStream = async (
 
         // Set debug info
         lastRagDebugInfo = {
-          source: 'pinecone',
+          source: 'ai_only',
           matchCount: 1,
           retrievalTimeMs: Date.now(),
           contextPreview: `AI-Enhanced Flask API Response (Intent: ${parsedQuery?.intent || 'unknown'})`

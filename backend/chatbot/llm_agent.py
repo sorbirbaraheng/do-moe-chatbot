@@ -14,10 +14,10 @@ import logging
 import re
 from typing import List, Dict, Any, Optional
 
-from .tools import get_tools_prompt, TOOL_SELECTION_PROMPT, RESPONSE_GENERATION_PROMPT
+from .tools import get_tools_prompt, TOOL_SELECTION_PROMPT, RESPONSE_GENERATION_PROMPT, get_tool_by_name
 from .tool_executor import ToolExecutor
 from .llm import MultiProviderLLM
-from .constants import THAI_PROVINCES, PROVINCE_ALIASES
+from .constants import THAI_PROVINCES, PROVINCE_ALIASES, REGIONS
 from .entity_extractor import extract_person_type_smart, extract_grade_smart, extract_area_smart, extract_district_smart, fetch_valid_values, extract_entities_via_llm
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class LLMAgent:
         self.llm = llm
         self.tools_prompt = get_tools_prompt()
     
-    def process_query(self, question: str, context: Dict[str, Any] = None) -> str:
+    def process_query(self, question: str, context: Dict[str, Any] = None) -> tuple[str, Optional[Dict[str, Any]]]:
         """
         Main entry point: Process a user query using LLM + Tools
         
@@ -43,7 +43,7 @@ class LLMAgent:
             context: Optional context (e.g., session memory)
             
         Returns:
-            Natural language response
+            Tuple[response_text, active_query_info]
         """
         logger.info(f"🤖 LLM Agent processing: {question}")
         
@@ -51,9 +51,15 @@ class LLMAgent:
             # Step 1: Use LLM to analyze query and select tools
             tool_calls = self._select_tools(question, context)
             
+            # Capture active query (Phase 5 - Follow-up Support)
+            active_query = None
+            if tool_calls and len(tool_calls) > 0:
+                # Store the primary tool call for context memory
+                active_query = tool_calls[0]
+            
             if not tool_calls:
                 logger.warning("⚠️ No tools selected, using fallback")
-                return self._fallback_response(question)
+                return self._fallback_response(question), None
             
             logger.info(f"🔧 Selected {len(tool_calls)} tool(s): {[t['name'] for t in tool_calls]}")
             
@@ -75,42 +81,59 @@ class LLMAgent:
             
             # Step 3: Generate Response
             # Hybrid Pro Strategy: We skip deterministic templates to ensure "Pro" quality narration via LLM.
-            # (We still keep Fast-Track tool selection for speed)
             if should_use_deterministic and len(results) == 1 and False: # DISABLED for PRO Mode
-                 # Only if single tool (if multiple, maybe needed LLM to synthesize?)
-                 # For now, let's try deterministic even for single.
                  logger.info("⚡ Using Deterministic Response (Template) - Saving LLM Quota")
-                 return self._inject_widgets(self._format_fallback_response(results), results)
+                 return self._inject_widgets(self._format_fallback_response(results), results), active_query
             
             # Step 4: Fallback to LLM for complex queries
             suggestions_str = self._get_proactive_suggestions(tool_calls, results)
             
-            # GENERATE RESPONSE WITHOUT SUGGESTIONS IN PROMPT (To keep it clean)
+            # GENERATE RESPONSE
             response = self._generate_response(question, results)
             
-            # FORCE APPEND SUGGESTIONS (Bypass LLM filtering)
+            # FORCE APPEND SUGGESTIONS
             if suggestions_str:
                 response += "\n\n" + suggestions_str
             
-            return response
+            return response, active_query
             
         except Exception as e:
             import traceback
             logger.error(f"❌ LLM Agent error: {e}")
             logger.error(f"❌ Full traceback:\n{traceback.format_exc()}")
-            return self._error_response(str(e))
+            return self._error_response(str(e)), None
     
     def _select_tools(self, question: str, context: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """LLM-FIRST Tool Selection: LLM understands intent, then we enrich entities"""
         
-        # Format context for prompt
+        # Format context for prompt (support both memory.to_dict() and SessionContext.to_dict() keys)
         context_str = "None"
         if context:
             c_items = []
-            if context.get("last_school_name"): c_items.append(f"- School: {context['last_school_name']}")
-            if context.get("last_province"): c_items.append(f"- Province: {context['last_province']}")
-            if context.get("last_district"): c_items.append(f"- District: {context['last_district']}")
-            if context.get("last_agency"): c_items.append(f"- Agency: {context['last_agency']}")
+            # School: try both key naming patterns
+            school = context.get("last_school_name") or context.get("current_school")
+            if school: c_items.append(f"- School: {school}")
+            # Province: try both + provinces list
+            province = context.get("last_province") or context.get("current_province")
+            if not province and context.get("provinces"):  # Fall back to provinces list
+                province = context["provinces"][-1] if context["provinces"] else None
+            if province: c_items.append(f"- Province: {province}")
+            # District
+            district = context.get("last_district") or (context.get("districts", [None])[-1] if context.get("districts") else None)
+            if district: c_items.append(f"- District: {district}")
+            # Agency
+            agency = context.get("last_agency") or (context.get("agencies", [None])[-1] if context.get("agencies") else None)
+            if agency: c_items.append(f"- Agency: {agency}")
+            
+            # 🔍 LAST AI RESPONSE (For Ambiguity/Clarification)
+            last_ai = context.get('last_ai_response')
+            if last_ai:
+                # Clean up: Remove internal tags or excessive whitespace
+                clean_last_ai = last_ai.replace('\n', ' ').strip()
+                # Truncate to avoid context flooding
+                clean_last_ai = (clean_last_ai[:300] + '...') if len(clean_last_ai) > 300 else clean_last_ai
+                c_items.append(f"- Last AI Message: \"{clean_last_ai}\"")
+            
             if c_items: context_str = "\n".join(c_items)
         
         # Debug log context
@@ -142,6 +165,7 @@ class LLMAgent:
                     # ENRICHMENT: Use keyword extraction to fill missing entities
                     # ============================================================
                     tool_calls = self._enrich_tool_params(question, tool_calls, context)
+                    tool_calls = self._ensure_ratio_tool(question, tool_calls, context)
                     
                     return tool_calls
                     
@@ -152,10 +176,50 @@ class LLMAgent:
                     continue
         
         # ============================================================
-        # FALLBACK: Only use keywords if LLM completely fails
+        # FALLBACK: If LLM fails, try keyword-based inference first
         # ============================================================
-        logger.warning("⚠️ LLM tool selection exhausted, using keyword fallback")
-        return self._infer_tools_from_keywords(question, context)
+        logger.warning("⚠️ LLM tool selection exhausted, trying keyword-based inference")
+        fallback_tools = self._infer_tools_from_keywords(question, context)
+        fallback_tools = self._ensure_ratio_tool(question, fallback_tools, context)
+        if fallback_tools:
+            logger.info(f"🧩 Keyword-based tools: {[t['name'] for t in fallback_tools]}")
+            return fallback_tools
+
+        # Final fallback: general chat
+        logger.warning("⚠️ Keyword inference failed, defaulting to general_chat")
+        return [{"name": "general_chat", "params": {}}]
+
+    def _ensure_ratio_tool(self, question: str, tool_calls: List[Dict[str, Any]], context: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        """If question asks for ratio, ensure get_ratio is included with best-available params."""
+        if not tool_calls:
+            return tool_calls
+
+        ratio_keywords = ["อัตราส่วน", "ต่อครู", "ครูต่อนักเรียน", "นักเรียนต่อครู", "ratio"]
+        if not any(k in question for k in ratio_keywords):
+            return tool_calls
+
+        if any(t.get("name") == "get_ratio" for t in tool_calls):
+            return tool_calls
+
+        params = {}
+        # Try to reuse params from other tool calls
+        for t in tool_calls:
+            p = t.get("params", {})
+            if p.get("school_name") and not params.get("school_name"):
+                params["school_name"] = p.get("school_name")
+            if p.get("province") and not params.get("province"):
+                params["province"] = p.get("province")
+
+        # Fallback to context if still missing
+        if context:
+            if not params.get("school_name"):
+                params["school_name"] = context.get("last_school_name") or context.get("current_school")
+            if not params.get("province"):
+                params["province"] = context.get("last_province") or context.get("current_province")
+
+        tool_calls.append({"name": "get_ratio", "params": params})
+        logger.info("➕ Added get_ratio tool for ratio query")
+        return tool_calls
     
     def _enrich_tool_params(self, question: str, tool_calls: List[Dict], context: Dict = None) -> List[Dict]:
         """Enrich LLM tool selections with context from previous turns ONLY.
@@ -165,32 +229,87 @@ class LLMAgent:
         - This method ONLY handles context injection for follow-up questions
         - No more regex extraction or garbage filtering - LLM handles everything
         """
+        question_region = self._extract_region(question)
         
         for tool in tool_calls:
             params = tool.get('params', {})
             
             # Tools that accept province/school parameters
+            # NOTE: list_schools is NOT included - it should NOT get school_name from context
+            # (it lists schools in an area, not specific school details)
             school_tools = ['count_students', 'count_teachers', 'count_schools', 'search_schools', 
-                           'get_school_full_details', 'get_ratio', 'list_schools', 'filter_schools']
+                           'get_school_full_details', 'get_ratio', 'filter_schools',
+                           'advanced_school_search']
+            # Tools that accept ONLY province (not school_name)
+            province_only_tools = ['list_schools', 'advanced_school_search', 'filter_schools']
             aggregation_tools = ['count_students', 'count_teachers', 'count_schools']
             skip_context_tools = ['compare', 'ranking', 'general_chat']
             
             # Context injection for follow-up questions ONLY
             if context and tool['name'] not in skip_context_tools:
-                # Inject school_name from context only if LLM didn't provide one
-                if not params.get('school_name') and context.get('last_school_name'):
+                # Inject school_name from context ONLY for specific school queries
+                # NOT for list/search/filter type queries
+                
+                # Check for both Memory keys (last_*) and SessionContext keys (current_*)
+                ctx_school = context.get('last_school_name') or context.get('current_school')
+                ctx_province = context.get('last_province') or context.get('current_province')
+                
+                if not params.get('school_name') and ctx_school:
                     if tool['name'] in school_tools:
-                        # Skip injection for aggregation tools if province is set (province-level query)
-                        if tool['name'] not in aggregation_tools or not params.get('province'):
-                            params['school_name'] = context['last_school_name']
-                            logger.info(f"🧠 Injected school from context: {params['school_name']}")
-                        
-                # Inject province from context only if LLM didn't provide one
-                if not params.get('province') and context.get('last_province'):
-                    last_prov = context.get('last_province')
-                    if isinstance(last_prov, str) and tool['name'] in school_tools:
-                        params['province'] = last_prov
-                        logger.info(f"🧠 Injected province from context: {params['province']}")
+                        if tool['name'] not in province_only_tools:
+                            # CRITICAL: For aggregations, only inject if we are SURE it's a follow-up
+                            # e.g. "How many students?" -> checks context -> "Satree Yala"
+                            params['school_name'] = ctx_school
+                            logger.info(f"💉 Injected context school_name: {ctx_school}")
+
+                # Inject province from context
+                if not params.get('province') and ctx_province:
+                    if question_region:
+                        # If user asked about a region, don't force a province from context
+                        pass
+                    else:
+                        # If a specific school_name is present, do NOT force province from context
+                        # This avoids incorrectly narrowing searches for named schools.
+                        if params.get('school_name'):
+                            continue
+                        # Combine school_tools + province_only_tools for province injection
+                        province_aware_tools = school_tools + province_only_tools
+                        if isinstance(ctx_province, str) and tool['name'] in province_aware_tools:
+                            params['province'] = ctx_province
+                            logger.info(f"💉 Injected context province: {ctx_province}")
+
+            # Normalize region if LLM put it into province
+            if params.get('province') and not params.get('region'):
+                if isinstance(params.get('province'), str) and (params['province'].startswith("ภาค") or params['province'] in REGIONS):
+                    params['region'] = params['province']
+                    params.pop('province', None)
+
+            # Inject region from question when missing
+            if question_region and not params.get('region'):
+                region_tools = ['count_students', 'count_teachers', 'count_schools', 'list_schools',
+                                'filter_schools', 'ranking', 'search_schools', 'advanced_school_search']
+                if tool['name'] in region_tools:
+                    params['region'] = question_region
+                    logger.info(f"💉 Injected region from question: {question_region}")
+
+            # Normalize ranking params when LLM is vague (e.g., "จังหวัดที่มีโรงเรียนมากที่สุด")
+            if tool['name'] == "ranking":
+                q_lower = question.lower()
+                rank_kws = ['มากที่สุด', 'น้อยที่สุด', 'อันดับ', 'top', 'สูงสุด', 'ต่ำสุด', 'เยอะที่สุด', 'เยอะสุด', 'มากสุด', 'น้อยสุด']
+                if any(kw in q_lower for kw in rank_kws):
+                    has_student = any(kw in q_lower for kw in ['นักเรียน', 'เด็ก', 'นักศึกษา'])
+                    has_teacher = any(kw in q_lower for kw in ['ครู', 'อาจารย์', 'บุคลากร'])
+                    has_school_kw = any(kw in q_lower for kw in ['โรงเรียน', 'สถานศึกษา', 'สถาบัน'])
+
+                    if not has_student and not has_teacher and has_school_kw:
+                        params['metric'] = "schools"
+                        if "จังหวัด" in q_lower and not params.get('province'):
+                            params['scope'] = "province"
+                        else:
+                            params.setdefault('scope', "school")
+                    # If ranking provinces by school count, drop province constraint
+                    if params.get('metric') == "schools" and params.get('scope') == "province":
+                        params.pop('province', None)
             
             tool['params'] = params
         
@@ -205,27 +324,56 @@ class LLMAgent:
                 logger.info("🌐 LLM indicated no tools needed - treating as general query")
                 return []
             
-            # Try to find JSON array in response
-            # Handle cases where LLM adds explanation text
-            json_match = re.search(r'\[[\s\S]*\]', response_text)
-            if json_match:
-                json_str = json_match.group()
-                parsed = json.loads(json_str)
-                # Validate parsed tools have valid names
-                valid_tools = []
-                for tool in parsed:
-                    if isinstance(tool, dict) and tool.get('name'):
-                        # Filter out invalid tool names
-                        if 'no tool' not in tool['name'].lower() and 'available' not in tool['name'].lower():
-                            valid_tools.append(tool)
-                return valid_tools
+            # Try to find JSON array candidates (non-greedy to handle multiple blocks)
+            # e.g. "I will use [search] tool... [{"name": ...}]"
+            candidates = re.findall(r'(\[[\s\S]*?\])', response_text)
             
-            # Try parsing entire response as JSON
-            return json.loads(response_text)
+            for json_str in candidates:
+                try:
+                    # Clean invalid escapes common in LLM output
+                    # Use regex to remove backslash before non-escape characters
+                    # Valid JSON escapes: \", \\, \/, \b, \f, \n, \r, \t, \uXXXX
+                    # Invalid (LLM artifacts): \., \(, \), \', \-  etc.
+                    json_str_clean = re.sub(r'\\([^"\\\/bfnrtu])', r'\1', json_str)
+                    
+                    parsed = json.loads(json_str_clean)
+                    
+                    if isinstance(parsed, list):
+                        # Validate parsed tools have valid names
+                        valid_tools = []
+                        for p in parsed:
+                             if isinstance(p, dict) and get_tool_by_name(p.get("name")):
+                                 valid_tools.append(p)
+                                 
+                        if valid_tools:
+                            logger.info(f"✅ Parsed tools successfully: {[t['name'] for t in valid_tools]}")
+                            return valid_tools
+                except Exception as e:
+                    logger.debug(f"⚠️ Candidate parsing failed: {e}")
+                    continue
+            
+            # If no candidates worked, fall back to trying the whole text
+            try:
+                # Also clean the whole text response
+                response_text_clean = response_text.replace("\\'", "'").replace(r"\.", ".").replace(r"\(", "(").replace(r"\)", ")")
+                parsed = json.loads(response_text_clean)
+                if isinstance(parsed, list):
+                     return [p for p in parsed if get_tool_by_name(p.get("name"))]
+            except Exception as e:
+                logger.debug(f"⚠️ Fallback parsing failed: {e} | Cleaned: {response_text_clean}")
+                pass
+            
+            logger.warning("⚠️ No JSON array found in LLM response")
+            logger.warning(f"🐛 Raw LLM Response: {response_text}")
+            return []
             
         except json.JSONDecodeError as e:
             logger.warning(f"⚠️ Failed to parse tool calls: {e}")
             logger.debug(f"Response was: {response_text[:500]}")
+            return []
+        except Exception as e: # Catch other potential errors during parsing/validation
+            logger.warning(f"⚠️ Failed to parse tool calls: {e}")
+            logger.warning(f"🐛 Raw LLM Response: {response_text}")
             return []
     
     def _infer_tools_from_keywords(self, question: str, context: Dict[str, Any] = None) -> List[Dict[str, Any]]:
@@ -238,7 +386,8 @@ class LLMAgent:
     
         # 1. Base Extraction (Regex/Keyword - FAST)
         school_name = self._extract_school_name(question)
-        province = self._extract_province(question) 
+        province = self._extract_province(question)
+        region = self._extract_region(question)
         gender = self._extract_gender(question)
         agency = self._extract_agency(question)
         
@@ -310,7 +459,9 @@ class LLMAgent:
             
         if province:
             params["province"] = province
-        elif context and context.get("last_province") and not school_name:
+        if region:
+            params["region"] = region
+        elif context and context.get("last_province") and not school_name and not province:
             # CRITICAL: Only inject province from context if user did NOT specify a new school name
             # If user asks about a specific school, we should search globally, not in memory province
             params["province"] = context.get("last_province")
@@ -344,7 +495,7 @@ class LLMAgent:
         if gender and not asks_for_both:
             params["gender"] = gender
         
-        logger.info(f"🔍 Extracted entities: school={school_name}, province={province}, district={district}, agency={agency}, grade={grade}, person_type={person_type}, gender={gender if not asks_for_both else 'N/A (asking for total)'}")
+        logger.info(f"🔍 Extracted entities: school={school_name}, province={province}, region={region}, district={district}, agency={agency}, grade={grade}, person_type={person_type}, gender={gender if not asks_for_both else 'N/A (asking for total)'}")
         
         # ============================================================
         # PRIORITY ORDER: More specific queries first!
@@ -466,9 +617,18 @@ class LLMAgent:
                 metric = "teachers"
             elif any(kw in question_lower for kw in ['นักเรียน', 'เด็ก', 'นักศึกษา']):
                 metric = "students"
+            elif any(kw in question_lower for kw in ['โรงเรียน', 'สถานศึกษา', 'สถาบัน']):
+                metric = "schools"
             else:
                 metric = "students"  # Default to students
-            return [{"name": "ranking", "params": {"metric": metric, "order": order, "limit": 5, "province": province}}]
+
+            params = {"metric": metric, "order": order, "limit": 5}
+            # If user explicitly asks about provinces (no specific province given), rank provinces by school count
+            if metric == "schools" and "จังหวัด" in question_lower and not province:
+                params["scope"] = "province"
+            elif province:
+                params["province"] = province
+            return [{"name": "ranking", "params": params}]
         
         # 4. TEACHER COUNT - Should require quantity context
         teacher_kws = ['ครู', 'อาจารย์', 'บุคลากร', 'ข้าราชการ', 'พนักงาน']
@@ -504,8 +664,21 @@ class LLMAgent:
             return [{"name": "list_schools", "params": {"province": province, "district": district, "agency": agency, "limit": 10}}]
 
         # 7.5 SCHOOL DETAILS - Address, Phone, Website, Map
-        if any(kw in question_lower for kw in ['รายละเอียด', 'ที่อยู่', 'เบอร์โทร', 'ติดต่อ', 'เว็บไซต์', 'แผนที่', 'พิกัด', 'รู้จัก', 'ข้อมูลของ']):
-            return [{"name": "get_school_full_details", "params": params}]
+        # BUT: Only trigger if NOT asking about teachers/students (those have dedicated tools!)
+        teacher_student_kws = ['ครู', 'อาจารย์', 'นักเรียน', 'ผู้เรียน', 'เด็ก', 'นักศึกษา']
+        detail_kws = ['รายละเอียด', 'ที่อยู่', 'เบอร์โทร', 'ติดต่อ', 'เว็บไซต์', 'แผนที่', 'พิกัด', 'รู้จัก', 'ข้อมูลของ']
+        if any(kw in question_lower for kw in detail_kws):
+            # Check if asking about TEACHERS - use analyze_teacher_distribution instead
+            if any(kw in question_lower for kw in ['ครู', 'อาจารย์']):
+                logger.info("🔀 Detected 'รายละเอียด + ครู' -> Using analyze_teacher_distribution")
+                return [{"name": "analyze_teacher_distribution", "params": params}]
+            # Check if asking about STUDENTS - use grade_distribution or count_students
+            elif any(kw in question_lower for kw in ['นักเรียน', 'ผู้เรียน', 'เด็ก']):
+                logger.info("🔀 Detected 'รายละเอียด + นักเรียน' -> Using get_grade_distribution")
+                return [{"name": "get_grade_distribution", "params": params}]
+            # Otherwise, it's asking about a specific school
+            elif school_name:
+                return [{"name": "get_school_full_details", "params": params}]
         
         # 7.6 EDUCATION AREAS - เขตพื้นที่การศึกษา
         if any(kw in question_lower for kw in ['เขตพื้นที่', 'สพป', 'สพม', 'เขตการศึกษา', 'พื้นที่การศึกษา', 'เขต 1', 'เขต 2']):
@@ -679,6 +852,25 @@ class LLMAgent:
         if match:
             return match.group(1).strip()
         
+        return None
+
+    def _extract_region(self, question: str) -> Optional[str]:
+        """Extract region (ภาค) name from question"""
+        # Common aliases
+        region_aliases = {
+            "อีสาน": "ภาคตะวันออกเฉียงเหนือ",
+            "ภาคอีสาน": "ภาคตะวันออกเฉียงเหนือ",
+            "ตะวันออกเฉียงเหนือ": "ภาคตะวันออกเฉียงเหนือ",
+        }
+        for alias, full in region_aliases.items():
+            if alias in question:
+                return full
+
+        # Direct match on configured regions
+        for region in REGIONS.keys():
+            if region in question:
+                return region
+
         return None
     
     def _extract_gender(self, question: str) -> Optional[str]:
@@ -868,7 +1060,7 @@ class LLMAgent:
         if not suggestions:
             return ""
             
-        return "\n💡 **Suggested Follow-up Actions (Proactive Assistance):**\n" + "\n".join(suggestions[:3])
+        return "\n💡 **เรื่องน่ารู้เพิ่มเติม:**\n" + "\n".join(suggestions[:3])
 
     def _generate_response(self, question: str, results: List[Dict], suggestions_str: str = "") -> str:
         """Use LLM to generate natural language response from tool results"""
@@ -1338,16 +1530,55 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                 
                 parts.append(text)
                         
-            elif tool in ["search_schools", "list_schools", "advanced_school_search"]:
-                schools = result.get("schools") or result.get("results", [])
-                total_count = result.get("total_count") or result.get("total_found") or len(schools)  # Use actual count
-                displayed_count = len(schools)
-                if schools:
-                    if total_count > displayed_count:
-                        text = f"พบโรงเรียนทั้งหมด **{total_count:,}** แห่งครับ (แสดง {displayed_count} รายการแรก)"
-                        # If advanced search, show criteria? No need for now.
+            elif tool == "filter_schools":
+                # Use the pre-calculated AI summary from tool_executor which handles total vs limit correctly
+                summary = result.get("ai_summary", "")
+                schools = result.get("schools", [])
+                
+                if summary:
+                    text = f"{summary}\n\n"
+                else:
+                    total_found = result.get("total_found", 0) or len(schools)
+                    showing = len(schools)
+                    if total_found > showing:
+                         text = f"พบตามเงื่อนไขทั้งหมด **{total_found:,}** แห่ง (แสดง {showing} รายการแรก)\n\n"
                     else:
-                        text = f"พบโรงเรียน **{total_count:,}** แห่งครับ รายชื่อมีดังนี้"
+                         text = f"พบตามเงื่อนไขทั้งหมด **{total_found:,}** แห่ง\n\n"
+
+                if schools:
+                    text += "| ลำดับ | ชื่อโรงเรียน | จังหวัด | นักเรียน | ครู | \n| :---: | :--- | :--- | ---: | ---: |"
+                    for i, s in enumerate(schools[:10], 1):
+                        name = s.get('school_name') or s.get('name', 'ไม่ระบุ')
+                        prov = s.get('province', '-')
+                        st_count = s.get('total_students', 0) or 0
+                        te_count = s.get('total_teachers', 0) or 0
+                        text += f"\n| {i} | {name} | {prov} | {st_count:,} | {te_count:,} |"
+                    
+                parts.append(text)
+
+            elif tool in ["search_schools", "list_schools", "advanced_school_search", "search_schools"]:
+                schools = result.get("schools") or result.get("results", [])
+                total_count = result.get("total_count") or result.get("total_found") or len(schools)
+                displayed_count = len(schools)
+                
+                # Helper to format count (handle int vs string)
+                def fmt_count(val):
+                    if isinstance(val, (int, float)):
+                        return f"{val:,}"
+                    return str(val)
+
+                if schools:
+                    # Logic: if total_count is a number and > displayed, OR if it's a string (implying "50+")
+                    is_more = False
+                    if isinstance(total_count, (int, float)) and total_count > displayed_count:
+                        is_more = True
+                    elif isinstance(total_count, str) and "+" in total_count:
+                        is_more = True
+
+                    if is_more:
+                        text = f"พบโรงเรียนทั้งหมด **{fmt_count(total_count)}** แห่งครับ (แสดง {displayed_count} รายการแรก)"
+                    else:
+                         text = f"พบโรงเรียน **{fmt_count(total_count)}** แห่งครับ รายชื่อมีดังนี้"
                         
                     text += "\n\n| ลำดับ | ชื่อโรงเรียน | จังหวัด | นักเรียน | ครู |\n| :---: | :--- | :--- | ---: | ---: |"
                     
@@ -1371,10 +1602,19 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
             elif tool == "ranking":
                 ranking = result.get("ranking", [])
                 order_text = "มากที่สุด" if result.get("order") == "most" else "น้อยที่สุด"
-                metric_text = "นักเรียน" if result.get("metric") == "students" else "ครู"
+                metric = result.get("metric")
+                scope = result.get("scope", "school")
+                if metric == "schools":
+                    metric_text = "โรงเรียน"
+                    unit_text = "แห่ง"
+                    subject_text = "จังหวัด" if scope in ["province", "provinces"] else "โรงเรียน"
+                else:
+                    metric_text = "นักเรียน" if metric == "students" else "ครู"
+                    unit_text = "คน"
+                    subject_text = "โรงเรียน"
                 
                 # Intro
-                text = f"จากการจัดอันดับข้อมูล พบว่าโรงเรียนที่มีจำนวน{metric_text}{order_text} มีดังนี้ครับ"
+                text = f"จากการจัดอันดับข้อมูล พบว่า{subject_text}ที่มีจำนวน{metric_text}{order_text} มีดังนี้ครับ"
                 
                 # List
                 top_school = ""
@@ -1383,15 +1623,15 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                     rank = item['rank']
                     name = item['name']
                     count = item['count']
-                    text += f"\n{rank}. {name}: {count:,} คน"
+                    text += f"\n{rank}. {name}: {count:,} {unit_text}"
                     if rank == 1:
                         top_school = name
                         top_count = count
                 
                 # Outro (Insight)
                 if top_school:
-                    text += f"\n\nจะเห็นว่า **{top_school}** ครองอันดับ 1 ด้วยจำนวน {top_count:,} คนครับ"
-                    text += "\nหากต้องการทราบข้อมูลเจาะลึกของโรงเรียนเหล่านี้ ถามเพิ่มเติมได้เลยครับ"
+                    text += f"\n\nจะเห็นว่า **{top_school}** ครองอันดับ 1 ด้วยจำนวน {top_count:,} {unit_text}ครับ"
+                    text += "\nหากต้องการทราบข้อมูลเจาะลึกเพิ่มเติม ถามได้เลยครับ"
                     
                 parts.append(text)
                     

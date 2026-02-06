@@ -16,8 +16,8 @@ export interface TabProps {
     config: AdminConfig;
 
     // Testing state
-    isTesting: 'gemini' | 'rag' | 'groq' | 'pinecone' | 'flask' | null;
-    setIsTesting: React.Dispatch<React.SetStateAction<'gemini' | 'rag' | 'groq' | 'pinecone' | 'flask' | null>>;
+    isTesting: 'gemini' | 'rag' | 'groq' | 'flask' | null;
+    setIsTesting: React.Dispatch<React.SetStateAction<'gemini' | 'rag' | 'groq' | 'flask' | null>>;
 
     // Message feedback
     setSaveMessage: React.Dispatch<React.SetStateAction<string>>;
@@ -30,7 +30,7 @@ export interface ApiSettingsTabProps extends TabProps {
     handleTestGemini: (category: 'general' | 'school' | 'student') => void;
     handleTestGroq: (category: 'general' | 'school' | 'student', keyIndex?: number) => void;
     handleTestRAG: (category: 'general' | 'school' | 'student') => void;
-    handleTestPinecone: (category: 'general' | 'school' | 'student') => void;
+
     handleTestFlask: (category: 'general' | 'school' | 'student') => void;
     handleOptimizeQueue: () => void;
     keyStatuses: Record<string, Record<number, 'valid' | 'invalid' | undefined>>;

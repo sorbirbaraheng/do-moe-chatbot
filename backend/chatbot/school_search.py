@@ -783,3 +783,71 @@ class SchoolSearchEngine:
         except Exception as e:
             logger.error(f"❌ Error fetching student statistics: {e}")
             return {}
+
+    def get_teacher_statistics(self, school_id: str) -> Dict[str, Any]:
+        """
+        Fetch detailed teacher statistics from specific collection (v5).
+        Aggregates by person_type and gender.
+        """
+        if not school_id:
+            return {}
+
+        try:
+            # Assumed collection name
+            collection_name = "edu_teachers_v5" 
+            
+            # Fetch all records for this school
+            response = self.client.scroll(
+                collection_name=collection_name,
+                scroll_filter=Filter(must=[
+                    FieldCondition(key="metadata.school_id", match=MatchValue(value=str(school_id)))
+                ]),
+                limit=100,
+                with_payload=True
+            )
+            
+            records = response[0]
+            if not records:
+                return {}
+                
+            stats = {
+                "total_teachers": 0,
+                "by_gender": {"male": 0, "female": 0, "unknown": 0},
+                "by_person_type": {},
+                "source": collection_name
+            }
+            
+            for point in records:
+                meta = point.payload.get('metadata', {})
+                
+                # Extract fields
+                count = int(meta.get('count', 0))
+                gender = meta.get('gender', 'ไม่ระบุ')
+                p_type = meta.get('person_type', 'อื่นๆ')
+                
+                # Update Total
+                stats["total_teachers"] += count
+                
+                # Update Gender
+                if gender == "ชาย":
+                    stats["by_gender"]["male"] += count
+                elif gender == "หญิง":
+                    stats["by_gender"]["female"] += count
+                else:
+                    stats["by_gender"]["unknown"] += count
+                    
+                # Update Person Type
+                if p_type not in stats["by_person_type"]:
+                    stats["by_person_type"][p_type] = {"total": 0, "male": 0, "female": 0}
+                
+                stats["by_person_type"][p_type]["total"] += count
+                if gender == "ชาย":
+                    stats["by_person_type"][p_type]["male"] += count
+                elif gender == "หญิง":
+                    stats["by_person_type"][p_type]["female"] += count
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"❌ Error fetching teacher statistics: {e}")
+            return {}

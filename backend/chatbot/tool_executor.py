@@ -4,10 +4,12 @@ Executes tool calls by querying Qdrant and returning structured data.
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+import difflib
+from typing import Dict, Any, List, Optional, Tuple, Union
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchText, MatchAny
+from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchText, MatchAny, Range
 from .school_search import SchoolSearchEngine
+from .constants import COLLECTION_NAMES, THAI_PROVINCES, REGIONS
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,7 @@ class ToolExecutor:
         self.llm_provider = llm_provider
         
         # Use centralized collection names from constants
-        from .constants import COLLECTION_NAMES
+        # from .constants import COLLECTION_NAMES (Moved to top)
         self.collections = COLLECTION_NAMES.copy()
         
         # Initialize specialized search engine
@@ -85,6 +87,10 @@ class ToolExecutor:
                 return {"type": "general_knowledge", "info": "Please answer this question using your general knowledge or RAG context."}
             elif tool_name == "advanced_school_search":
                 return self._advanced_school_search(**params)
+            elif tool_name == "advanced_school_search":
+                return self._advanced_school_search(**params)
+            elif tool_name == "filter_schools":
+                return self._filter_schools(**params)
             else:
                 return {"error": f"Unknown tool: {tool_name}"}
         except Exception as e:
@@ -97,7 +103,7 @@ class ToolExecutor:
             return None
         return Filter(must=conditions)
     
-    def _scroll_all(self, collection: str, scroll_filter: Optional[Filter], limit: int = 1000) -> List:
+    def _scroll_all(self, collection: str, scroll_filter: Optional[Filter], limit: int = 1000, with_payload: Union[bool, List[str]] = True) -> List:
         """Scroll through all matching records"""
         all_results = []
         offset = None
@@ -108,7 +114,7 @@ class ToolExecutor:
                 scroll_filter=scroll_filter,
                 limit=min(500, limit - len(all_results)),
                 offset=offset,
-                with_payload=True
+                with_payload=with_payload
             )
             
             points = response[0]
@@ -223,16 +229,30 @@ class ToolExecutor:
             return grade
             
         grade = grade.strip()
+        
+        # Remove common prefixes
+        for prefix in ["ชั้น", "ระดับชั้น", "ระดับ"]:
+            if grade.startswith(prefix):
+                grade = grade[len(prefix):].strip()
+        
         mapping = {
-            # อนุบาล
+            # อนุบาล (Support variants)
             "อ.1": "อนุบาล 1", "อ.2": "อนุบาล 2", "อ.3": "อนุบาล 3",
             "อนุบาล1": "อนุบาล 1", "อนุบาล2": "อนุบาล 2", "อนุบาล3": "อนุบาล 3",
-            # ประถมศึกษา
+            "อ1": "อนุบาล 1", "อ2": "อนุบาล 2", "อ3": "อนุบาล 3",
+            
+            # ประถมศึกษา (Support no-dot)
             "ป.1": "ประถมศึกษาปีที่ 1", "ป.2": "ประถมศึกษาปีที่ 2", "ป.3": "ประถมศึกษาปีที่ 3",
             "ป.4": "ประถมศึกษาปีที่ 4", "ป.5": "ประถมศึกษาปีที่ 5", "ป.6": "ประถมศึกษาปีที่ 6",
-            # มัธยมศึกษา
+            "ป1": "ประถมศึกษาปีที่ 1", "ป2": "ประถมศึกษาปีที่ 2", "ป3": "ประถมศึกษาปีที่ 3",
+            "ป4": "ประถมศึกษาปีที่ 4", "ป5": "ประถมศึกษาปีที่ 5", "ป6": "ประถมศึกษาปีที่ 6",
+            
+            # มัธยมศึกษา (Support no-dot)
             "ม.1": "มัธยมศึกษาปีที่ 1", "ม.2": "มัธยมศึกษาปีที่ 2", "ม.3": "มัธยมศึกษาปีที่ 3",
             "ม.4": "มัธยมศึกษาปีที่ 4", "ม.5": "มัธยมศึกษาปีที่ 5", "ม.6": "มัธยมศึกษาปีที่ 6",
+            "ม1": "มัธยมศึกษาปีที่ 1", "ม2": "มัธยมศึกษาปีที่ 2", "ม3": "มัธยมศึกษาปีที่ 3",
+            "ม4": "มัธยมศึกษาปีที่ 4", "ม5": "มัธยมศึกษาปีที่ 5", "ม6": "มัธยมศึกษาปีที่ 6", 
+            
             # อาชีวศึกษา - ปวช. (Exact match from Qdrant)
             "ปวช.1": "ประกาศนียบัตรวิชาชีพปีที่ 1", "ปวช.2": "ประกาศนียบัตรวิชาชีพปีที่ 2", 
             "ปวช.3": "ประกาศนียบัตรวิชาชีพปีที่ 3",
@@ -315,26 +335,37 @@ class ToolExecutor:
             # Count students in region
             # Optimization: Use SCHOOLS collection sum if possible, but for accuracy use STUDENTS collection
             # Using SCHOOLS collection is faster for big aggregations
-            schools_res = self._scroll_all(self.collections["schools"], province_filter, limit=50000)
+            # OPTIMIZATION: Only fetch total_students field
+            schools_res = self._scroll_all(self.collections["schools"], province_filter, limit=50000, 
+                                          with_payload=["metadata.total_students"])
             total = sum(r.payload.get("metadata", {}).get("total_students", 0) for r in schools_res)
             details = {"source": "schools_aggregation"}
             
         elif metric == "teachers":
             # Count teachers in region
-            schools_res = self._scroll_all(self.collections["schools"], province_filter, limit=50000)
+            # OPTIMIZATION: Only fetch total_teachers field
+            schools_res = self._scroll_all(self.collections["schools"], province_filter, limit=50000,
+                                          with_payload=["metadata.total_teachers"])
             total = sum(r.payload.get("metadata", {}).get("total_teachers", 0) for r in schools_res)
             details = {"source": "schools_aggregation"}
             
         elif metric == "ratio":
-            # Average ratio
-            schools_res = self._scroll_all(self.collections["schools"], province_filter, limit=50000)
-            ratios = []
-            for r in schools_res:
-                rt = r.payload.get("metadata", {}).get("ratio", 0)
-                if rt > 0 and rt < 100:
-                    ratios.append(rt)
-            total = sum(ratios) / len(ratios) if ratios else 0
-            details = {"school_count_with_ratio": len(ratios)}
+             # Optimization: Fetch ONLY totals for calculation
+             # We need sum of student and sum of teachers
+             students_res = self._scroll_all(self.collections["schools"], province_filter, limit=50000,
+                                            with_payload=["metadata.total_students"])
+             teachers_res = self._scroll_all(self.collections["schools"], province_filter, limit=50000,
+                                            with_payload=["metadata.total_teachers"])
+             
+             total_s = sum(r.payload.get("metadata", {}).get("total_students", 0) for r in students_res)
+             total_t = sum(r.payload.get("metadata", {}).get("total_teachers", 0) for r in teachers_res)
+             
+             details = {
+                 "total_students": total_s,
+                 "total_teachers": total_t,
+                 "source": "schools_aggregation"
+             }
+             total = round(total_s / total_t, 2) if total_t > 0 else 0
 
         return {
             "name": region,
@@ -353,6 +384,8 @@ class ToolExecutor:
             "อยู่ที่ไหน", "ตั้งอยู่ที่ไหน", "อยู่ตรงไหน", "อยู่ไหน", 
             "ไปทางไหน", "ไปยังไง", "แผนที่", "พิกัด", "ตำแหน่ง",
             "มีกี่แห่ง", "มีกี่โรงเรียน", "คืออะไร",
+            "มีที่ไหนบ้าง", "ที่ไหนบ้าง", "มีที่ไหน", "ที่ไหน", "ที่ใด",
+            "มีกี่ที่", "มีไหม", "บ้าง", "ทั้งหมด",
             "ครับ", "ค่ะ", "จ้ะ", "จ้า", "นะ", "นะคะ"
         ]
         
@@ -372,6 +405,11 @@ class ToolExecutor:
         """
         # Search with a reasonable limit to catch duplicates
         matches = self._smart_search_school(school_name, province, limit=20)
+        
+        # FALLBACK: If not found in the specific province, try GLOBAL search
+        if not matches and province:
+             logger.info(f"🔄 Disambiguation: '{school_name}' not found in '{province}', trying global search...")
+             matches = self._smart_search_school(school_name, province=None, limit=20)
         
         if not matches:
             return {'type': 'not_found'}
@@ -439,6 +477,11 @@ class ToolExecutor:
             for suffix in suffixes:
                 if not clean_name.endswith(suffix):
                     queries_to_try.append(f"{clean_name}{suffix}")
+                    
+            # ⚡ PRIORITY 0: Exact Match on Processed Name (The "Pattani" Fix)
+            # This ensures "โรงเรียนเมืองปัตตานี" -> "เมืองปัตตานี" -> MatchValue("เมืองปัตตานี") -> FOUND
+            queries_to_try.insert(0, {"type": "exact", "value": clean_name})
+            
         else:
             queries_to_try = [None]
             
@@ -450,7 +493,12 @@ class ToolExecutor:
                 
             conditions = []
             if query:
-                conditions.append(FieldCondition(key="metadata.school_name", match=MatchText(text=query)))
+                if isinstance(query, dict) and query.get("type") == "exact":
+                    # Exact Match Strategy (High Precision)
+                    conditions.append(FieldCondition(key="metadata.school_name", match=MatchValue(value=query["value"])))
+                else:
+                    # Fuzzy/Text Match Strategy (Standard)
+                    conditions.append(FieldCondition(key="metadata.school_name", match=MatchText(text=query)))
             if province:
                 p_norm = self._normalize_province(province)
                 conditions.append(FieldCondition(key="metadata.province", match=MatchValue(value=p_norm)))
@@ -565,8 +613,8 @@ class ToolExecutor:
         return suggestions
 
     def _search_schools(self, school_name: str = None, province: str = None, 
-                        district: str = None, agency: str = None, 
-                        limit: int = 10, **kwargs) -> Dict[str, Any]:
+                        district: str = None, subdistrict: str = None, agency: str = None, region: str = None,
+                        metric: str = None, limit: int = 10, **kwargs) -> Dict[str, Any]:
         """Search for schools with various filters, supporting extra params like grade"""
         
         # If 'grade' is passed/extracted (e.g. "อนุบาล") but no school name, 
@@ -595,6 +643,15 @@ class ToolExecutor:
 
         if province:
             count_conditions.append(FieldCondition(key="metadata.province", match=MatchValue(value=self._normalize_province(province))))
+        
+        # Region Filter (New Feature)
+        if region and not province: # Province takes precedence
+            target_provinces = REGIONS.get(region, [])
+            if target_provinces:
+                logger.info(f"📍 Filtering by Region: {region} -> {len(target_provinces)} provinces")
+                count_conditions.append(FieldCondition(key="metadata.province", match=MatchAny(any=target_provinces)))
+            else:
+                logger.warning(f"⚠️ Region '{region}' not found or empty")
         if district:
             # Normalize district by removing common prefixes
             district_clean = district.replace('อำเภอ', '').replace('อ.', '').replace('เขต', '').strip()
@@ -602,6 +659,8 @@ class ToolExecutor:
             count_conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=district_clean)))
         if agency:
             count_conditions.append(FieldCondition(key="metadata.agency", match=MatchText(text=self._normalize_agency(agency))))
+        if subdistrict:
+            count_conditions.append(FieldCondition(key="metadata.subdistrict", match=MatchText(text=subdistrict)))
         
         # Get actual total count first (before limiting)
         if count_conditions:
@@ -612,12 +671,33 @@ class ToolExecutor:
             actual_total_count = self._count_filtered(self.collections["schools"], None)
         
         if actual_total_count == 0:
+             # Smart Fallback: If filtered by location but found nothing, try fuzzy suggestion
+             if subdistrict or district:
+                 suggestion = self._get_fuzzy_suggestion(subdistrict, province, district)
+                 if suggestion:
+                     return {"tool": "search_schools", "found": False, "total_found": 0, "results": [], "ai_summary": suggestion}
+             
              return {"tool": "search_schools", "found": False, "total_found": 0, "results": []}
 
         # Use SchoolSearchEngine for consistent results
-        # If school_name is present, use search_by_name (which handles semantic)
+        # If school_name is present, user intends to find specific schools, so strict/fuzzy count matters more than DB count
         if school_name and not district and not agency:
-             results = self._smart_search_school(original_school_name, province, limit=int(limit))
+             # Strategy: Fetch more results to determine if we have more than the limit
+             # If user asks for 10, we fetch 50 to see if there are 11-50 matches
+             fetch_limit = 50 
+             results = self._smart_search_school(original_school_name, province, limit=fetch_limit)
+             
+             # Adjust actual_total_count based on what we ACTUALLY found
+             # Since _smart_search_school returns unique matches for the name
+             actual_total_count = len(results)
+             
+             # Now apply the user's limit for display
+             if len(results) > int(limit):
+                 results = results[:int(limit)]
+                 # If we hit the fetch_limit (50), we should probably say "50+" or rely on this being enough for "Where are they?" queries
+                 if actual_total_count >= fetch_limit:
+                     actual_total_count = f"{fetch_limit}+" # Indicator that there are many
+
         else:
              # Use filters
              results = self._scroll_all(self.collections["schools"], count_filter if count_conditions else None, limit=int(limit))
@@ -626,27 +706,61 @@ class ToolExecutor:
         formatted = []
         for r in results:
              meta = r.payload.get("metadata", {}) if hasattr(r, "payload") else r
-             formatted.append({
+             item = {
                 "school_name": meta.get("school_name"),
                 "province": meta.get("province"),
                 "district": meta.get("district"),
                 "total_students": meta.get("total_students"),
                 "total_teachers": meta.get("total_teachers"),
                 "agency": meta.get("agency")
-             })
+             }
              
+             # Smart Column Pruning (Data Cleaning)
+             # Case 1: Specific Metric Requested
+             if metric == "students":
+                 # User wants students -> Hide teachers (but keep students even if 0)
+                 if "total_teachers" in item: del item["total_teachers"]
+             elif metric == "teachers":
+                 # User wants teachers -> Hide students (but keep teachers even if 0)
+                 if "total_students" in item: del item["total_students"]
+             
+             formatted.append(item)
+        
+        # Case 2: Auto-Hide Empty Columns (only if NO specific metric requested)
+        if not metric and formatted:
+            # Check if all items have 0/None for students
+            all_no_students = all(not item.get("total_students") for item in formatted)
+            # Check if all items have 0/None for teachers
+            all_no_teachers = all(not item.get("total_teachers") for item in formatted)
+            
+            if all_no_students or all_no_teachers:
+                logger.info(f"🧹 Auto-Pruning: Students={all_no_students}, Teachers={all_no_teachers}")
+                for item in formatted:
+                    if all_no_students and "total_students" in item:
+                        del item["total_students"]
+                    if all_no_teachers and "total_teachers" in item:
+                        del item["total_teachers"]
+             
+        # Note: actual_total_count is already adjusted for name-based searches above.
+
         # SUGGESTION LOGIC: If no results found, try to find similar schools
         suggestions = []
-        if len(formatted) == 0 and actual_total_count == 0 and original_school_name:
+        if len(formatted) == 0 and original_school_name:
              logger.info(f"🤔 No results for '{original_school_name}', trying suggestions...")
              suggestions = self._suggest_schools(original_school_name)
              
+        # AI Summary to prevent hallucination
+        ai_summary = f"พบโรงเรียนทั้งหมด {actual_total_count} แห่ง แต่แสดงผลเพียง {len(formatted)} แห่ง"
+        if actual_total_count == len(formatted):
+             ai_summary = f"พบโรงเรียนทั้งหมด {actual_total_count} แห่ง (แสดงครบแล้ว)"
+
         return {
             "tool": "search_schools",
             "found": len(formatted) > 0,
             "total_found": actual_total_count, 
             "results": formatted,
-            "suggestions": suggestions
+            "suggestions": suggestions,
+            "ai_summary": ai_summary
         }
 
     def _advanced_school_search(self, province: str = None, district: str = None, 
@@ -687,97 +801,20 @@ class ToolExecutor:
                 "agency": meta.get("agency")
             })
             
+        # AI Summary to prevent hallucination
+        ai_summary = f"พบตามเงื่อนไขทั้งหมด {total_count} แห่ง แต่แสดงผลเพียง {len(formatted)} แห่ง"
+        if total_count == len(formatted):
+             ai_summary = f"พบตามเงื่อนไขทั้งหมด {total_count} แห่ง (แสดงครบแล้ว)"
+
         return {
             "tool": "advanced_school_search",
             "query": filters,
             "total_found": total_count,
             "count": len(formatted),
-            "results": formatted
+            "results": formatted,
+            "ai_summary": ai_summary
         }
-        
-        # If simplistic search (just name/concept and/or province), use smart search
-        if original_school_name and not district and not agency:
-            results = self._smart_search_school(original_school_name, province, limit=int(limit))
-        else:
-            # Complex search with District/Agency - use standard filter construction
-            scroll_filter = self._build_filter(count_conditions) if count_conditions else None
-            # If we have a name/concept but also district/agency, we should probably do a hybrid search?
-            # For now, if we have district/agency, we default to exact filter to be safe on location.
-            # But if a name is present, we should probably filter by it?
-            
-            if original_school_name:
-                 # If we have a name, better to use smart search but with stricter filters?
-                 # Current implementation of _smart_search_school supports province filter.
-                 # Let's fallback to scroll for now if specific agency/district is requested
-                 pass
 
-            results = self._scroll_all(self.collections["schools"], scroll_filter, limit=int(limit))
-
-        schools = []
-        seen_keys = set()  # Track seen school IDs to avoid duplicates
-        
-        for r in results:
-            meta = r.payload.get("metadata", {})
-            sid = meta.get("school_id")
-            name = meta.get("school_name", "ไม่ระบุ")
-            
-            # Create unique key (prefer ID, fallback to name+province)
-            key = sid if sid else f"{name}_{meta.get('province','')}"
-            
-            # Skip if already seen
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            
-            schools.append({
-                "name": name,
-                "school_name": name,  # Add both for compatibility
-                "province": meta.get("province"),
-                "district": meta.get("district"),
-                "agency": meta.get("agency"),
-                "address": meta.get("address"),
-                "total_students": meta.get("total_students", 0),
-                "total_teachers": meta.get("total_teachers", 0),
-            })
-            
-            if len(schools) >= int(limit):
-                break
-        
-        # FUZZY SEARCH: If no results and school_name was provided, suggest similar schools
-        suggestions = []
-        if len(schools) == 0 and original_school_name:
-            # Extract keywords from school name (first word usually most relevant)
-            keywords = original_school_name.replace("โรงเรียน", "").strip().split()
-            if keywords:
-                # Try partial match with first keyword
-                keyword = keywords[0][:10]  # First 10 chars
-                fuzzy_filter = self._build_filter([
-                    FieldCondition(key="metadata.school_name", match=MatchText(text=keyword))
-                ])
-                fuzzy_results = self._scroll_all(self.collections["schools"], fuzzy_filter, limit=50)
-                
-                seen_suggestions = set()
-                for r in fuzzy_results:
-                    meta = r.payload.get("metadata", {})
-                    name = meta.get("school_name", "")
-                    if name and name not in seen_suggestions:
-                        seen_suggestions.add(name)
-                        suggestions.append({
-                            "name": name,
-                            "province": meta.get("province"),
-                        })
-                        if len(suggestions) >= 5:
-                            break
-        
-        return {
-            "tool": "search_schools",
-            "total_count": max(actual_total_count, len(schools)),  # Ensure total is at least what we found
-            "total_found": len(schools),  # Number displayed (limited)
-            "schools": schools,
-            "suggestions": suggestions if suggestions else None,
-            "search_query": original_school_name
-        }
-    
     def _normalize_school_name(self, name: str) -> Tuple[str, str]:
         """Remove common prefixes and extract grade if embedded in name"""
         if not name:
@@ -833,15 +870,21 @@ class ToolExecutor:
                         district: str = None, gender: str = None, person_type: str = None, 
                         year: str = None, region: str = None) -> Dict[str, Any]:
         """Count teachers with various filters including person_type (ประเภทบุคลากร), year, and region"""
+        logger.info(f"🔎 [CountTeachers] Called with: school={school_name}, province={province}, region={region}")
         
         # FIX: Detect if 'province' parameter is actually a region name
         from .constants import REGIONS
-        if province and not region:
-            # Check if the province value starts with "ภาค" or is in REGIONS dict
+        
+        # If province provided, check if it's actually a region
+        if province:
             if province.startswith("ภาค") or province in REGIONS:
-                logger.info(f"🗺️ [CountTeachers] Detected region in province param: '{province}' -> Moving to region")
-                region = province
-                province = None
+                 logger.info(f"🗺️ [CountTeachers] Province '{province}' is actually a region -> Cleaning up")
+                 if not region:
+                     region = province
+                     logger.info(f"Promoted province to region: {region}")
+                 
+                 # CRITICAL: Always clear province if it's a region name to avoid "province='ภาคใต้'" query
+                 province = None
         
         conditions = []
         
@@ -955,8 +998,10 @@ class ToolExecutor:
             }
         
         scroll_filter = self._build_filter(conditions)
-        # Increase limit for province-wide teacher queries
-        results = self._scroll_all(self.collections["teachers"], scroll_filter, limit=30000)
+        # Increase limit for province-wide queries
+        # OPTIMIZATION: Only fetch needed aggregation fields
+        results = self._scroll_all(self.collections["teachers"], scroll_filter, limit=50000,
+                                  with_payload=["metadata.school_name", "metadata.count", "metadata.gender", "metadata.person_type", "metadata.province"])
         
         # Aggregate by school and person_type
         schools = {}
@@ -1051,16 +1096,74 @@ class ToolExecutor:
             except Exception as e:
                 logger.debug(f"Hybrid enrichment failed: {e}")
 
+        # Prepare AI Summary which drives the response
+        ai_summary = f"พบข้อมูลครูทั้งหมด {total_count:,} คน"
+        ai_hint = ""
+        
+        
+        # New variable to hold fallback data
+        fallback_students_data = None
+
+        if total_count == 0:
+            ai_summary = "ไม่พบข้อมูลครูตามเงื่อนไขที่ระบุครับ"
+            
+            # SMART FALLBACK: Robust Data Injection
+            # If teacher data is missing for a specific school, automatically fetch student data
+            # This ensures the LLM has something to talk about instead of dead-ending.
+            if school_name or resolved_school_id:
+                try:
+                    # Determine target for fallback
+                    target_name = school_name
+                    if resolved_school_id:
+                         # Fetch name from ID if possible, or just pass ID if count_students supports it (it relies on name mostly)
+                         # Safe bet: Get details first to get precise name
+                         details = self.search_engine.get_school_details(resolved_school_id)
+                         if details:
+                             target_name = details.get('school_name')
+                    
+                    if target_name:
+                        logger.info(f"🔄 Fallback: Fetching student data for '{target_name}' to enrich empty teacher response")
+                        # Call internal tool
+                        fallback_data = self._count_students(school_name=target_name)
+                        
+                        if fallback_data.get('total_students', 0) > 0:
+                            fallback_students_data = fallback_data
+                            # result["data_missing"] = True  <-- Can't set result yet, define boolean
+                            
+                            
+                            # Compatible Hint for older prompts
+                            s_count = fallback_data['total_students']
+                            # UPDATE: Use a more direct summary to prevent LLM from ignoring it
+                            ai_summary = (f"ข้อมูลบุคลากรครูยังไม่ครบถ้วนในฐานข้อมูล แต่ระบบพบข้อมูล **นักเรียนทั้งหมด {s_count:,} คน** แทนครับ "
+                                       f"(ระบบแนบข้อมูลนักเรียนให้แล้ว)")
+                            
+                            logger.info(f"✅ Fallback successful: Attached student data ({s_count})")
+                except Exception as e:
+                    logger.error(f"⚠️ Smart Fallback failed: {e}")
+            
+        elif schools:
+            # Breakdown logic
+             if len(schools) <= 5:
+                details = []
+                for s, info in schools.items():
+                    details.append(f"- {s}: {info['total']:,} คน")
+                ai_summary += "\n" + "\n".join(details)
+             else:
+                ai_summary += f" (กระจายอยู่ใน {len(schools)} โรงเรียน)"
+
         result = {
             "tool": "count_teachers",
-            "query": {"school_name": school_name, "province": province, "gender": gender, "person_type": person_type},
+            "query": {"school_name": school_name, "province": province, "gender": gender, "person_type": person_type, "region": region},
             "total_teachers": total_count,
             "total_found": len(schools),  # Number of schools with data
             "by_gender": {"male": total_male, "female": total_female},
+            "ai_summary": ai_summary,
             "by_person_type": by_person_type, 
             "by_school": dict(sorted(schools.items(), key=lambda x: x[1]['total'], reverse=True)[:10]), # Keep top 10 for by_school
             "school_count": len(schools),
-            "is_multi_school": is_multi_school # Keep this flag
+            "is_multi_school": is_multi_school, # Keep this flag
+            "fallback_students": fallback_students_data,
+            "data_missing": (fallback_students_data is not None)
         }
 
         # FUZZY SUGGESTION FALLBACK
@@ -1132,6 +1235,20 @@ class ToolExecutor:
             conditions.append(
                 FieldCondition(key="metadata.province", match=MatchValue(value=province))
             )
+
+        # Handle Region from kwargs (CRITICAL FIX for Ranking by Region)
+        region = kwargs.get('region')
+        if region and not province and not resolved_school_id:
+            region_provinces = REGIONS.get(region, [])
+            if region_provinces:
+                logger.info(f"Adding Region Filter: {region} ({len(region_provinces)} provinces)")
+                conditions.append(
+                    Filter(should=[
+                        FieldCondition(key="metadata.province", match=MatchValue(value=p))
+                        for p in region_provinces
+                    ])
+                )
+
         if district:
             conditions.append(
                 FieldCondition(key="metadata.district", match=MatchText(text=district))
@@ -1204,7 +1321,9 @@ class ToolExecutor:
                 try:
                     # Fetch a sample of students data to get grade/gender breakdown
                     # We use a reasonable limit since we just need aggregation
-                    student_results = self._scroll_all(self.collections["students"], scroll_filter, limit=50000)
+                    # OPTIMIZATION: Only fetch needed aggregation fields
+                    student_results = self._scroll_all(self.collections["students"], scroll_filter, limit=50000,
+                                                      with_payload=["metadata.count", "metadata.gender", "metadata.grade"])
                     
                     for r in student_results:
                         meta = r.payload.get("metadata", {})
@@ -1247,7 +1366,9 @@ class ToolExecutor:
                 import traceback
                 logger.error(traceback.format_exc())
         # Increase limit for province-wide queries with grade/gender filters
-        results = self._scroll_all(self.collections["students"], scroll_filter, limit=50000)
+        # OPTIMIZATION: Only fetch needed aggregation fields
+        results = self._scroll_all(self.collections["students"], scroll_filter, limit=50000,
+                                  with_payload=["metadata.school_name", "metadata.count", "metadata.gender", "metadata.province"])
         
         # Aggregate
         schools = {}
@@ -1435,9 +1556,13 @@ class ToolExecutor:
         return result
     
     def _count_schools(self, province: str = None, district: str = None,
-                       subdistrict: str = None, agency: str = None, region: str = None) -> Dict[str, Any]:
+                       subdistrict: str = None, agency: str = None, region: str = None, **kwargs) -> Dict[str, Any]:
         """Count schools in an area including subdistrict (ตำบล/แขวง) and region"""
         
+        # Strip inputs
+        if province: province = province.strip()
+        if region: region = region.strip()
+
         # FIX: Detect if 'province' parameter is actually a region name
         from .constants import REGIONS
         if province and not region:
@@ -1482,11 +1607,17 @@ class ToolExecutor:
         
         scroll_filter = self._build_filter(conditions)
         # Increase limit for province-wide school queries
-        results = self._scroll_all(self.collections["schools"], scroll_filter, limit=20000)
+        # OPTIMIZATION: Only fetch fields needed for grouping/counting
+        results = self._scroll_all(self.collections["schools"], scroll_filter, limit=20000,
+                                  with_payload=["metadata.school_id", "metadata.school_name", "metadata.province", "metadata.agency", "metadata.district", "metadata.total_students", "metadata.total_teachers"])
         
         # Group by agency (and deduplicate)
         agencies = {}
         unique_keys = set()
+        
+        # Aggregation Stats
+        total_students_all = 0
+        total_teachers_all = 0
         
         for r in results:
             meta = r.payload.get("metadata", {})
@@ -1508,6 +1639,11 @@ class ToolExecutor:
             if "districts" not in locals():
                 districts = {}
             districts[dist] = districts.get(dist, 0) + 1
+            
+            # Aggregate Students & Teachers
+            # Note: schools collection metadata has pre-calculated totals
+            total_students_all += meta.get("total_students", 0)
+            total_teachers_all += meta.get("total_teachers", 0)
         
         # Sort districts by count and take top 10
         sorted_districts = sorted(districts.items() if "districts" in locals() else [], 
@@ -1515,8 +1651,10 @@ class ToolExecutor:
         
         return {
             "tool": "count_schools",
-            "query": {"province": province, "district": district, "agency": agency},
+            "query": {"province": province, "district": district, "agency": agency, "region": region},
             "total_schools": len(unique_keys),
+            "total_students": total_students_all,
+            "total_teachers": total_teachers_all,
             "by_agency": agencies,
             "by_district": dict(sorted_districts) if sorted_districts else None
         }
@@ -1524,10 +1662,12 @@ class ToolExecutor:
     def _get_ratio(self, school_name: str = None, province: str = None) -> Dict[str, Any]:
         """Get student-teacher ratio"""
         conditions = []
+        cleaned_school_name = school_name
         
         if school_name:
+            cleaned_school_name, _ = self._normalize_school_name(school_name)
             conditions.append(
-                FieldCondition(key="metadata.school_name", match=MatchText(text=school_name))
+                FieldCondition(key="metadata.school_name", match=MatchText(text=cleaned_school_name))
             )
         if province:
             province = self._normalize_province(province)
@@ -1548,6 +1688,40 @@ class ToolExecutor:
                 "teachers": meta.get("total_teachers", 0),
                 "province": meta.get("province"),
             })
+
+        # Fallback: compute ratio from students + teachers if ratios collection is missing
+        if not ratios and school_name:
+            try:
+                student_result = self._count_students(school_name=school_name, province=province)
+                teacher_result = self._count_teachers(school_name=school_name, province=province)
+
+                # If ambiguous, let caller handle suggestions via existing path
+                if student_result.get("ambiguous") or teacher_result.get("ambiguous"):
+                    logger.info("⚠️ Ratio fallback: ambiguous school name, skipping computed ratio")
+                else:
+                    total_students = student_result.get("total_students", 0)
+                    total_teachers = teacher_result.get("total_teachers", 0)
+
+                    if total_students > 0 and total_teachers > 0:
+                        # Prefer canonical school name from results if available
+                        school_label = cleaned_school_name or school_name
+                        if student_result.get("by_school"):
+                            school_label = next(iter(student_result["by_school"].keys()), school_label)
+                        elif teacher_result.get("by_school"):
+                            school_label = next(iter(teacher_result["by_school"].keys()), school_label)
+
+                        ratios.append({
+                            "school_name": school_label,
+                            "ratio": round(total_students / total_teachers, 1),
+                            "students": total_students,
+                            "teachers": total_teachers,
+                            "province": province,
+                            "computed": True,
+                            "source": "students_teachers"
+                        })
+                        logger.info("✅ Ratio fallback computed from students + teachers")
+            except Exception as e:
+                logger.warning(f"⚠️ Ratio fallback failed: {e}")
         
         return {
             "tool": "get_ratio",
@@ -1679,22 +1853,69 @@ class ToolExecutor:
         }
     
     def _ranking(self, metric: str = None, order: str = "most", scope: str = "school",
-                 province: str = None, limit: int = 5, type: str = None) -> Dict[str, Any]:
+                 province: str = None, limit: int = 5, type: str = None, **kwargs) -> Dict[str, Any]:
         """Get ranking of schools or provinces by a metric"""
         # Handle parameter alias: 'type' -> 'metric' (LLM sometimes sends 'type' instead of 'metric')
         if not metric and type:
             metric = type
         if not metric:
             metric = "students"  # default
+        # Normalize metric aliases
+        if metric == "school":
+            metric = "schools"
         
         limit = int(limit)
         
         if metric == "students":
-            data = self._count_students(province=province)
-            items = [(k, v["total"]) for k, v in data.get("by_school", {}).items()]
+            if kwargs.get('region'):
+                # For region ranking: Get all provinces in region, count each, then flatten
+                provinces = REGIONS.get(kwargs.get('region'), [])
+                items = []
+                # Limit provinces to avoid massive slowdown - or just aggregated list?
+                # Actually, counting students by school for WHOLE region is expensive.
+                # Optimization: For Region ranking, maybe we list top schools by province?
+                # Or we call _count_students for region (which returns by_school now?)
+                # Wait, _count_students(region=...) returns by_school top 10?
+                data = self._count_students(region=kwargs.get('region'))
+                items = [(k, v["total"]) for k, v in data.get("by_school", {}).items()]
+            else:
+                data = self._count_students(province=province)
+                items = [(k, v["total"]) for k, v in data.get("by_school", {}).items()]
         elif metric == "teachers":
-            data = self._count_teachers(province=province)
-            items = [(k, v["total"]) for k, v in data.get("by_school", {}).items()]
+            if kwargs.get('region'):
+                data = self._count_teachers(region=kwargs.get('region'))
+                items = [(k, v["total"]) for k, v in data.get("by_school", {}).items()]
+            else:
+                data = self._count_teachers(province=province)
+                items = [(k, v["total"]) for k, v in data.get("by_school", {}).items()]
+        elif metric == "schools":
+            # Ranking provinces by number of schools
+            if scope in ["province", "provinces"] or (not province and scope == "school"):
+                scope = "province"
+                conditions = []
+                if kwargs.get('region'):
+                    provinces = REGIONS.get(kwargs.get('region'), [])
+                    if provinces:
+                        conditions.append(
+                            FieldCondition(key="metadata.province", match=MatchAny(any=provinces))
+                        )
+                scroll_filter = self._build_filter(conditions)
+                results = self._scroll_all(
+                    self.collections["schools"],
+                    scroll_filter,
+                    limit=200000,
+                    with_payload=["metadata.province"]
+                )
+                counts = {}
+                for r in results:
+                    meta = r.payload.get("metadata", {})
+                    prov = meta.get("province")
+                    if not prov:
+                        continue
+                    counts[prov] = counts.get(prov, 0) + 1
+                items = list(counts.items())
+            else:
+                return {"error": "Ranking metric 'schools' requires province scope"}
         else:
             return {"error": f"Ranking metric '{metric}' not supported"}
         
@@ -1719,14 +1940,14 @@ class ToolExecutor:
         return result
     
     def _list_schools(self, province: str = None, district: str = None,
-                      agency: str = None, limit: int = 10) -> Dict[str, Any]:
+                      subdistrict: str = None, agency: str = None, limit: int = 10) -> Dict[str, Any]:
         """List schools in an area"""
-        return self._search_schools(province=province, district=district, 
+        return self._search_schools(province=province, district=district, subdistrict=subdistrict,
                                     agency=agency, limit=limit)
     
     def _filter_schools(self, metric: str, operator: str, value: int,
                         province: str = None, district: str = None, 
-                        subdistrict: str = None, limit: int = 20) -> Dict[str, Any]:
+                        subdistrict: str = None, region: str = None, limit: int = 20) -> Dict[str, Any]:
         """Filter schools by numeric threshold (e.g., schools with < 100 students)"""
         
         # Normalize operator
@@ -1735,7 +1956,16 @@ class ToolExecutor:
         
         # Build filter conditions
         conditions = []
-        if province:
+        if region:
+            region_provinces = REGIONS.get(region, [])
+            if region_provinces:
+                 conditions.append(
+                     Filter(should=[
+                         FieldCondition(key="metadata.province", match=MatchValue(value=p))
+                         for p in region_provinces
+                     ])
+                 )
+        elif province:
             province = self._normalize_province(province)
             conditions.append(
                 FieldCondition(key="metadata.province", match=MatchValue(value=province))
@@ -1753,6 +1983,7 @@ class ToolExecutor:
         
         # Fetch all schools from schools collection
         all_schools = self._scroll_all(self.collections["schools"], scroll_filter, limit=50000)
+        logger.info(f"DEBUG: _filter_schools fetched {len(all_schools)} schools from DB")
         
         # Determine which field to filter on
         if metric.lower() in ["students", "student", "นักเรียน"]:
@@ -1790,6 +2021,8 @@ class ToolExecutor:
                     "school_id": meta.get("school_id", ""),
                 })
         
+        logger.info(f"DEBUG: Found {len(matching_schools)} matching schools after filtering")
+        
         # Sort by count (ascending for lt/lte, descending for gt/gte)
         reverse_order = operator in ["gt", "gte"]
         matching_schools.sort(key=lambda x: x.get(field_name, 0), reverse=reverse_order)
@@ -1806,6 +2039,41 @@ class ToolExecutor:
             "gte": "อย่างน้อย"
         }
         
+        # Default summary
+        ai_summary = f"พบตามเงื่อนไขทั้งหมด {len(matching_schools)} แห่ง แต่แสดงผลเพียง {len(limited_schools)} แห่ง" + (f" (แสดงครบแล้ว)" if len(matching_schools) == len(limited_schools) else "")
+        
+        # SMART ANALYSIS: If no results found, analyze why
+        if len(matching_schools) == 0:
+            total_in_area = len(all_schools)
+            if total_in_area > 0:
+                # Find max value in this area to give context
+                try:
+                    max_school = max(all_schools, key=lambda x: x.payload.get("metadata", {}).get(field_name, 0) or 0)
+                    max_val = max_school.payload.get("metadata", {}).get(field_name, 0) or 0
+                    max_name = max_school.payload.get("metadata", {}).get("school_name", "ไม่ระบุ")
+                    
+                    metric_label = "นักเรียน" if field_name == "total_students" else "บุคลากร"
+                    
+                    ai_summary = f"ไม่พบโรงเรียนที่มี{metric_label} {op_labels.get(operator, operator)} {value} คนในพื้นที่นี้ครับ " \
+                                 f"(แต่ในพื้นที่นี้มีโรงเรียนทั้งหมด {total_in_area} แห่ง " \
+                                 f"ซึ่งสูงสุดคือ {max_name} มี {max_val} คน)"
+                except Exception as e:
+                    logger.error(f"Error in smart analysis: {e}")
+                    ai_summary = "ไม่พบข้อมูลตามเงื่อนไขครับ"
+            else:
+                 ai_summary = "ไม่พบข้อมูลโรงเรียนในพื้นที่ที่ระบุเลยครับ (อาจสะกดชื่อผิด หรือไม่มีข้อมูลในระบบ)"
+                 
+                 # SMART FUZZY SUGGESTION
+                 # If subdistrict not found, try to find close matches in the same province/district
+                 if subdistrict:
+                     suggestion = self._get_fuzzy_suggestion(subdistrict, province, district)
+                     if suggestion:
+                         ai_summary = suggestion
+        
+
+        
+
+        
         return {
             "tool": "filter_schools",
             "query": {
@@ -1819,7 +2087,8 @@ class ToolExecutor:
             "total_found": len(matching_schools),
             "schools": limited_schools,
             "showing": len(limited_schools),
-            "field_name": field_name
+            "field_name": field_name,
+            "ai_summary": ai_summary
         }
     
     # ============================================================
@@ -1967,8 +2236,28 @@ class ToolExecutor:
             "ratio": meta.get("ratio", 0),
             # New fields
             "student_breakdown": student_stats.get("by_grade", {}),
-            "student_breakdown_source": student_stats.get("source")
+            "student_breakdown_source": student_stats.get("source"),
+            
+            # New fields: Teacher Breakdown
+            "teacher_breakdown": {},
+            "teacher_breakdown_source": None
         }
+        
+        # Enrich with detailed teacher statistics (Feature 12)
+        if school_id:
+             try:
+                 teacher_stats = self.search_engine.get_teacher_statistics(school_id)
+                 if teacher_stats:
+                     logger.info(f"📊 Fetched teacher stats for {school_id}: {teacher_stats.get('total_teachers')} teachers found")
+                     final_result["teacher_breakdown"] = {
+                         "by_gender": teacher_stats.get("by_gender"),
+                         "by_person_type": teacher_stats.get("by_person_type")
+                     }
+                     final_result["teacher_breakdown_source"] = teacher_stats.get("source")
+             except Exception as e:
+                 logger.error(f"❌ Failed to fetch teacher stats: {e}")
+                 
+        return final_result
     
     def _get_province_summary(self, province: str) -> Dict[str, Any]:
         """Get comprehensive summary of education data for a province"""
@@ -2067,8 +2356,57 @@ class ToolExecutor:
             "by_system": by_system
         }
         
-    def _analyze_gender_ratio(self, province: str = None, district: str = None) -> Dict[str, Any]:
-        """Analyze gender ratio in an area"""
+    def _analyze_gender_ratio(self, province: str = None, district: str = None, school_name: str = None) -> Dict[str, Any]:
+        """Analyze gender distribution of students (Area or Specific School)"""
+        
+        # 1. School-Specific Delegation
+        if school_name:
+            # Delegate to the full details tool which already fetches student/teacher breakdowns
+            # This avoids code duplication and ensures consistent resolution logic
+            logger.info(f"🔄 [AnalyzeGender] Delegating specific school query '{school_name}' to get_school_full_details")
+            details = self._get_school_full_details(school_name, province)
+            
+            if details.get("found"):
+                # Construct a compatible response format for gender analysis
+                student_breakdown = details.get("student_breakdown", {})
+                teacher_breakdown = details.get("teacher_breakdown", {})
+                
+                # Aggregate totals
+                total_male_students = sum(d.get("male", 0) for d in student_breakdown.values())
+                total_female_students = sum(d.get("female", 0) for d in student_breakdown.values())
+                
+                total_male_teachers = teacher_breakdown.get("by_gender", {}).get("male", 0)
+                total_female_teachers = teacher_breakdown.get("by_gender", {}).get("female", 0)
+                
+                return {
+                    "tool": "analyze_gender_ratio",
+                    "mode": "school_specific",
+                    "school_name": details.get("school_name"),
+                    "total_students": details.get("total_students", 0),
+                    "student_gender": {
+                         "male": total_male_students,
+                         "female": total_female_students,
+                         "ratio": f"{total_male_students}:{total_female_students}" if total_female_students else "N/A"
+                    },
+                    "teacher_gender": {
+                         "male": total_male_teachers,
+                         "female": total_female_teachers
+                    },
+                    "ai_summary": (
+                        f"โรงเรียน {details.get('school_name')} มีนักเรียนทั้งหมด {details.get('total_students', 0):,} คน "
+                        f"(ชาย {total_male_students:,}, หญิง {total_female_students:,}) "
+                        f"และมีครูทั้งหมด {details.get('total_teachers', 0):,} คน "
+                        f"(ชาย {total_male_teachers:,}, หญิง {total_female_teachers:,}) "
+                        f"ครับ"
+                    )
+                }
+            else:
+                 return {
+                     "tool": "analyze_gender_ratio",
+                     "error": f"School '{school_name}' not found"
+                 }
+
+        # 2. Area-Aggregate Path (Existing Logic)
         conditions = []
         
         if province:
@@ -2119,8 +2457,67 @@ class ToolExecutor:
         }
         
     def _get_grade_distribution(self, province: str = None, district: str = None, 
-                                grade: str = None) -> Dict[str, Any]:
-        """Get student distribution by grade level"""
+                                grade: str = None, school_name: str = None) -> Dict[str, Any]:
+        """Get student distribution by grade level (School-Specific OR Area-Aggregate)"""
+        
+        # 1. School-Specific Path
+        if school_name:
+            # Reuse the robust resolution logic (supports Cross-Province / Global Search)
+            ambiguity_check = self._resolve_school_ambiguity(school_name, province)
+            
+            target_school_id = None
+            if ambiguity_check['type'] == 'single':
+                target_school_id = ambiguity_check['data'].payload.get('metadata', {}).get('school_id')
+                logger.info(f"🎯 [GetGradeDist] Resolved school ID: {target_school_id}")
+            elif ambiguity_check['type'] == 'ambiguous':
+                # Try exact match
+                exact = [c for c in ambiguity_check['choices'] if c.get('school_name') == school_name]
+                if len(exact) == 1:
+                    target_school_id = exact[0].get('school_id')
+                    logger.info(f"🎯 [GetGradeDist] Exact match override: {target_school_id}")
+            
+            if target_school_id:
+                # Fetch detailed stats for this school
+                stats = self.search_engine.get_student_statistics(target_school_id)
+                if stats and "by_grade" in stats:
+                     # Convert to standard list format
+                     by_grade = stats["by_grade"] # Dict[grade, {total, male, female}]
+                     
+                     sorted_grades = []
+                     # Reuse grade ordering logic if possible or simple sort
+                     grade_order = ['อนุบาล 1', 'อนุบาล 2', 'อนุบาล 3', 
+                                   'ประถมศึกษาปีที่ 1', 'ประถมศึกษาปีที่ 2', 'ประถมศึกษาปีที่ 3',
+                                   'ประถมศึกษาปีที่ 4', 'ประถมศึกษาปีที่ 5', 'ประถมศึกษาปีที่ 6',
+                                   'มัธยมศึกษาปีที่ 1', 'มัธยมศึกษาปีที่ 2', 'มัธยมศึกษาปีที่ 3',
+                                   'มัธยมศึกษาปีที่ 4', 'มัธยมศึกษาปีที่ 5', 'มัธยมศึกษาปีที่ 6',
+                                   'ปวช.1', 'ปวช.2', 'ปวช.3']
+                     
+                     # Flatten dict to list
+                     raw_list = []
+                     for g, data in by_grade.items():
+                         raw_list.append({"grade": g, "count": data["total"], "male": data["male"], "female": data["female"]})
+                         
+                     # Sort
+                     for g_name in grade_order:
+                         found = next((x for x in raw_list if x["grade"] == g_name), None)
+                         if found:
+                             sorted_grades.append(found)
+                             raw_list.remove(found)
+                     sorted_grades.extend(raw_list) # Add remaining
+                     
+                     total = sum(x["count"] for x in sorted_grades)
+                     
+                     return {
+                        "tool": "get_grade_distribution",
+                        "query": {"school_name": school_name, "school_id": target_school_id},
+                        "total_students": total,
+                        "distribution": sorted_grades,
+                        "mode": "school_specific"
+                     }
+            else:
+                logger.warning(f"⚠️ [GetGradeDist] School '{school_name}' not resolved. Falling back to area aggregation.")
+
+        # 2. Area-Aggregate Path (Existing Logic)
         conditions = []
         
         if province:
@@ -2230,6 +2627,9 @@ class ToolExecutor:
                                       person_type: str = None) -> Dict[str, Any]:
         """Analyze teacher distribution by person type"""
         conditions = []
+        
+        if person_type:
+            person_type = self._normalize_person_type(person_type)
         
         if province:
             province = self._normalize_province(province)
@@ -2483,7 +2883,106 @@ class ToolExecutor:
         nearby.sort(key=lambda x: x["distance_km"])
         
         return {
-            "tool": "find_nearby_schools",
             "query": {"latitude": lat, "longitude": lon, "radius_km": radius},
             "schools": nearby[:int(limit)]
         }
+
+
+        
+    def _unused_filter_schools_duplicate(self, metric: str, operator: str, value: float,
+                       province: str = None, district: str = None, 
+                       subdistrict: str = None, limit: int = 20) -> Dict[str, Any]:
+        """Filter schools by condition (e.g. students > 100)"""
+        conditions = []
+        
+        # Map metric to field
+        field_map = {
+            "students": "metadata.total_students",
+            "teachers": "metadata.total_teachers"
+        }
+        field = field_map.get(metric)
+        if not field:
+            return {"error": f"Unknown metric: {metric}"}
+            
+        # Map operator to Range
+        val = float(value)
+        r = None
+        if operator == "gt": r = Range(gt=val)
+        elif operator == "gte": r = Range(gte=val)
+        elif operator == "lt": r = Range(lt=val)
+        elif operator == "lte": r = Range(lte=val)
+        elif operator == "eq": r = Range(gte=val, lte=val)
+        
+        if r:
+            conditions.append(FieldCondition(key=field, range=r))
+            
+        # Location filters
+        if province:
+            province = self._normalize_province(province)
+            conditions.append(FieldCondition(key="metadata.province", match=MatchValue(value=province)))
+        if district:
+            conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=district)))
+        if subdistrict:
+            conditions.append(FieldCondition(key="metadata.subdistrict", match=MatchText(text=subdistrict)))
+            
+        scroll_filter = self._build_filter(conditions)
+        results = self._scroll_all(self.collections["schools"], scroll_filter, limit=limit)
+        
+        return {
+            "tool": "filter_schools",
+            "query": {
+                "metric": metric, "operator": operator, "value": value,
+                "province": province
+            },
+            "total_found": len(results),
+            "schools": [
+                {
+                    "school_name": r.payload.get("metadata", {}).get("school_name"),
+                    "province": r.payload.get("metadata", {}).get("province"),
+                    "district": r.payload.get("metadata", {}).get("district"),
+                    "value": r.payload.get("metadata", {}).get("total_students") if metric == "students" else r.payload.get("metadata", {}).get("total_teachers")
+                }
+                for r in results
+            ]
+        }
+
+    def _get_fuzzy_suggestion(self, subdistrict: str, province: str = None, district: str = None) -> str:
+        """Helper to find fuzzy matches for a missing subdistrict"""
+        if not subdistrict:
+            return ""
+            
+        try:
+            candidates = set()
+            # Scope: If district is known, search in district. Else if province known, in province.
+            if district or province:
+                scope_prov = province
+                scope_dist = district
+                
+                # Build simplified filter for scope
+                scope_conditions = []
+                if scope_prov:
+                    scope_conditions.append(FieldCondition(key="metadata.province", match=MatchValue(value=self._normalize_province(scope_prov))))
+                if scope_dist:
+                    scope_conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=scope_dist)))
+                
+                scope_filter = self._build_filter(scope_conditions) if scope_conditions else None
+                
+                # Fetch raw schools with payload using _scroll_all
+                raw_candidates = self._scroll_all(self.collections["schools"], scope_filter, limit=200)
+                
+                for s in raw_candidates:
+                    s_sub = s.payload.get("metadata", {}).get("subdistrict")
+                    if s_sub:
+                        candidates.add(s_sub)
+                        
+                # Fuzzy match
+                if candidates:
+                    matches = difflib.get_close_matches(subdistrict, candidates, n=1, cutoff=0.6)
+                    if matches:
+                        suggested = matches[0]
+                        return f"ไม่พบข้อมูลในตำบล '{subdistrict}' ครับ คาดว่าน่าจะเป็น **'{suggested}'** " \
+                               f"(ต้องการให้ค้นหาใน '{suggested}' แทนไหมครับ?)"
+        except Exception as ex:
+            logger.error(f"Fuzzy suggestion helper failed: {ex}")
+            
+        return ""

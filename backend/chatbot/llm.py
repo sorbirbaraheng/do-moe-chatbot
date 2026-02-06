@@ -55,6 +55,7 @@ class MultiProviderLLM:
         self.groq_model = GROQ_MODEL
         self.gemini_model_name = gemini_model
         self.gemini_client = None
+        self.embeddings_available = True
         
         # Try to load keys from Firestore first
         self._load_keys_from_firestore()
@@ -83,10 +84,12 @@ class MultiProviderLLM:
                 self.groq_model = config_loader.get_groq_model()
                 logger.info(f"🤖 Groq model from config: {self.groq_model}")
             
-            self.groq_key_index = 0
+            # Shuffle keys to distribute load and avoid "dead head-of-line" blocking
+            import random
             
             if self.groq_keys:
-                logger.info(f"✅ Loaded {len(self.groq_keys)} Groq keys (unified mode)")
+                random.shuffle(self.groq_keys)
+                logger.info(f"✅ Loaded {len(self.groq_keys)} Groq keys (unified & shuffled)")
             else:
                 # Fallback to .env single key
                 env_key = GROQ_API_KEY
@@ -96,12 +99,15 @@ class MultiProviderLLM:
                 else:
                     self.groq_keys = []
             
+            self.groq_key_index = 0
+
             # Setup Gemini keys
             if not self.gemini_keys and GEMINI_API_KEY:
                  self.gemini_keys = [GEMINI_API_KEY]
                  logger.info("✅ Gemini key loaded from .env")
             elif self.gemini_keys:
-                logger.info(f"✅ Loaded {len(self.gemini_keys)} Gemini keys (unified mode)")
+                random.shuffle(self.gemini_keys)
+                logger.info(f"✅ Loaded {len(self.gemini_keys)} Gemini keys (unified & shuffled)")
                 
             self.gemini_key_index = 0
                 
@@ -184,7 +190,7 @@ class MultiProviderLLM:
         
         # 1. Try Groq (Primary) - Limit retries to avoid excessive waiting
         if self.groq_keys:
-            max_retries = min(len(self.groq_keys), 5)  # Max 5 retries to fail fast
+            max_retries = len(self.groq_keys)  # ⚡ IMPACT: Try ALL keys (User has many)
             for i in range(max_retries):
                 current_key = self._get_next_groq_key()
                 try:
@@ -194,13 +200,11 @@ class MultiProviderLLM:
                 except Exception as e:
                     error_str = str(e)
                     if i < max_retries - 1:
-                         logger.warning(f"⚠️ Groq attempt {i+1} failed ({str(e)[:50]}...), retrying...")
-                         # Add delay between retries
+                         logger.warning(f"⚠️ Groq attempt {i+1} failed ({str(e)[:50]}...), rotating key...")
+                         # ⚡ FAST ROTATION: No need to wait 5s if we have a fresh key
                          import time
-                         if "Rate limit" in error_str or "429" in error_str:
-                             time.sleep(5)  # Wait longer for rate limit
-                         else:
-                             time.sleep(1)
+                         time.sleep(0.5)  # Brief pause only
+
         
         # 2. Fallback to Gemini (Secondary)
         if self.gemini_keys:
@@ -237,8 +241,10 @@ class MultiProviderLLM:
         
         raise Exception("All providers and keys failed")
     
-    def embed_content(self, content: str, model: str = "text-embedding-004") -> List[float]:
+    def embed_content(self, content: str, model: str = "models/gemini-embedding-001") -> List[float]:
         """Generate embeddings using Gemini (with rotation support)"""
+        if not self.embeddings_available:
+            return []
         # Ensure client is ready
         if not self.gemini_client:
              self._init_gemini_client()
@@ -249,19 +255,28 @@ class MultiProviderLLM:
         max_retries = len(self.gemini_keys)
         for i in range(max_retries):
             try:
+                if model and not model.startswith("models/"):
+                    model = f"models/{model}"
                 # New SDK Usage for Embeddings
                 response = self.gemini_client.models.embed_content(
                     model=model,
-                    contents=content
+                    contents=content,
+                    config={'output_dimensionality': 768}
                 )
                 return response.embeddings[0].values
             except Exception as e:
                 logger.warning(f"⚠️ Embedding attempt {i+1} failed: {e}")
+                err_str = str(e)
+                # If model not found / not supported, disable embeddings to avoid repeated failures
+                if "NOT_FOUND" in err_str or "not found" in err_str:
+                    logger.error("❌ Embedding model unavailable; disabling embeddings for this process")
+                    self.embeddings_available = False
+                    return []
                 if i < max_retries - 1:
                     self._rotate_gemini_key()
                 else:
                     logger.error("❌ All embedding attempts failed")
-                    raise e
+                    return []
         return []
 
     def _call_groq(self, prompt: str, api_key: str, timeout: int = 30) -> Optional[str]:

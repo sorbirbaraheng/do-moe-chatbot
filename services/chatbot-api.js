@@ -42,6 +42,10 @@ export function getFlaskBaseUrl(port = 5001) {
  * @property {string} [system_prompt] - System prompt สำหรับ AI
  * @property {boolean} [saveHistory] - บันทึกประวัติหรือไม่ (default: true)
  * @property {string} [session_id] - Session ID สำหรับ conversation memory
+ * @property {string} [category] - หมวดหมู่การสนทนา (general, school, student)
+ * @property {string} [intent] - เจตนาของผู้ใช้ (count, list, compare, etc.)
+ * @property {string} [school_name] - ชื่อโรงเรียน (ถ้ามี)
+ * @property {string} [level] - ระดับการค้นหา (province, district, etc.)
  */
 
 /**

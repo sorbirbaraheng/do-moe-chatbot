@@ -181,7 +181,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             self.llm_agent = None
             self.use_llm_agent = False
     
-    def process_with_llm_agent(self, message: str) -> Optional[str]:
+    def process_with_llm_agent(self, message: str, rich_context: Dict = None, session_context=None, session_id=None) -> Optional[str]:
         """
         🆕 Process query using LLM Agent (Function Calling approach)
         Returns response string or None if agent is not available
@@ -190,19 +190,107 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             return None
             
         try:
-            # Pass memory as context
-            context = self.memory.to_dict() if self.memory else {}
-            response = self.llm_agent.process_query(message, context=context)
+            # Pass memory as context (Prefer rich context if available)
+            context = rich_context if rich_context else (self.memory.to_dict() if self.memory else {})
+            
+            # Unpack tuple from process_query (response, active_query)
+            response, active_query = self.llm_agent.process_query(message, context=context)
+            
+            # 💾 Save Active Query to Session Context
+            if active_query and session_context and session_id and self.context_manager:
+                session_context.last_active_query = active_query
+                self.context_manager.save_context(session_id, session_context)
+                logger.info(f"💾 Active Query Saved: {active_query.get('name')} (Session: {session_id})")
+            
+            # 🧠 UPDATE MEMORY: Extract entities from active_query and persist for follow-up
+            if active_query and self.memory:
+                params = active_query.get('params', {})
+                if params.get('province'):
+                    self.memory.last_province = params['province']
+                    logger.info(f"🧠 Memory updated: province={params['province']}")
+                if params.get('school_name'):
+                    self.memory.last_school_name = params['school_name']
+                    logger.info(f"🧠 Memory updated: school_name={params['school_name']}")
+                if params.get('district'):
+                    self.memory.last_district = params['district']
+                if params.get('agency'):
+                    self.memory.last_agency = params['agency']
+            
             return response
         except Exception as e:
             logger.error(f"❌ LLM Agent processing failed: {e}")
             return None
 
+    def _should_use_llm_context(self, message: str, history: List[Dict[str, str]]) -> bool:
+        """
+        Decide when to invoke LLM-based ContextManager.
+        Hybrid strategy: use LLM only for ambiguous follow-ups or selections.
+        """
+        msg = (message or "").strip().lower()
+        if not msg:
+            return False
+
+        # 1) Direct selection patterns (e.g., "ข้อ 2", "2")
+        if re.fullmatch(r'(?:ข้อ|อันดับ|ลำดับ)?\s*\d+', msg):
+            return True
+
+        # 2) Pronouns / deictic references
+        pronouns = [
+            "ที่นั่น", "ที่นั้น", "ตรงนั้น", "อันนี้", "อันนั้น", "อันแรก",
+            "อันที่", "อีกอัน", "อีกโรง", "โรงเรียนนั้น", "โรงเรียนนี้",
+            "ที่กล่าวมา", "ที่พูดถึง", "ของมัน", "ของเขา"
+        ]
+        if any(p in msg for p in pronouns):
+            return True
+
+        # 3) Short follow-up without explicit entity
+        follow_up_words = [
+            "แล้ว", "ล่ะ", "ต่อ", "อีก", "เพิ่ม", "เหมือนกัน", "สรุป",
+            "บ้าง", "ทั้งหมด", "เท่าไหร่", "กี่", "ที่ไหน", "รายละเอียด"
+        ]
+        is_short = len(msg) <= 35
+        has_follow = any(w in msg for w in follow_up_words)
+
+        # Detect explicit entities (province/school/agency keywords)
+        has_entity = any(k in msg for k in [
+            "โรงเรียน", "อำเภอ", "ตำบล", "เขต", "สพฐ", "สช", "อปท", "สพป", "สพม", "จังหวัด"
+        ])
+        if not has_entity:
+            for prov in THAI_PROVINCES:
+                if prov.lower() in msg:
+                    has_entity = True
+                    break
+
+        if is_short and has_follow and not has_entity:
+            return True
+
+        # 4) If last assistant asked for clarification/selection
+        last_ai = ""
+        for m in reversed(history):
+            if m.get("role") == "assistant":
+                last_ai = m.get("content", "")
+                break
+        if last_ai:
+            clarification_markers = [
+                "คุณหมายถึง", "เลือกเลขข้อ", "โปรดเลือก", "กรุณาเลือก",
+                "พบโรงเรียน", "มีชื่อใกล้เคียง", "พิมพ์เลือกเลขข้อ"
+            ]
+            if any(marker in last_ai for marker in clarification_markers):
+                return True
+
+        # 5) If we have memory but message is short and vague
+        if self.memory and (self.memory.last_school_name or self.memory.last_province):
+            if is_short and not has_entity:
+                if any(w in msg for w in ["ที่ไหน", "เท่าไหร่", "กี่", "อะไร", "บ้าง", "รายละเอียด"]):
+                    return True
+
+        return False
+
     # =========================================================================
     # MAIN CHAT INTERFACE: Entry point for all conversations
     # =========================================================================
 
-    def chat(self, message: str, history: List[Dict[str, str]] = None) -> Generator[Tuple[List[Dict[str, str]], str], None, None]:
+    def chat(self, message: str, history: List[Dict[str, str]] = None, session_id: Optional[str] = None) -> Generator[Tuple[List[Dict[str, str]], str], None, None]:
         """Main chat interface"""
         if history is None:
             history = []
@@ -227,42 +315,45 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         
         logger.info(f"💬 User: {message}")
         
-        # 🧠 ADVANCED CONTEXT MANAGEMENT (LLM-based)
-        # Use ContextManager for intelligent context extraction and coreference resolution
-        session_id = hash(str(history[:2])) if history else "default"  # Simple session ID
-        try:
-            context_result = self.context_manager.get_context_for_query(
-                query=message,
-                history=history[:-2] if len(history) > 2 else [],  # Exclude current exchange
-                session_id=str(session_id)
-            )
-            
-            # Use resolved query (with coreferences replaced)
-            resolved_message = context_result.get("resolved_query", message)
-            if resolved_message != message:
-                logger.info(f"🔄 Query resolved: '{message}' → '{resolved_message}'")
-                message = resolved_message
-            
-            # Update legacy memory for backward compatibility
-            ctx = context_result.get("context")
-            if ctx:
-                if ctx.current_school:
-                    self.memory.last_school_name = ctx.current_school
-                if ctx.current_province:
-                    self.memory.last_province = ctx.current_province
-                logger.info(f"🧠 Context: schools={ctx.schools[-3:]}, provinces={ctx.provinces[-3:]}, focus={ctx.current_school or ctx.current_province}")
-        except Exception as e:
-            logger.warning(f"⚠️ Context extraction failed, using fallback: {e}")
-            # Fallback to old rule-based extraction
-            if history and len(history) >= 4:
-                import re
-                last_ai_response = history[-3].get("content", "")
-                school_match = re.search(r'(?:โรงเรียน|วิทยาลัย)(\s*[ก-๙a-zA-Z0-9]+(?:[ \t][ก-๙a-zA-Z0-9]+)*)', last_ai_response)
-                if school_match:
-                    extracted_name = school_match.group(1).strip()
-                    if len(extracted_name) > 3 and not any(x in extracted_name for x in ['คือ', 'มี', 'อยู่', 'เป็น']):
-                        self.memory.last_school_name = extracted_name
-                        logger.info(f"🧠 Context Restored (fallback): {extracted_name}")
+        # 🧠 HYBRID CONTEXT MANAGEMENT
+        # Use LLM ContextManager ONLY when needed (ambiguous follow-ups)
+        ctx = None
+        past_history = history[:-2] if len(history) > 2 else []  # Exclude current exchange
+        session_key = str(session_id) if session_id else str(hash(str(history[:2])) if history else "default")
+
+        if self.context_manager and self._should_use_llm_context(message, past_history):
+            try:
+                context_result = self.context_manager.get_context_for_query(
+                    query=message,
+                    history=past_history,
+                    session_id=session_key
+                )
+
+                # Use resolved query (with coreferences replaced)
+                resolved_message = context_result.get("resolved_query", message)
+                if resolved_message != message:
+                    logger.info(f"🔄 Query resolved: '{message}' → '{resolved_message}'")
+                    message = resolved_message
+
+                # Update legacy memory for backward compatibility
+                ctx = context_result.get("context")
+                if ctx:
+                    if ctx.current_school:
+                        self.memory.last_school_name = ctx.current_school
+                    if ctx.current_province:
+                        self.memory.last_province = ctx.current_province
+                    logger.info(f"🧠 Context: schools={ctx.schools[-3:]}, provinces={ctx.provinces[-3:]}, focus={ctx.current_school or ctx.current_province}")
+            except Exception as e:
+                logger.warning(f"⚠️ Context extraction failed, using fallback: {e}")
+                # Fallback to old rule-based extraction
+                if history and len(history) >= 4:
+                    last_ai_response = history[-3].get("content", "")
+                    school_match = re.search(r'(?:โรงเรียน|วิทยาลัย)(\s*[ก-๙a-zA-Z0-9]+(?:[ \t][ก-๙a-zA-Z0-9]+)*)', last_ai_response)
+                    if school_match:
+                        extracted_name = school_match.group(1).strip()
+                        if len(extracted_name) > 3 and not any(x in extracted_name for x in ['คือ', 'มี', 'อยู่', 'เป็น']):
+                            self.memory.last_school_name = extracted_name
+                            logger.info(f"🧠 Context Restored (fallback): {extracted_name}")
         
         # ⚠️ CRITICAL FALLBACK & SELF-HEALING
         if not self.qdrant_available:
@@ -317,7 +408,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             if self.use_llm_agent and self.llm_agent:
                 try:
                     context = self.memory.to_dict() if self.memory else {}
-                    llm_response = self.llm_agent.process_query(message, context=context)
+                    llm_response, _ = self.llm_agent.process_query(message, context=context)
                     if llm_response and "ไม่สามารถ" not in llm_response:
                         history[-1]["content"] = llm_response
                         yield history, ""
@@ -391,7 +482,37 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         # This provides comprehensive query understanding without hardcoded handlers
         if self.use_llm_agent:
             logger.info("🤖 Using LLM Agent for query processing...")
-            agent_response = self.process_with_llm_agent(message)
+            
+            # Prepare rich context - merge SessionContext + Memory for complete context
+            rich_context_dict = ctx.to_dict() if ctx else {}
+            
+            # 🔍 CRITICAL: Inject Last AI Response for Ambiguity Handling
+            # usage: history = [..., {role: assistant, content: "Select school..."}, {role: user, content: "This one"}]
+            if history and len(history) >= 3:
+                last_msg = history[-3]
+                if last_msg.get('role') == 'assistant':
+                    rich_context_dict['last_ai_response'] = last_msg.get('content', '')
+                    logger.info(f"🔍 Injected Last AI Response: {rich_context_dict['last_ai_response'][:50]}...")
+            
+            # 🔧 CRITICAL: Merge memory data for follow-up context
+            if self.memory:
+                if self.memory.last_province:
+                    rich_context_dict['last_province'] = self.memory.last_province
+                if self.memory.last_school_name:
+                    rich_context_dict['last_school_name'] = self.memory.last_school_name
+                if self.memory.last_district:
+                    rich_context_dict['last_district'] = self.memory.last_district
+                if self.memory.last_agency:
+                    rich_context_dict['last_agency'] = self.memory.last_agency
+            
+            
+            agent_response = self.process_with_llm_agent(
+                message, 
+                rich_context=rich_context_dict, 
+                session_context=ctx, 
+                session_id=session_key
+            )
+            
             if agent_response:
                 history[-1]["content"] = agent_response
                 self.cache.save(message, agent_response)
@@ -1698,4 +1819,3 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             return self.aggregator.aggregate_by_region(results, is_least)
         else:
             return self.aggregator.aggregate(results, parsed.level, is_least)
-
