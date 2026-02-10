@@ -6,6 +6,7 @@ Handles vector search, metadata filtering, query expansion, and smart collection
 
 import time
 import logging
+import os
 from typing import List, Optional, Tuple
 
 import google.generativeai as genai
@@ -110,7 +111,14 @@ class SearchEngine:
     def _expand_query(self, query: str) -> str:
         """Expand query using Gemini to improve recall"""
         try:
+            enable_expansion = os.getenv("ENABLE_QUERY_EXPANSION", "0") == "1"
+            if not enable_expansion:
+                return query
+
             if len(query) < 5: 
+                return query
+            # Avoid expanding very long/clear queries to reduce latency/cost
+            if len(query) > 80:
                 return query
                 
             prompt = f"แปลงคำค้นหานี้ให้เป็นประโยคที่ใช้ค้นหาใน Vector Database ภาษาไทย: '{query}' (ขอแค่ประโยคผลลัพธ์ ไม่ต้องอธิบาย)"
@@ -140,7 +148,7 @@ class SearchEngine:
             else:
                 # Legacy fallback
                 result = genai.embed_content(
-                    model="models/text-embedding-004",
+                    model="models/gemini-embedding-001",
                     content=query,
                     task_type="retrieval_query"
                 )

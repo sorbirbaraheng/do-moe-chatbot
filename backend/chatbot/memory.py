@@ -4,30 +4,68 @@ Handles context retention across chat turns
 """
 
 import logging
+import time
 from typing import Optional, Dict, List, Any
 
 from .types import ParsedQuery, QueryIntent, QueryLevel
-from .constants import THAI_PROVINCES
+from .constants import THAI_PROVINCES, REGIONS
 
 logger = logging.getLogger(__name__)
 
 
 class ConversationMemory:
     """Enhanced memory to retain context from previous questions"""
+
+    CONTEXT_TTL_SEC = 20 * 60  # 20 minutes
     
     def __init__(self):
         self.last_province: Optional[str] = None
+        self.last_region: Optional[str] = None
         self.last_district: Optional[str] = None
         self.last_intent: Optional[QueryIntent] = None
         self.last_level: Optional[QueryLevel] = None
         self.last_agency: Optional[str] = None
         self.last_query: Optional[str] = None
         self.last_school_name: Optional[str] = None  # NEW: For school-specific queries
+        self.last_scope_type: Optional[str] = None
+        self.last_scope_value: Optional[str] = None
+        self.last_updated_at: Optional[float] = None
     
     def update(self, parsed: ParsedQuery, original_query: str = None):
         """Update memory with new parsed query"""
+        # Decay old context if stale
+        now = time.time()
+        if self.last_updated_at and now - self.last_updated_at > self.CONTEXT_TTL_SEC:
+            self.clear()
+
+        # Detect explicit scope changes and clear conflicting context
+        if parsed.region and parsed.region != self.last_region:
+            self.last_province = None
+            self.last_district = None
+            self.last_school_name = None
+        if parsed.province and parsed.province != self.last_province:
+            self.last_district = None
+            self.last_school_name = None
+        if parsed.district and parsed.district != self.last_district:
+            self.last_school_name = None
+        if parsed.school_name and parsed.school_name != self.last_school_name:
+            # If user specifies a new school without explicit location, avoid stale location leak
+            if not parsed.province:
+                self.last_province = None
+            if not parsed.region:
+                self.last_region = None
+            if not parsed.district:
+                self.last_district = None
+
         if parsed.province:
-            self.last_province = parsed.province
+            # Guard: sometimes region strings slip into province
+            if parsed.province in REGIONS and not parsed.region:
+                self.last_region = parsed.province
+                self.last_province = None
+            else:
+                self.last_province = parsed.province
+        if parsed.region:
+            self.last_region = parsed.region
         if parsed.district:
             self.last_district = parsed.district
         if parsed.intent:
@@ -40,6 +78,27 @@ class ConversationMemory:
              self.last_school_name = parsed.school_name
         if original_query:
             self.last_query = original_query
+
+        # Scope tracking (most specific wins)
+        scope_type = None
+        scope_value = None
+        if parsed.school_name:
+            scope_type = "school"
+            scope_value = parsed.school_name
+        elif parsed.district:
+            scope_type = "district"
+            scope_value = parsed.district
+        elif parsed.province:
+            scope_type = "province"
+            scope_value = parsed.province
+        elif parsed.region:
+            scope_type = "region"
+            scope_value = parsed.region
+
+        if scope_type:
+            self.last_scope_type = scope_type
+            self.last_scope_value = scope_value
+            self.last_updated_at = now
     
     def extract_from_history(self, history: List[Dict]) -> None:
         """Extract context from chat history"""
@@ -52,14 +111,21 @@ class ConversationMemory:
         for msg in recent:
             content = msg.get('content', '') if isinstance(msg, dict) else str(msg)
             content_lower = content.lower()
-            
+
             # Extract province from previous messages
             for province in THAI_PROVINCES:
                 if province.lower() in content_lower:
                     self.last_province = province
                     logger.info(f"   📍 Extracted province from history: {province}")
                     break
-            
+
+            # Extract region from previous messages
+            for region in REGIONS.keys():
+                if region in content:
+                    self.last_region = region
+                    logger.info(f"   🧭 Extracted region from history: {region}")
+                    break
+
             # Extract agency patterns
             agency_patterns = {
                 'สพฐ': 'สพฐ.',
@@ -75,9 +141,17 @@ class ConversationMemory:
                     self.last_agency = agency
                     logger.info(f"   🏛️ Extracted agency from history: {agency}")
                     break
+        if self.last_province or self.last_region or self.last_district or self.last_school_name:
+            self.last_updated_at = time.time()
     
     def apply_context(self, parsed: ParsedQuery, query: str) -> ParsedQuery:
         """Apply context from memory to current query if needed"""
+        # Clear stale context
+        if self.last_updated_at and time.time() - self.last_updated_at > self.CONTEXT_TTL_SEC:
+            logger.info("🧹 Context expired - clearing memory")
+            self.clear()
+            return parsed
+
         query_lower = query.lower()
         
         # Enhanced follow-up patterns
@@ -91,15 +165,16 @@ class ConversationMemory:
         is_short_query = len(query) < 50
         has_follow_up_word = any(p in query_lower for p in follow_up_patterns)
         lacks_location = not parsed.province and not parsed.district
+        is_global_ranking_query = ("จังหวัด" in query_lower) and any(p in query_lower for p in ["อันดับ", "จัดอันดับ", "มากที่สุด", "น้อยที่สุด", "สูงที่สุด", "ต่ำที่สุด"])
         
         # Detect "ทุกสังกัด" or "ทั้งหมด" type queries
         is_all_agencies_query = any(p in query_lower for p in ['ทุกสังกัด', 'ทั้งหมด', 'สังกัดอื่น', 'ทุกหน่วยงาน', 'ทั้งนั้น'])
+
+        is_follow_up = is_short_query and (has_follow_up_word or lacks_location) and not is_global_ranking_query
         
-        is_follow_up = is_short_query and (has_follow_up_word or lacks_location)
-        
-        if is_follow_up and self.last_province:
+        if is_follow_up and (self.last_province or self.last_region):
             logger.info(f"🔄 Follow-up question detected: '{query}'")
-            logger.info(f"   Memory: province={self.last_province}, district={self.last_district}, agency={self.last_agency}")
+            logger.info(f"   Memory: province={self.last_province}, region={self.last_region}, district={self.last_district}, agency={self.last_agency}")
             
             # Apply stored province if current query doesn't have one AND doesn't have a region
             # BUT: If user only asks about agency (e.g., "สพฐ มีกี่โรงเรียน"), don't apply province - they want nationwide
@@ -112,8 +187,15 @@ class ConversationMemory:
                 # User is asking about a specific school - search globally, don't use memory province
                 logger.info(f"   🏫 New school name detected: '{parsed.school_name}' - skipping province memory for accurate search")
             elif not parsed.province and not parsed.region and self.last_province and not is_agency_only_query:
-                parsed.province = self.last_province
-                logger.info(f"   ✅ Applied province from memory: {self.last_province}")
+                if self.last_province in REGIONS:
+                    parsed.region = self.last_province
+                    logger.info(f"   ✅ Applied region from memory (was province): {self.last_province}")
+                else:
+                    parsed.province = self.last_province
+                    logger.info(f"   ✅ Applied province from memory: {self.last_province}")
+            elif not parsed.province and not parsed.region and self.last_region and not is_agency_only_query:
+                parsed.region = self.last_region
+                logger.info(f"   ✅ Applied region from memory: {self.last_region}")
             elif is_agency_only_query:
                 logger.info(f"   ℹ️ Agency-only query detected - skipping province memory for nationwide results")
             elif parsed.region:
@@ -140,34 +222,43 @@ class ConversationMemory:
         # If we have a stored school name, and the user hasn't specified a new one,
         # and hasn't specified a new location (province/region), assume they're still talking about the same school.
         if self.last_school_name and not parsed.school_name and not parsed.province and not parsed.region:
-             parsed.school_name = self.last_school_name
-             logger.info(f"   🏫 Applied school name from memory: {self.last_school_name}")
+             if not is_global_ranking_query:
+                 parsed.school_name = self.last_school_name
+                 logger.info(f"   🏫 Applied school name from memory: {self.last_school_name}")
         
         return parsed
     
     def clear(self):
         """Clear all memory"""
         self.last_province = None
+        self.last_region = None
         self.last_district = None
         self.last_intent = None
         self.last_level = None
         self.last_agency = None
         self.last_query = None
         self.last_school_name = None
+        self.last_scope_type = None
+        self.last_scope_value = None
+        self.last_updated_at = None
     
     def __repr__(self):
-        return f"Memory(province={self.last_province}, district={self.last_district}, agency={self.last_agency})"
+        return f"Memory(province={self.last_province}, region={self.last_region}, district={self.last_district}, agency={self.last_agency}, scope={self.last_scope_type}:{self.last_scope_value})"
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize memory to dictionary"""
         return {
             'last_province': self.last_province,
+            'last_region': self.last_region,
             'last_district': self.last_district,
             'last_intent': self.last_intent.value if self.last_intent else None,
             'last_level': self.last_level.value if self.last_level else None,
             'last_agency': self.last_agency,
             'last_query': self.last_query,
-            'last_school_name': self.last_school_name
+            'last_school_name': self.last_school_name,
+            'last_scope_type': self.last_scope_type,
+            'last_scope_value': self.last_scope_value,
+            'last_updated_at': self.last_updated_at
         }
 
     @classmethod
@@ -175,10 +266,14 @@ class ConversationMemory:
         """Deserialize memory from dictionary"""
         mem = cls()
         mem.last_province = data.get('last_province')
+        mem.last_region = data.get('last_region')
         mem.last_district = data.get('last_district')
         mem.last_agency = data.get('last_agency')
         mem.last_query = data.get('last_query')
         mem.last_school_name = data.get('last_school_name')
+        mem.last_scope_type = data.get('last_scope_type')
+        mem.last_scope_value = data.get('last_scope_value')
+        mem.last_updated_at = data.get('last_updated_at')
         
         if data.get('last_intent'):
             try: mem.last_intent = QueryIntent(data['last_intent'])

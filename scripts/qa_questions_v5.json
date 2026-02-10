@@ -1,0 +1,44 @@
+[
+  { "category": "schools", "question": "โรงเรียนในปัตตานีมีกี่แห่ง", "expected_tool": "count_schools" },
+  { "category": "schools", "question": "รายชื่อโรงเรียนในจังหวัดเชียงใหม่ 10 แห่งแรก", "expected_tool": "list_schools" },
+  { "category": "schools", "question": "ค้นหาโรงเรียนสวนกุหลาบ", "expected_tool": "search_schools" },
+  { "category": "schools", "question": "โรงเรียนบ้านหนองคางอยู่ที่ไหน", "expected_tool": "get_school_full_details" },
+  { "category": "schools", "question": "โรงเรียนที่มีนักเรียนมากกว่า 500 คนในยะลา", "expected_tool": "advanced_school_search" },
+  { "category": "schools", "question": "โรงเรียนที่มีครูน้อยกว่า 5 คนในนราธิวาส", "expected_tool": "filter_schools" },
+
+  { "category": "teachers", "question": "ครูทั้งหมดในจังหวัดชลบุรีกี่คน", "expected_tool": "count_teachers" },
+  { "category": "teachers", "question": "ครูผู้หญิงในจังหวัดยะลากี่คน", "expected_tool": "count_teachers" },
+  { "category": "teachers", "question": "ครูข้าราชการในภาคใต้ทั้งหมดกี่คน", "expected_tool": "count_teachers" },
+  { "category": "teachers", "question": "โครงสร้างครูแต่ละประเภทในจังหวัดเชียงใหม่", "expected_tool": "analyze_teacher_distribution" },
+
+  { "category": "students", "question": "นักเรียนทั้งหมดในจังหวัดระนองกี่คน", "expected_tool": "count_students" },
+  { "category": "students", "question": "นักเรียนชายในจังหวัดสตูลกี่คน", "expected_tool": "count_students" },
+  { "category": "students", "question": "นักเรียน ม.1 ในจังหวัดเชียงใหม่กี่คน", "expected_tool": "count_students" },
+  { "category": "students", "question": "สรุปนักเรียนแยกตามระดับชั้นของจังหวัดบุรีรัมย์", "expected_tool": "get_grade_distribution" },
+
+  { "category": "ratio", "question": "อัตราส่วนครูต่อนักเรียนของโรงเรียนสวนกุหลาบวิทยาลัย", "expected_tool": "get_ratio" },
+  { "category": "ratio", "question": "โรงเรียนที่อัตราส่วนครูต่อนักเรียนดีที่สุดในจังหวัดยะลา", "expected_tool": "find_best_ratio_schools" },
+
+  { "category": "gender", "question": "สัดส่วนเพศนักเรียนในจังหวัดสงขลา", "expected_tool": "analyze_gender_ratio" },
+  { "category": "gender", "question": "สัดส่วนเพศนักเรียนในอำเภอเมืองเชียงใหม่", "expected_tool": "analyze_gender_ratio" },
+
+  { "category": "system", "question": "โรงเรียนในระบบและนอกระบบของจังหวัดเชียงราย", "expected_tool": "count_by_system_type" },
+  { "category": "system", "question": "จำนวนโรงเรียนในระบบของจังหวัดเชียงราย", "expected_tool": "count_by_system_type" },
+
+  { "category": "area", "question": "สพป.เชียงใหม่ เขต 1 ครอบคลุมอำเภออะไรบ้าง", "expected_tool": "get_education_area_info" },
+  { "category": "area", "question": "เขตพื้นที่การศึกษาในจังหวัดนครศรีธรรมราชมีอะไรบ้าง", "expected_tool": "search_education_areas" },
+
+  { "category": "summary", "question": "สรุปภาพรวมการศึกษาของจังหวัดชลบุรี", "expected_tool": "get_province_summary" },
+  { "category": "summary", "question": "ขอรายละเอียดครูและนักเรียนจังหวัดชลบุรีทั้งหมด", "expected_tool": "get_province_summary" },
+  { "category": "summary", "question": "สรุปภาพรวมอำเภอเมืองปัตตานี", "expected_tool": "get_district_summary" },
+
+  { "category": "ranking", "question": "จังหวัดที่มีโรงเรียนมากที่สุด 5 อันดับ", "expected_tool": "ranking" },
+  { "category": "ranking", "question": "โรงเรียนที่มีนักเรียนมากที่สุด 5 อันดับในภาคใต้", "expected_tool": "ranking" },
+  { "category": "ranking", "question": "สังกัดไหนมีโรงเรียนมากที่สุดในจังหวัดเชียงใหม่", "expected_tool": "ranking_by_agency" },
+  { "category": "ranking", "question": "ตำบลในจังหวัดปัตตานีที่มีโรงเรียนมากที่สุด 5 อันดับ", "expected_tool": "ranking_subdistricts" },
+
+  { "category": "compare", "question": "เปรียบเทียบจำนวนนักเรียนระหว่างปัตตานีกับยะลา", "expected_tool": "compare" },
+  { "category": "compare", "question": "เปรียบเทียบหลายจังหวัด: ปัตตานี ยะลา นราธิวาส (นักเรียนและครู)", "expected_tool": "compare_provinces" },
+
+  { "category": "geo", "question": "หาโรงเรียนใกล้พิกัด 13.7563,100.5018 ในรัศมี 5 กม.", "expected_tool": "find_nearby_schools" }
+]

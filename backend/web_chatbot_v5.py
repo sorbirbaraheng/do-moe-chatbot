@@ -28,6 +28,24 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+# ---------------------------------------------------------------------
+# Python 3.9 compatibility patch:
+# Some dependencies expect importlib.metadata.packages_distributions (3.10+)
+# ---------------------------------------------------------------------
+try:
+    import importlib.metadata as _importlib_metadata  # py3.8+
+    if not hasattr(_importlib_metadata, "packages_distributions"):
+        try:
+            from importlib_metadata import packages_distributions as _packages_distributions  # backport
+            _importlib_metadata.packages_distributions = _packages_distributions  # type: ignore[attr-defined]
+        except Exception:
+            # Fallback stub to avoid AttributeError in dependencies
+            def _packages_distributions():
+                return {}
+            _importlib_metadata.packages_distributions = _packages_distributions  # type: ignore[attr-defined]
+except Exception:
+    pass
+
 # Third-party imports
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
@@ -214,11 +232,42 @@ def create_flask_api():
         return None
     
     chatbot = EducationChatbot(qdrant_client)
+    enable_debug_endpoints = os.getenv("ENABLE_DEBUG_ENDPOINTS", "0") == "1"
     
     @app.route('/api/health', methods=['GET'])
     @limiter.exempt
     def health():
         return jsonify({'status': 'healthy', 'version': '5.0.0'})
+
+    @app.route('/api/debug/route', methods=['POST', 'OPTIONS'])
+    @limiter.exempt
+    def debug_route():
+        if request.method == 'OPTIONS':
+            return '', 204
+        if not enable_debug_endpoints:
+            return jsonify({'error': 'debug endpoints disabled'}), 403
+
+        data = request.json or {}
+        message = data.get('message', '')
+        session_id = data.get('session_id', 'debug')
+        category = data.get('category', 'general')
+
+        mem_data = session_db.get_session_data(session_id)
+        if mem_data:
+            memory = ConversationMemory.from_dict(mem_data)
+        else:
+            memory = ConversationMemory()
+
+        chatbot.memory = memory
+        chatbot._current_category = category
+
+        try:
+            context = memory.to_dict() if memory else {}
+            tool_calls = chatbot.llm_agent._select_tools(message, context=context)
+            return jsonify({'tool_calls': tool_calls})
+        except Exception as e:
+            logger.error(f"Debug route error: {e}")
+            return jsonify({'error': str(e)}), 500
 
     @app.route('/api/chat/stream', methods=['POST', 'OPTIONS'])
     @limiter.limit("60 per minute")
@@ -249,8 +298,48 @@ def create_flask_api():
         
         # If frontend parsed a school_name, inject it into memory for better routing
         if school_name:
-            memory.last_school_name = school_name
-            logger.info(f"🏫 Injected school_name into memory: {school_name}")
+            def _normalize_name(name: str) -> str:
+                return (name or "").replace("โรงเรียน", "").replace(" ", "")
+
+            def _message_mentions_school(msg: str, name: str) -> bool:
+                if not msg or not name:
+                    return False
+                msg_norm = msg.replace(" ", "")
+                name_norm = _normalize_name(name)
+                if name_norm and name_norm in msg_norm:
+                    return True
+                school_keywords = ["โรงเรียน", "วิทยาลัย", "สถาบัน", "มหาวิทยาลัย"]
+                return any(k in msg for k in school_keywords)
+
+            def _history_mentions_school(hist, name: str) -> bool:
+                if not hist or not name:
+                    return False
+                name_norm = _normalize_name(name)
+                for h in reversed(hist):
+                    if isinstance(h, dict) and h.get("role") == "user":
+                        content = (h.get("content") or "").replace(" ", "")
+                        if name_norm and name_norm in content:
+                            return True
+                        break
+                return False
+
+            def _is_followup(msg: str) -> bool:
+                if not msg:
+                    return False
+                follow_kws = ["แล้ว", "ต่อ", "อีก", "เพิ่ม", "ขอรายละเอียด", "รายละเอียด", "พิกัด", "ที่ไหน", "เบอร์ติดต่อ", "ครูกี่", "นักเรียนกี่", "ข้อมูล"]
+                return len(msg) <= 24 and any(k in msg for k in follow_kws)
+
+            should_inject = (
+                _message_mentions_school(message, school_name)
+                or _history_mentions_school(history, school_name)
+                or _is_followup(message)
+            )
+
+            if should_inject:
+                memory.last_school_name = school_name
+                logger.info(f"🏫 Injected school_name into memory: {school_name}")
+            else:
+                logger.info(f"🏫 Skipped frontend school_name injection (no match): {school_name}")
         
         # NEW: Inject frontend-provided level for correct collection routing
         if level:

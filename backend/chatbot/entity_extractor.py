@@ -7,20 +7,632 @@ LLM-based Entity Extraction Module
 
 import logging
 import json
+import os
+import time
 from typing import Optional, Dict, List, Any
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
-from .constants import COLLECTION_NAMES
+from .constants import COLLECTION_NAMES, THAI_PROVINCES, PROVINCE_ALIASES, REGIONS, AGENCY_ALIASES
 
 logger = logging.getLogger(__name__)
 
 # Cache for valid values (loaded once at startup)
 _VALID_VALUES_CACHE: Dict[str, List[str]] = {}
+_VALID_VALUES_LAST_FAIL: float = 0.0
+_VALID_VALUES_LAST_SUCCESS: float = 0.0
+
+# Controls for valid-value prefetch (can disable for stability)
+ENABLE_VALID_VALUES_FETCH = os.getenv("ENABLE_VALID_VALUES_FETCH", "1") != "0"
+VALID_VALUES_RETRY_SECONDS = int(os.getenv("VALID_VALUES_RETRY_SECONDS", "300"))
+_PROVINCE_LOWER_MAP: Dict[str, str] = {p.lower(): p for p in THAI_PROVINCES}
+_REGION_LOWER_MAP: Dict[str, str] = {r.lower(): r for r in REGIONS.keys()}
+_AGENCY_CANONICAL_MAP: Dict[str, str] = {
+    # สพฐ
+    "สพฐ": "สพฐ",
+    "สพฐ.": "สพฐ",
+    "พื้นฐาน": "สพฐ",
+    "การศึกษาขั้นพื้นฐาน": "สพฐ",
+    "สำนักงานคณะกรรมการการศึกษาขั้นพื้นฐาน": "สพฐ",
+    # สช / เอกชน
+    "สช": "สช",
+    "สช.": "สช",
+    "เอกชน": "สช",
+    "ส่งเสริมการศึกษาเอกชน": "สช",
+    "สำนักงานคณะกรรมการส่งเสริมการศึกษาเอกชน": "สช",
+    # อปท / ท้องถิ่น
+    "อปท": "อปท",
+    "อปท.": "อปท",
+    "ท้องถิ่น": "อปท",
+    "กรมส่งเสริมการปกครองท้องถิ่น": "อปท",
+    # กทม
+    "กทม": "กทม",
+    "กทม.": "กทม",
+    "กรุงเทพมหานคร": "กทม",
+    "สำนักการศึกษา กรุงเทพมหานคร": "กทม",
+    "สำนักการศึกษา": "กทม",
+    # สอศ / อาชีวะ
+    "สอศ": "สอศ",
+    "สอศ.": "สอศ",
+    "อาชีวะ": "สอศ",
+    "อาชีวศึกษา": "สอศ",
+    "สำนักงานคณะกรรมการการอาชีวศึกษา": "สอศ",
+    # ตชด
+    "ตชด": "ตชด",
+    "ตชด.": "ตชด",
+    "ตำรวจตระเวนชายแดน": "ตชด",
+    "กองบัญชาการตำรวจตระเวนชายแดน": "ตชด",
+    # กศน
+    "กศน": "กศน",
+    "กศน.": "กศน",
+    "กรมส่งเสริมการเรียนรู้": "กศน",
+}
+_AGENCY_CANONICAL_KEYS = list(_AGENCY_CANONICAL_MAP.keys())
+_AGENCY_FULLNAME_TO_CANON = {v: k for k, v in AGENCY_ALIASES.items()} if AGENCY_ALIASES else {}
+
+
+def _area_key(name: str) -> str:
+    if not name:
+        return ""
+    return (
+        name.lower()
+        .replace("สพป.", "สพป")
+        .replace("สพม.", "สพม")
+        .replace("สพป", "สพป")
+        .replace("สพม", "สพม")
+        .replace("เขต ", "เขต")
+        .replace(" ", "")
+        .replace(".", "")
+    )
+
+
+def _best_fuzzy_match(value: str, candidates: List[str], min_ratio: float) -> Optional[str]:
+    if not value or not candidates:
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    # Avoid fuzzy on very short strings to reduce false matches
+    if len(v) < 3:
+        return None
+    try:
+        import difflib
+        best = None
+        best_ratio = 0.0
+        for c in candidates:
+            ratio = difflib.SequenceMatcher(a=v, b=c).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best = c
+        return best if best_ratio >= min_ratio else None
+    except Exception:
+        return None
+
+
+def _normalize_province(value: Optional[str]) -> Optional[str]:
+    if not value or not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    # Strip common prefix
+    if v.startswith("จังหวัด"):
+        v = v.replace("จังหวัด", "").strip()
+    if v.startswith("จ."):
+        v = v.replace("จ.", "").strip()
+    if v.startswith("จ "):
+        v = v.replace("จ ", "").strip()
+    # Alias map (กทม -> กรุงเทพมหานคร)
+    if v in PROVINCE_ALIASES:
+        v = PROVINCE_ALIASES[v]
+    if v in THAI_PROVINCES:
+        return v
+    v_lower = v.lower()
+    if v_lower in _PROVINCE_LOWER_MAP:
+        return _PROVINCE_LOWER_MAP[v_lower]
+    # Fuzzy match for misspellings
+    min_ratio = 0.94 if len(v) <= 4 else 0.88
+    return _best_fuzzy_match(v, THAI_PROVINCES, min_ratio)
+
+
+def _normalize_region(value: Optional[str]) -> Optional[str]:
+    if not value or not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    region_aliases = {
+        "อีสาน": "ภาคตะวันออกเฉียงเหนือ",
+        "ภาคอีสาน": "ภาคตะวันออกเฉียงเหนือ",
+        "ตะวันออกเฉียงเหนือ": "ภาคตะวันออกเฉียงเหนือ",
+        "ภาคตะวันออกเฉียงเหนือ": "ภาคตะวันออกเฉียงเหนือ",
+        "เหนือ": "ภาคเหนือ",
+        "ใต้": "ภาคใต้",
+        "กลาง": "ภาคกลาง",
+        "ตะวันออก": "ภาคตะวันออก",
+        "ตะวันตก": "ภาคตะวันตก",
+    }
+    if v in region_aliases:
+        v = region_aliases[v]
+    if v in REGIONS:
+        return v
+    v_lower = v.lower()
+    if v_lower in _REGION_LOWER_MAP:
+        return _REGION_LOWER_MAP[v_lower]
+    # Fuzzy match for region (safer, small set)
+    return _best_fuzzy_match(v, list(REGIONS.keys()), 0.84)
+
+
+def _normalize_agency(value: Optional[str], valid_agencies: Optional[List[str]] = None) -> Optional[str]:
+    if not value or not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+
+    # Direct canonical keyword map
+    if v in _AGENCY_CANONICAL_MAP:
+        return _AGENCY_CANONICAL_MAP[v]
+
+    # If value is already a full official name, map to canonical if possible
+    if v in _AGENCY_FULLNAME_TO_CANON:
+        return _AGENCY_FULLNAME_TO_CANON[v]
+
+    # Fuzzy match on known canonical keywords (avoid very short)
+    if len(v) >= 4:
+        min_ratio = 0.90 if len(v) <= 6 else 0.86
+        fuzzy_key = _best_fuzzy_match(v, _AGENCY_CANONICAL_KEYS, min_ratio)
+        if fuzzy_key:
+            return _AGENCY_CANONICAL_MAP.get(fuzzy_key)
+
+    # Fallback: match against known valid agencies from DB
+    if valid_agencies:
+        matched = _match_valid_value(v, valid_agencies)
+        if matched:
+            # If matched is a full official name, return canonical if we can
+            if matched in _AGENCY_FULLNAME_TO_CANON:
+                return _AGENCY_FULLNAME_TO_CANON[matched]
+            return matched
+
+    return None
+
+
+def _normalize_area_name(value: Optional[str], valid_area_names: Optional[List[str]] = None) -> Optional[str]:
+    if not value or not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+
+    # Normalize common variants: "สพป เชียงใหม่ เขต 1" -> "สพป. เชียงใหม่ เขต 1"
+    v = v.replace("สพป", "สพป.").replace("สพม", "สพม.")
+    v = v.replace("สพป..", "สพป.").replace("สพม..", "สพม.")
+    v = v.replace("สพป.", "สพป. ").replace("สพม.", "สพม. ")
+    v = " ".join(v.split()).strip()
+
+    if not valid_area_names:
+        return v
+
+    key = _area_key(v)
+    for cand in valid_area_names:
+        if _area_key(cand) == key:
+            return cand
+
+    # Containment match
+    matched = _match_valid_value(v, valid_area_names)
+    if matched:
+        return matched
+
+    # Fuzzy match on normalized keys
+    candidates = [(cand, _area_key(cand)) for cand in valid_area_names]
+    best = None
+    best_ratio = 0.0
+    try:
+        import difflib
+        for cand, cand_key in candidates:
+            ratio = difflib.SequenceMatcher(a=key, b=cand_key).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best = cand
+    except Exception:
+        return None
+
+    return best if best_ratio >= 0.90 else None
+
+
+def _normalize_district(value: Optional[str], valid_districts: Optional[List[str]] = None, province: Optional[str] = None) -> Optional[str]:
+    if not value or not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+
+    # Strip common prefixes
+    prefixes = ["อำเภอ", "อ.", "เขต", "แขวง", "ตำบล", "ต."]
+    for prefix in prefixes:
+        if v.startswith(prefix):
+            v = v[len(prefix):].strip()
+            break
+
+    # Normalize "เมือง" with province context (if provided)
+    if province and v == "เมือง":
+        candidate = f"เมือง{province}"
+        if valid_districts and candidate in valid_districts:
+            return candidate
+
+    if not valid_districts:
+        return v
+
+    if v in valid_districts:
+        return v
+
+    # Try "เมือง{province}" if district startswith เมือง and province provided
+    if province and v.startswith("เมือง"):
+        candidate = f"เมือง{province}"
+        if candidate in valid_districts:
+            return candidate
+
+    matched = _match_valid_value(v, valid_districts)
+    if matched:
+        return matched
+
+    # Fuzzy for misspellings (high threshold)
+    min_ratio = 0.92 if len(v) <= 4 else 0.88
+    return _best_fuzzy_match(v, valid_districts, min_ratio)
+
+
+def _normalize_grade(value: Optional[str], valid_grades: Optional[List[str]] = None) -> Optional[str]:
+    if not value or not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+
+    # Normalize common variants (Thai/Arabic)
+    v = v.replace("ชั้น", "").replace("ระดับ", "").strip()
+    v = v.replace("ประถม", "ป.").replace("มัธยม", "ม.")
+    v = v.replace("ป ", "ป.").replace("ม ", "ม.")
+    v = v.replace("ป.", "ป.").replace("ม.", "ม.")
+    v = v.replace("ปป", "ป.").replace("มม", "ม.")
+    v = v.replace("อนุบาล", "อ.").replace("อ ", "อ.")
+    v = " ".join(v.split())
+
+    # Handle ranges like "ป.1-6", "ม.1 ถึง ม.3"
+    if any(sep in v for sep in ["-", "ถึง", "–", "to"]):
+        # Keep raw range if DB doesn't store ranges; ask-back will handle if needed
+        return v
+
+    # Standardize e.g. "ป.1", "ม.2", "อ.1"
+    # If value is just a number with context words, try infer
+    for prefix in ["ป.", "ม.", "อ.", "ปวช.", "ปวส."]:
+        if v.startswith(prefix):
+            return v
+
+    # Try match against valid grades list
+    if valid_grades:
+        matched = _match_valid_value(v, valid_grades)
+        if matched:
+            return matched
+        # Fuzzy
+        min_ratio = 0.90 if len(v) <= 4 else 0.86
+        return _best_fuzzy_match(v, valid_grades, min_ratio)
+
+    return v
+
+
+def _normalize_gender(value: Optional[str]) -> Optional[str]:
+    if not value or not isinstance(value, str):
+        return None
+    v = value.strip().lower()
+    if v in ["ชาย", "male", "ผู้ชาย", "เพศชาย"]:
+        return "ชาย"
+    if v in ["หญิง", "female", "ผู้หญิง", "เพศหญิง"]:
+        return "หญิง"
+    return None
+
+
+def _coerce_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        digits = "".join(ch for ch in value if ch.isdigit())
+        if digits:
+            try:
+                return int(digits)
+            except ValueError:
+                return None
+    return None
+
+
+def _match_valid_value(value: Optional[str], valid_list: List[str]) -> Optional[str]:
+    if not value or not isinstance(value, str):
+        return None
+    v = value.strip()
+    if v in valid_list:
+        return v
+    # Fuzzy containment (safe enough for domain-specific labels)
+    for valid in valid_list:
+        if v in valid or valid in v:
+            return valid
+    return None
+
+
+def extract_query_structured_via_llm(question: str, llm_client: Any, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Structured query extraction using LLM (tool + params + clarification flags).
+    Enforces minimal validation for province/region and normalizes key params.
+    """
+    if not llm_client:
+        return {
+            "tool": None,
+            "params": {},
+            "needs_clarification": True,
+            "clarification_question": "ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ เช่น จังหวัด/โรงเรียน/ประเภทข้อมูลที่ต้องการ"
+        }
+
+    # Build lightweight context string (avoid token-heavy dumps)
+    context_str = "None"
+    if context:
+        c_items = []
+        if context.get("last_school_name") or context.get("current_school"):
+            c_items.append(f"school={context.get('last_school_name') or context.get('current_school')}")
+        if context.get("last_province") or context.get("current_province"):
+            c_items.append(f"province={context.get('last_province') or context.get('current_province')}")
+        if context.get("last_region") or context.get("current_region"):
+            c_items.append(f"region={context.get('last_region') or context.get('current_region')}")
+        if context.get("last_district") or context.get("current_district"):
+            c_items.append(f"district={context.get('last_district') or context.get('current_district')}")
+        if context.get("last_agency") or context.get("current_agency"):
+            c_items.append(f"agency={context.get('last_agency') or context.get('current_agency')}")
+        if context.get("last_scope_type") and context.get("last_scope_value"):
+            c_items.append(f"scope={context.get('last_scope_type')}:{context.get('last_scope_value')}")
+        last_ai = context.get("last_ai_response")
+        if last_ai:
+            clean_last_ai = last_ai.replace("\n", " ").strip()
+            clean_last_ai = (clean_last_ai[:200] + "...") if len(clean_last_ai) > 200 else clean_last_ai
+            c_items.append(f"last_ai=\"{clean_last_ai}\"")
+        if c_items:
+            context_str = "; ".join(c_items)
+
+    prompt = f"""
+คุณเป็นระบบ Structured Extraction สำหรับแชทบอทข้อมูลการศึกษาไทย
+
+Context: {context_str}
+User: "{question}"
+
+เลือกเครื่องมือ (tool) และพารามิเตอร์ให้เหมาะสมที่สุด โดยตอบเป็น JSON เท่านั้น
+
+Routing hints (อ้างอิงโครงสร้าง Qdrant v5):
+- ข้อมูลโรงเรียน (ที่อยู่/พิกัด/ครู/นักเรียน/สังกัด) -> get_school_full_details หรือ search_schools (ใช้ edu_schools_v5)
+- จำนวนครู/บุคลากร (แยกเพศ/ประเภท) -> count_teachers / analyze_teacher_distribution (edu_teachers_v5)
+- จำนวนนักเรียน (แยกชั้น/เพศ) -> count_students / get_grade_distribution (edu_students_v5, edu_grade_summary_v5)
+- อัตราส่วนครูต่อนักเรียน -> get_ratio / find_best_ratio_schools (edu_ratios_v5)
+- ระบบการศึกษา (ในระบบ/นอกระบบ) -> count_by_system_type (edu_systems_v5)
+- สัดส่วนเพศภาพรวมในพื้นที่ -> analyze_gender_ratio (edu_gender_overview_v5)
+- เขตพื้นที่การศึกษา -> search_education_areas / get_education_area_info (edu_areas_v5)
+
+กฎพิเศษ:
+- ถ้าถาม "ครูและนักเรียน" พร้อมมีจังหวัด/ภาค และไม่ได้ระบุโรงเรียน -> ใช้ get_province_summary (หรือ multi_step)
+- ถ้าถามเฉพาะ "ครู" -> ใช้ count_teachers
+- ถ้าถามเฉพาะ "นักเรียน" -> ใช้ count_students
+
+Allowed tools (พร้อมพารามิเตอร์):
+- count_students (school_name, province, region, district, grade, gender, year)
+- count_teachers (school_name, province, region, district, gender, person_type, year)
+- count_schools (province, region, district, subdistrict, agency)
+- list_schools (province, region, district, agency, limit)
+- search_schools (school_name, province, region, district, agency, limit)
+- get_school_full_details (school_name, province)
+- get_ratio (school_name, province)
+- ranking (metric, order, scope, province, region, limit)
+- compare (entity1, entity2, metric)
+- search_education_areas (area_name, province, district)
+- get_province_summary (province)
+- count_by_system_type (province, district, system_type)
+- analyze_gender_ratio (province, district)
+- get_grade_distribution (province, district, school_name, grade)
+- find_best_ratio_schools (province, order, limit)
+- analyze_teacher_distribution (province, district, region, person_type)
+- ranking_by_agency (province, metric, limit)
+- ranking_subdistricts (province, district, metric, order, limit)
+- get_district_summary (province, district)
+- compare_provinces (provinces, metrics)
+- find_nearby_schools (latitude, longitude, radius_km, limit)
+- advanced_school_search (province, district, agency, min_students, max_students, min_teachers, max_teachers, limit)
+- filter_schools (metric, operator, value, province, region, district, subdistrict, limit)
+- general_chat (ไม่มี params)
+
+หมายเหตุสำคัญ:
+- province ต้องเป็นชื่อจังหวัดมาตรฐานไทย (เช่น กรุงเทพมหานคร, เชียงใหม่)
+- region ต้องเป็นชื่อภาค (เช่น ภาคเหนือ, ภาคใต้, ภาคตะวันออกเฉียงเหนือ)
+- year เป็น **ตัวเลือก** ถ้าผู้ใช้ไม่ระบุ ให้ปล่อยว่าง (ไม่ต้องถามปี)
+- ตั้ง data_required=true ถ้าเป็นคำถามเชิงข้อมูลจริง (จำนวน, รายชื่อ, อัตราส่วน, รายละเอียดโรงเรียน, สถิติ)
+- ตั้ง data_required=false ถ้าเป็นคำถามทั่วไป/คำแนะนำ/นิยามที่ไม่ต้องใช้ฐานข้อมูล
+- ขอรายละเอียดเพิ่มเฉพาะกรณีที่ "ขอบเขตหลัก" ไม่ชัด (เช่น ไม่รู้โรงเรียน/จังหวัด/ภาคเลย)
+
+แนวทาง multi-step:
+- ถ้าคำถามต้อง "คำนวณเฉลี่ย" หรือ "ต่อโรงเรียน" ให้สร้าง multi_step
+  ตัวอย่าง: "เฉลี่ยจำนวนครูต่อโรงเรียนของภาคใต้"
+  ขั้นตอน:
+  1) count_teachers(region=ภาคใต้) save_as=teachers
+  2) count_schools(region=ภาคใต้) save_as=schools
+  3) derive: divide teachers.total_teachers / schools.total_schools
+
+ตอบเป็น JSON object เท่านั้น ตาม schema นี้:
+{{
+  "tool": "tool_name or null",
+  "params": {{ }},
+  "intent": "optional_intent_or_null",
+  "confidence": 0.0,
+  "data_required": true/false,
+  "data_reason": "short reason or null",
+  "multi_step": {{
+    "steps": [
+      {{"tool": "tool_name", "params": {{}}, "save_as": "alias"}}
+    ],
+    "derive": {{
+      "operation": "divide|ratio|average",
+      "numerator": {{"step": "alias", "field": "total_teachers|total_students|total_schools|..."}},
+      "denominator": {{"step": "alias", "field": "total_teachers|total_students|total_schools|..."}},
+      "precision": 2,
+      "label": "คำอธิบายสั้นๆ",
+      "unit": "หน่วย"
+    }}
+  }},
+  "needs_clarification": true/false,
+  "clarification_question": "string or null"
+}}
+"""
+
+    try:
+        response = llm_client.generate_content(prompt, timeout=30)
+        response_text = (response.text or "").strip()
+
+        # Strip code fences if present
+        if "```" in response_text:
+            response_text = response_text.replace("```json", "```")
+            response_text = response_text.split("```")[1].strip()
+
+        # Extract JSON object
+        try:
+            raw = json.loads(response_text)
+        except json.JSONDecodeError:
+            # Fallback: find first JSON object in text
+            start = response_text.find("{")
+            end = response_text.rfind("}")
+            if start >= 0 and end > start:
+                raw = json.loads(response_text[start:end + 1])
+            else:
+                raise
+
+        tool = raw.get("tool")
+        params = raw.get("params") if isinstance(raw.get("params"), dict) else {}
+        needs_clarification = bool(raw.get("needs_clarification"))
+        clarification_question = raw.get("clarification_question")
+        confidence = raw.get("confidence")
+        intent = raw.get("intent")
+        multi_step = raw.get("multi_step") if isinstance(raw.get("multi_step"), dict) else None
+        data_required = raw.get("data_required")
+        data_reason = raw.get("data_reason")
+
+        # Normalize/validate key params
+        raw_province = params.get("province")
+        raw_region = params.get("region")
+
+        norm_province = _normalize_province(raw_province) if raw_province else None
+        norm_region = _normalize_region(raw_region) if raw_region else None
+
+        # If province was actually a region name (common LLM slip), promote it
+        if not norm_province and raw_province:
+            norm_region_from_prov = _normalize_region(raw_province)
+            if norm_region_from_prov:
+                norm_region = norm_region_from_prov
+
+        params["province"] = norm_province
+        params["region"] = norm_region
+
+        if params.get("province") and params.get("region"):
+            # Province is more specific; drop region to avoid conflict
+            params.pop("region", None)
+
+        params["gender"] = _normalize_gender(params.get("gender"))
+
+        # Fetch valid values only when needed (avoid heavy Qdrant calls for general chat)
+        needs_valid_values = (
+            tool not in [None, "general_chat"]
+            and data_required is not False
+            and (
+                any(params.get(k) for k in ["agency", "district", "area_name", "person_type", "grade"])
+                or tool in ["search_education_areas", "get_education_area_info", "analyze_teacher_distribution", "count_by_system_type"]
+            )
+        )
+        valid_values = fetch_valid_values() if needs_valid_values else {
+            'person_type': [], 'grade': [], 'agency': [], 'area_name': [], 'district': []
+        }
+
+        # Normalize agency (prefer canonical short code)
+        if "agency" in params:
+            params["agency"] = _normalize_agency(params.get("agency"), valid_values.get("agency", []))
+
+        # Coerce numeric fields
+        for key in ["year", "limit", "min_students", "max_students", "min_teachers", "max_teachers", "value", "radius_km"]:
+            if key in params:
+                params[key] = _coerce_int(params.get(key))
+
+        # Validate/normalize district/area/person_type/grade against known values when possible
+        if "district" in params:
+            params["district"] = _normalize_district(params.get("district"), valid_values.get("district", []), params.get("province"))
+        if "area_name" in params:
+            params["area_name"] = _normalize_area_name(params.get("area_name"), valid_values.get("area_name", []))
+        if "person_type" in params:
+            params["person_type"] = _match_valid_value(params.get("person_type"), valid_values.get("person_type", [])) or params.get("person_type")
+        if "grade" in params:
+            params["grade"] = _normalize_grade(params.get("grade"), valid_values.get("grade", []))
+        if "grade" in params:
+            params["grade"] = params.get("grade")
+
+        # Normalize compare_provinces provinces list
+        if tool == "compare_provinces":
+            provinces = params.get("provinces")
+            if isinstance(provinces, str):
+                provinces = [p.strip() for p in provinces.replace(";", ",").split(",") if p.strip()]
+            if isinstance(provinces, list):
+                cleaned = []
+                for p in provinces:
+                    norm = _normalize_province(p)
+                    if norm:
+                        cleaned.append(norm)
+                params["provinces"] = cleaned
+
+        # Confidence normalization
+        try:
+            confidence = float(confidence) if confidence is not None else None
+        except Exception:
+            confidence = None
+        if confidence is None:
+            confidence = 0.6 if tool or multi_step else 0.2
+        confidence = max(0.0, min(1.0, confidence))
+
+        # data_required normalization (fallback to tool presence)
+        if data_required is None:
+            data_required = bool(tool and tool != "general_chat") or bool(multi_step)
+        data_required = bool(data_required)
+
+        return {
+            "tool": tool,
+            "params": params,
+            "intent": intent,
+            "confidence": confidence,
+            "data_required": data_required,
+            "data_reason": data_reason,
+            "multi_step": multi_step,
+            "needs_clarification": needs_clarification,
+            "clarification_question": clarification_question
+        }
+
+    except Exception as e:
+        logger.warning(f"⚠️ Structured extraction failed: {e}")
+        return {
+            "tool": None,
+            "params": {},
+            "intent": None,
+            "confidence": 0.2,
+            "data_required": False,
+            "data_reason": None,
+            "multi_step": None,
+            "needs_clarification": True,
+            "clarification_question": "ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ เช่น จังหวัด/โรงเรียน/ประเภทข้อมูลที่ต้องการ"
+        }
 
 
 def _get_qdrant_client() -> QdrantClient:
     """Get Qdrant client instance"""
-    return QdrantClient(host='203.159.242.144', port=6333)
+    qdrant_url = os.getenv("QDRANT_URL", "http://203.159.242.144:6333")
+    qdrant_timeout = int(os.getenv("VALID_VALUES_QDRANT_TIMEOUT", os.getenv("QDRANT_TIMEOUT", "5")))
+    return QdrantClient(url=qdrant_url, timeout=qdrant_timeout)
 
 
 def fetch_valid_values() -> Dict[str, List[str]]:
@@ -28,10 +640,18 @@ def fetch_valid_values() -> Dict[str, List[str]]:
     ดึงค่าที่ถูกต้องทั้งหมดจาก Qdrant เพื่อใช้เป็น reference
     เรียกครั้งเดียวตอน startup แล้ว cache ไว้
     """
-    global _VALID_VALUES_CACHE
+    global _VALID_VALUES_CACHE, _VALID_VALUES_LAST_FAIL, _VALID_VALUES_LAST_SUCCESS
     
     if _VALID_VALUES_CACHE:
         return _VALID_VALUES_CACHE
+
+    if not ENABLE_VALID_VALUES_FETCH:
+        return {'person_type': [], 'grade': [], 'agency': [], 'area_name': [], 'district': []}
+
+    # Circuit breaker: avoid repeated timeouts
+    now = time.time()
+    if _VALID_VALUES_LAST_FAIL and (now - _VALID_VALUES_LAST_FAIL) < VALID_VALUES_RETRY_SECONDS:
+        return {'person_type': [], 'grade': [], 'agency': [], 'area_name': [], 'district': []}
     
     logger.info("🔄 Fetching valid values from Qdrant for entity extraction...")
     
@@ -82,11 +702,12 @@ def fetch_valid_values() -> Dict[str, List[str]]:
             'area_name': sorted(list(area_names)),  # NEW
             'district': sorted(list(districts)),    # NEW
         }
-        
+        _VALID_VALUES_LAST_SUCCESS = time.time()
         logger.info(f"✅ Loaded valid values: {len(person_types)} person_types, {len(grades)} grades, {len(agencies)} agencies, {len(area_names)} areas, {len(districts)} districts")
         return _VALID_VALUES_CACHE
     
     except Exception as e:
+        _VALID_VALUES_LAST_FAIL = time.time()
         logger.error(f"❌ Failed to fetch valid values: {e}")
         return {'person_type': [], 'grade': [], 'agency': [], 'area_name': [], 'district': []}
 

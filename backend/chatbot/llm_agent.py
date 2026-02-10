@@ -12,13 +12,22 @@ This replaces the 20+ handler approach with intelligent tool calling.
 import json
 import logging
 import re
+import os
 from typing import List, Dict, Any, Optional
 
 from .tools import get_tools_prompt, TOOL_SELECTION_PROMPT, RESPONSE_GENERATION_PROMPT, get_tool_by_name
 from .tool_executor import ToolExecutor
 from .llm import MultiProviderLLM
 from .constants import THAI_PROVINCES, PROVINCE_ALIASES, REGIONS
-from .entity_extractor import extract_person_type_smart, extract_grade_smart, extract_area_smart, extract_district_smart, fetch_valid_values, extract_entities_via_llm
+from .entity_extractor import (
+    extract_person_type_smart,
+    extract_grade_smart,
+    extract_area_smart,
+    extract_district_smart,
+    fetch_valid_values,
+    extract_entities_via_llm,
+    extract_query_structured_via_llm,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +42,7 @@ class LLMAgent:
         self.tool_executor = ToolExecutor(qdrant_client, llm_provider=llm)
         self.llm = llm
         self.tools_prompt = get_tools_prompt()
+        self.min_confidence = 0.45
     
     def process_query(self, question: str, context: Dict[str, Any] = None) -> tuple[str, Optional[Dict[str, Any]]]:
         """
@@ -51,10 +61,23 @@ class LLMAgent:
             # Step 1: Use LLM to analyze query and select tools
             tool_calls = self._select_tools(question, context)
             
+            # Ask-back path (no tool execution)
+            if tool_calls and tool_calls[0].get("name") == "__ask_back__":
+                params = tool_calls[0].get("params", {}) or {}
+                msg = params.get("message") or "ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ"
+                pending_tool = params.get("pending_tool")
+                # return ask-back message but keep pending tool for follow-up
+                return self._format_ask_back(msg), pending_tool
+
+            # Multi-step plan execution
+            if tool_calls and tool_calls[0].get("name") == "__multi_step__":
+                plan = tool_calls[0].get("params", {}).get("plan") or {}
+                response = self._run_multi_step_plan(question, plan)
+                return response, None
+
             # Capture active query (Phase 5 - Follow-up Support)
             active_query = None
             if tool_calls and len(tool_calls) > 0:
-                # Store the primary tool call for context memory
                 active_query = tool_calls[0]
             
             if not tool_calls:
@@ -65,7 +88,17 @@ class LLMAgent:
             
             # Step 2: Execute all selected tools
             results = []
-            deterministic_tools = ['ranking', 'count_students', 'count_teachers', 'get_school_full_details', 'list_schools', 'get_ratio', 'advanced_school_search']
+            deterministic_tools = [
+                'ranking',
+                'count_students',
+                'count_teachers',
+                'get_school_full_details',
+                'get_province_summary',
+                'get_grade_distribution',
+                'list_schools',
+                'get_ratio',
+                'advanced_school_search'
+            ]
             should_use_deterministic = False
             
             for tool_call in tool_calls:
@@ -80,10 +113,11 @@ class LLMAgent:
                 results.append(result)
             
             # Step 3: Generate Response
-            # Hybrid Pro Strategy: We skip deterministic templates to ensure "Pro" quality narration via LLM.
-            if should_use_deterministic and len(results) == 1 and False: # DISABLED for PRO Mode
-                 logger.info("⚡ Using Deterministic Response (Template) - Saving LLM Quota")
-                 return self._inject_widgets(self._format_fallback_response(results), results), active_query
+            # Deterministic mode for data queries (improves accuracy & speed)
+            use_deterministic = os.getenv("ENABLE_DETERMINISTIC_RESPONSES", "1") == "1"
+            if should_use_deterministic and len(results) == 1 and use_deterministic:
+                 logger.info("⚡ Using Deterministic Response (Template)")
+                 return self._inject_widgets(self._format_fallback_response(results, question), results), active_query
             
             # Step 4: Fallback to LLM for complex queries
             suggestions_str = self._get_proactive_suggestions(tool_calls, results)
@@ -94,6 +128,9 @@ class LLMAgent:
             # FORCE APPEND SUGGESTIONS
             if suggestions_str:
                 response += "\n\n" + suggestions_str
+
+            # Ensure widgets are injected when relevant (if LLM didn't include them)
+            response = self._inject_widgets(response, results, question)
             
             return response, active_query
             
@@ -104,90 +141,485 @@ class LLMAgent:
             return self._error_response(str(e)), None
     
     def _select_tools(self, question: str, context: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """LLM-FIRST Tool Selection: LLM understands intent, then we enrich entities"""
-        
-        # Format context for prompt (support both memory.to_dict() and SessionContext.to_dict() keys)
-        context_str = "None"
-        if context:
-            c_items = []
-            # School: try both key naming patterns
-            school = context.get("last_school_name") or context.get("current_school")
-            if school: c_items.append(f"- School: {school}")
-            # Province: try both + provinces list
-            province = context.get("last_province") or context.get("current_province")
-            if not province and context.get("provinces"):  # Fall back to provinces list
-                province = context["provinces"][-1] if context["provinces"] else None
-            if province: c_items.append(f"- Province: {province}")
-            # District
-            district = context.get("last_district") or (context.get("districts", [None])[-1] if context.get("districts") else None)
-            if district: c_items.append(f"- District: {district}")
-            # Agency
-            agency = context.get("last_agency") or (context.get("agencies", [None])[-1] if context.get("agencies") else None)
-            if agency: c_items.append(f"- Agency: {agency}")
-            
-            # 🔍 LAST AI RESPONSE (For Ambiguity/Clarification)
-            last_ai = context.get('last_ai_response')
-            if last_ai:
-                # Clean up: Remove internal tags or excessive whitespace
-                clean_last_ai = last_ai.replace('\n', ' ').strip()
-                # Truncate to avoid context flooding
-                clean_last_ai = (clean_last_ai[:300] + '...') if len(clean_last_ai) > 300 else clean_last_ai
-                c_items.append(f"- Last AI Message: \"{clean_last_ai}\"")
-            
-            if c_items: context_str = "\n".join(c_items)
-        
-        # Debug log context
-        logger.info(f"📋 Context for LLM: {context_str}")
+        """
+        Structured-only tool selection:
+        - Use LLM to return a structured tool + params
+        - Validate + ask-back when unclear
+        - No keyword inference or heuristic enrichment
+        """
+        logger.info("🧠 Structured Tool Selection: extracting query JSON...")
 
-        prompt = TOOL_SELECTION_PROMPT.format(
-            context=context_str,
-            question=question
-        )
-        
-        # ============================================================
-        # ⚡ LLM-FIRST: Let LLM understand intent and select tools
-        # ============================================================
-        logger.info("🧠 LLM-First Tool Selection: Understanding intent...")
-        
-        max_retries = 2
-        for attempt in range(max_retries):
+        # 0) Follow-up on previous pending query (e.g., user answers "ปีล่าสุดครับ")
+        followup = self._try_followup_from_active_query(question, context or {})
+        if followup:
+            return followup
+
+        # Quick path for greetings/thanks (avoid unnecessary ask-back/LLM)
+        q = (question or "").strip().lower()
+        if q:
+            greet_keywords = ["สวัสดี", "หวัดดี", "hello", "hi", "ดีครับ", "ขอบคุณ", "ขอบใจ", "โอเค", "ok"]
+            if len(q) <= 20 and any(k in q for k in greet_keywords):
+                msg = "สวัสดีครับ ยินดีช่วยครับ อยากสอบถามเรื่องการศึกษาด้านไหนครับ"
+                return [{"name": "__ask_back__", "params": {"message": msg, "pending_tool": None}}]
+
+        structured = extract_query_structured_via_llm(question, self.llm, context=context or {})
+        confidence = structured.get("confidence")
+        data_required = bool(structured.get("data_required"))
+
+        if structured.get("needs_clarification"):
+            msg = structured.get("clarification_question") or "ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ"
+            pending_tool = None
+            if structured.get("multi_step"):
+                pending_tool = {"name": "__multi_step__", "params": {"plan": structured.get("multi_step")}}
+            elif structured.get("tool"):
+                pending_tool = {"name": structured.get("tool"), "params": structured.get("params") or {}}
+            elif structured.get("intent") and get_tool_by_name(structured.get("intent")):
+                pending_tool = {"name": structured.get("intent"), "params": structured.get("params") or {}}
+            return [{"name": "__ask_back__", "params": {"message": msg, "pending_tool": pending_tool}}]
+
+        # Multi-step reasoning path
+        if structured.get("multi_step"):
+            if confidence is not None and confidence < self.min_confidence:
+                return [{"name": "__ask_back__", "params": {"message": "ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ เพื่อคำนวณให้ถูกต้อง", "pending_tool": None}}]
+            return [{"name": "__multi_step__", "params": {"plan": structured.get("multi_step")}}]
+
+        tool = structured.get("tool")
+        params = structured.get("params") or {}
+
+        # Normalize tool via intent fallback (if any)
+        if not tool and structured.get("intent"):
+            tool = structured.get("intent")
+
+        # Enforce data-query policy: do not allow general_chat for data-required questions
+        if data_required and (tool is None or tool == "general_chat"):
+            # If intent looks like a tool, prefer it
+            intent_tool = structured.get("intent")
+            if intent_tool and get_tool_by_name(intent_tool):
+                tool = intent_tool
+            else:
+                msg = "คำถามนี้ต้องใช้ข้อมูลจากฐานข้อมูลครับ ช่วยระบุให้ชัดขึ้นได้ไหมครับ เช่น จังหวัดหรือชื่อโรงเรียน"
+                return [{"name": "__ask_back__", "params": {"message": msg, "pending_tool": None}}]
+
+        # If LLM says this is NOT a data query, force general_chat to avoid DB/ask-back loops
+        if data_required is False:
+            tool = "general_chat"
+            params = {}
+
+        if confidence is not None and confidence < self.min_confidence and tool != "general_chat":
+            # If scope is already clear, proceed to reduce unnecessary ask-back
+            has_scope = any(params.get(k) for k in ["province", "region", "school_name", "district", "agency"])
+            if not has_scope:
+                pending_tool = {"name": tool, "params": params} if tool else None
+                return [{"name": "__ask_back__", "params": {"message": "ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ เพื่อให้ตอบได้ตรงจุด", "pending_tool": pending_tool}}]
+
+        if not tool:
+            return [{"name": "__ask_back__", "params": {"message": "ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ (เช่น จังหวัดหรือชื่อโรงเรียน)", "pending_tool": None}}]
+
+        if tool != "general_chat" and not get_tool_by_name(tool):
+            return [{"name": "__ask_back__", "params": {"message": "ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ เพื่อเลือกเครื่องมือให้ถูกต้อง", "pending_tool": None}}]
+
+        params = self._sanitize_structured_params(tool, params)
+        # Route-guard: fix obvious misrouting (e.g., province summary vs school detail)
+        tool, params = self._route_guard(question, tool, params)
+        clarification = self._build_clarification(tool, params)
+        if clarification:
+            pending_tool = {"name": tool, "params": params} if tool else None
+            return [{"name": "__ask_back__", "params": {"message": clarification, "pending_tool": pending_tool}}]
+
+        return [{"name": tool, "params": params}]
+
+    def _route_guard(self, question: str, tool: str, params: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+        """Lightweight guard to fix common tool mis-selections without overriding valid intents."""
+        if not tool:
+            return tool, params
+        q = (question or "")
+        q_lower = q.lower()
+
+        has_students = any(k in q for k in ["นักเรียน", "ผู้เรียน", "เด็ก"])
+        has_teachers = any(k in q for k in ["ครู", "อาจารย์", "บุคลากร"])
+        has_summary = any(k in q for k in ["สรุป", "ภาพรวม", "ทั้งหมด", "รวม"])
+        has_system = any(k in q for k in ["ในระบบ", "นอกระบบ", "ระบบการศึกษา"])
+        has_area = any(k in q for k in ["สพป", "สพม", "เขตพื้นที่", "เขตการศึกษา"])
+        has_area_detail = any(k in q for k in ["ครอบคลุม", "อำเภออะไรบ้าง", "อำเภอใด", "อำเภอไหน"])
+        has_grade = any(k in q for k in ["ระดับชั้น", "ชั้นไหน", "ระดับชั้นไหน", "ป.", "ม.", "อนุบาล", "ปวช", "ปวส"])
+        has_gender_ratio = any(k in q for k in ["สัดส่วนเพศ", "อัตราส่วนเพศ"])
+
+        # If asking for both students + teachers at province scope, use province summary
+        if (has_students and has_teachers) and params.get("province"):
+            return "get_province_summary", {"province": params.get("province")}
+
+        # System type queries (in-system/out-of-system)
+        if has_system:
+            system_type = None
+            if "ในระบบ" in q:
+                system_type = "ในระบบ"
+            elif "นอกระบบ" in q:
+                system_type = "นอกระบบ"
+            new_params = {"province": params.get("province"), "district": params.get("district")}
+            if system_type:
+                new_params["system_type"] = system_type
+            return "count_by_system_type", new_params
+
+        # Education area queries (สพป./สพม.)
+        if has_area:
+            if has_area_detail and params.get("area_name"):
+                return "get_education_area_info", {"area_name": params.get("area_name")}
+            return "search_education_areas", {
+                "area_name": params.get("area_name"),
+                "province": params.get("province"),
+                "district": params.get("district")
+            }
+
+        # Gender ratio (students overview)
+        if has_gender_ratio and not params.get("school_name"):
+            return "analyze_gender_ratio", {
+                "province": params.get("province"),
+                "district": params.get("district")
+            }
+
+        # Grade distribution (area/school)
+        if has_grade:
+            return "get_grade_distribution", {
+                "province": params.get("province"),
+                "district": params.get("district"),
+                "school_name": params.get("school_name"),
+                "grade": params.get("grade")
+            }
+
+        # If tool is school detail but missing school_name, try to map to province summary when scope exists
+        if tool == "get_school_full_details" and not params.get("school_name"):
+            prov = params.get("province") or self._extract_province(q)
+            if prov and (has_summary or has_students or has_teachers):
+                return "get_province_summary", {"province": prov}
+
+        # If question is clearly about province-wide ratio but tool picked school detail
+        if tool == "get_school_full_details" and not params.get("school_name") and "อัตราส่วน" in q:
+            if params.get("province"):
+                return "get_ratio", {"province": params.get("province")}
+
+        return tool, params
+
+    def _sanitize_structured_params(self, tool: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        cleaned = dict(params or {})
+
+        # Normalize metric/order/scope
+        metric_map = {
+            "นักเรียน": "students",
+            "ผู้เรียน": "students",
+            "students": "students",
+            "ครู": "teachers",
+            "บุคลากร": "teachers",
+            "teachers": "teachers",
+            "โรงเรียน": "schools",
+            "สถานศึกษา": "schools",
+            "schools": "schools",
+            "อัตราส่วน": "ratio",
+            "ratio": "ratio",
+        }
+        order_map = {
+            "มากที่สุด": "most",
+            "สูงสุด": "most",
+            "เยอะที่สุด": "most",
+            "เยอะสุด": "most",
+            "most": "most",
+            "desc": "most",
+            "descending": "most",
+            "น้อยที่สุด": "least",
+            "ต่ำสุด": "least",
+            "least": "least",
+            "asc": "least",
+            "ascending": "least",
+            "ดีที่สุด": "best",
+            "แย่ที่สุด": "worst",
+            "worst": "worst",
+            "best": "best",
+        }
+        scope_map = {
+            "จังหวัด": "province",
+            "อำเภอ": "district",
+            "เขต": "district",
+            "โรงเรียน": "school",
+            "ภาค": "region",
+            "province": "province",
+            "district": "district",
+            "school": "school",
+            "region": "region",
+        }
+        operator_map = {
+            "lt": "lt",
+            "gt": "gt",
+            "eq": "eq",
+            "lte": "lte",
+            "gte": "gte",
+            "น้อยกว่า": "lt",
+            "มากกว่า": "gt",
+            "เท่ากับ": "eq",
+            "ไม่เกิน": "lte",
+            "อย่างน้อย": "gte",
+        }
+
+        if cleaned.get("metric") in metric_map:
+            cleaned["metric"] = metric_map[cleaned["metric"]]
+        if isinstance(cleaned.get("metric"), str) and cleaned.get("metric") in metric_map:
+            cleaned["metric"] = metric_map[cleaned["metric"]]
+
+        if cleaned.get("order") in order_map:
+            cleaned["order"] = order_map[cleaned["order"]]
+
+        if cleaned.get("scope") in scope_map:
+            cleaned["scope"] = scope_map[cleaned["scope"]]
+        # If scope ends up as "region" for ranking, normalize to province-scope with region filter
+        if tool == "ranking" and cleaned.get("scope") == "region":
+            cleaned["scope"] = "province"
+
+        if cleaned.get("operator") in operator_map:
+            cleaned["operator"] = operator_map[cleaned["operator"]]
+
+        # Ensure limit is int and reasonable
+        if "limit" in cleaned and cleaned["limit"] is not None:
             try:
-                response = self.llm.generate_content(prompt, timeout=30)
-                response_text = response.text.strip()
-                
-                # Extract JSON from response
-                tool_calls = self._parse_tool_calls(response_text)
-                
-                if tool_calls:
-                    logger.info(f"✅ LLM tool selection succeeded: {[t['name'] for t in tool_calls]}")
-                    
-                    # ============================================================
-                    # ENRICHMENT: Use keyword extraction to fill missing entities
-                    # ============================================================
-                    tool_calls = self._enrich_tool_params(question, tool_calls, context)
-                    tool_calls = self._ensure_ratio_tool(question, tool_calls, context)
-                    
-                    return tool_calls
-                    
-            except Exception as e:
-                logger.warning(f"⚠️ Tool selection attempt {attempt + 1} failed: {e}")
-                if attempt < max_retries - 1:
-                    logger.info("🔄 Retrying tool selection...")
-                    continue
-        
-        # ============================================================
-        # FALLBACK: If LLM fails, try keyword-based inference first
-        # ============================================================
-        logger.warning("⚠️ LLM tool selection exhausted, trying keyword-based inference")
-        fallback_tools = self._infer_tools_from_keywords(question, context)
-        fallback_tools = self._ensure_ratio_tool(question, fallback_tools, context)
-        if fallback_tools:
-            logger.info(f"🧩 Keyword-based tools: {[t['name'] for t in fallback_tools]}")
-            return fallback_tools
+                cleaned["limit"] = int(cleaned["limit"])
+            except Exception:
+                cleaned["limit"] = None
+        if cleaned.get("limit") is not None:
+            cleaned["limit"] = max(1, min(cleaned["limit"], 50))
 
-        # Final fallback: general chat
-        logger.warning("⚠️ Keyword inference failed, defaulting to general_chat")
-        return [{"name": "general_chat", "params": {}}]
+        # Normalize compare_provinces provinces list
+        if tool == "compare_provinces":
+            provinces = cleaned.get("provinces")
+            if isinstance(provinces, str):
+                provinces = [p.strip() for p in provinces.replace(";", ",").split(",") if p.strip()]
+                cleaned["provinces"] = provinces
+
+        return cleaned
+
+    def _build_clarification(self, tool: str, params: Dict[str, Any]) -> Optional[str]:
+        if tool == "get_school_full_details" and not params.get("school_name"):
+            return "ต้องการรายละเอียดของโรงเรียนไหนครับ"
+        if tool == "compare" and (not params.get("entity1") or not params.get("entity2")):
+            return "ต้องการเปรียบเทียบระหว่างอะไรกับอะไรครับ"
+        if tool == "ranking" and (not params.get("metric") or not params.get("order")):
+            return "ต้องการจัดอันดับเรื่องอะไร และมากที่สุดหรือน้อยที่สุดครับ"
+        if tool == "ranking_subdistricts":
+            if not params.get("province") or not params.get("metric") or not params.get("order"):
+                return "ต้องการจัดอันดับตำบลในจังหวัดไหน และจัดอันดับเรื่องอะไรครับ"
+        if tool == "get_ratio" and not params.get("school_name") and not params.get("province"):
+            return "ต้องการอัตราส่วนของโรงเรียนไหนหรือจังหวัดไหนครับ"
+        if tool in ["list_schools", "search_schools"]:
+            if not params.get("school_name") and not params.get("province") and not params.get("region") and not params.get("district") and not params.get("agency"):
+                return "ต้องการค้นหาในพื้นที่ไหน หรือชื่อโรงเรียนอะไรครับ"
+        if tool == "search_education_areas":
+            if not params.get("province") and not params.get("area_name") and not params.get("district"):
+                return "ต้องการค้นหาเขตพื้นที่ของจังหวัดไหน หรือชื่อเขตอะไรครับ"
+            if params.get("district") in ["เมือง"] and not params.get("province"):
+                return "อำเภอเมืองของจังหวัดไหนครับ"
+            if params.get("area_name") and params.get("area_name") in ["สพป.", "สพม.", "สพป", "สพม"]:
+                return "ต้องการเขตพื้นที่ของจังหวัดไหนครับ"
+        if tool == "get_grade_distribution":
+            if not params.get("province") and not params.get("district") and not params.get("school_name"):
+                return "ต้องการดูระดับชั้นของพื้นที่ไหน หรือโรงเรียนไหนครับ"
+            if params.get("grade") in ["ป", "ม", "อ", "ป.", "ม.", "อ."]:
+                return "ต้องการระดับชั้นไหนครับ เช่น ป.1 หรือ ม.3"
+        if tool == "get_province_summary" and not params.get("province"):
+            return "ต้องการสรุปจังหวัดไหนครับ"
+        if tool == "get_district_summary" and (not params.get("province") or not params.get("district")):
+            return "ต้องการสรุปอำเภอไหนในจังหวัดใดครับ"
+        if tool == "compare_provinces" and not params.get("provinces"):
+            return "ต้องการเปรียบเทียบจังหวัดไหนบ้างครับ"
+        if tool == "find_nearby_schools" and (not params.get("latitude") or not params.get("longitude")):
+            return "ต้องการค้นหาใกล้พิกัดไหนครับ (ขอละติจูดและลองจิจูด)"
+        if tool == "advanced_school_search":
+            has_numeric = any(params.get(k) is not None for k in ["min_students", "max_students", "min_teachers", "max_teachers"])
+            if not has_numeric:
+                return "ต้องการค้นหาโรงเรียนด้วยเงื่อนไขตัวเลขอะไรครับ เช่น นักเรียนมากกว่า 500 คน"
+        if tool == "filter_schools":
+            if not params.get("metric") or not params.get("operator") or params.get("value") is None:
+                return "ต้องการกรองด้วยเงื่อนไขอะไรครับ เช่น นักเรียนน้อยกว่า 100 คน"
+        return None
+
+    def _format_ask_back(self, message: str) -> str:
+        msg = (message or "").strip()
+        if not msg:
+            msg = "ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ"
+        if not msg.endswith("ครับ"):
+            msg += "ครับ"
+        return msg
+
+    def _try_followup_from_active_query(self, question: str, context: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+        active = context.get("last_active_query")
+        if not active or not isinstance(active, dict):
+            return None
+
+        text = (question or "").strip()
+        if not text:
+            return None
+
+        # Only handle short follow-ups
+        if len(text) > 30:
+            return None
+
+        # Detect "latest year" hints
+        latest_kws = ["ปีล่าสุด", "ล่าสุด", "ปีนี้", "ปัจจุบัน"]
+        is_latest = any(k in text for k in latest_kws)
+
+        # Extract year (Thai/Arabic digits)
+        year = self._extract_year_token(text)
+        # Extract region/province from short reply
+        region = self._extract_region(text)
+        province = self._extract_province(text)
+        # Handle "ทั้งภาคใต้/ทั้งภาคเหนือ" style
+        if not region and "ทั้งภาค" in text:
+            region = self._extract_region(text.replace("ทั้ง", ""))
+
+        # If nothing useful found
+        if year is None and not is_latest and not region and not province:
+            return None
+
+        tool = active.get("name") or active.get("tool")
+        params = dict(active.get("params", {}) or {})
+
+        # Multi-step plan follow-up: inject scope
+        if tool == "__multi_step__":
+            plan = params.get("plan") or {}
+            steps = plan.get("steps") or []
+            if region or province:
+                for step in steps:
+                    p = step.get("params") or {}
+                    if region and not p.get("region") and not p.get("province"):
+                        p["region"] = region
+                    if province and not p.get("province") and not p.get("region"):
+                        p["province"] = province
+                    step["params"] = p
+                plan["steps"] = steps
+            return [{"name": "__multi_step__", "params": {"plan": plan}}]
+
+        # Apply year to last active count tool
+        if tool in ["count_teachers", "count_students"]:
+            if year:
+                params["year"] = year
+            else:
+                # Latest = no year filter (use most recent data)
+                params.pop("year", None)
+            # Apply scope if provided in follow-up
+            if region and not params.get("region") and not params.get("province"):
+                params["region"] = region
+            if province and not params.get("province") and not params.get("region"):
+                params["province"] = province
+            return [{"name": tool, "params": params}]
+
+        # Apply scope to count_schools / ratio
+        if tool in ["count_schools", "get_ratio"]:
+            if region and not params.get("region") and not params.get("province"):
+                params["region"] = region
+            if province and not params.get("province") and not params.get("region"):
+                params["province"] = province
+            return [{"name": tool, "params": params}]
+
+        # If active query is get_school_full_details or search, ignore year follow-up
+        return None
+
+    def _extract_year_token(self, text: str) -> Optional[int]:
+        # Convert Thai numerals to Arabic
+        thai_to_arabic = str.maketrans("๐๑๒๓๔๕๖๗๘๙", "0123456789")
+        normalized = text.translate(thai_to_arabic)
+
+        # Look for 4-digit year
+        import re
+        match = re.search(r'(\d{4})', normalized)
+        if match:
+            try:
+                return int(match.group(1))
+            except Exception:
+                return None
+        # Look for 2-digit year (assume 25xx)
+        match2 = re.search(r'(\d{2})', normalized)
+        if match2 and ("ปี" in normalized or "พ.ศ" in normalized or "พศ" in normalized):
+            try:
+                return 2500 + int(match2.group(1))
+            except Exception:
+                return None
+        return None
+
+    def _run_multi_step_plan(self, question: str, plan: Dict[str, Any]) -> str:
+        steps = plan.get("steps") or []
+        derive = plan.get("derive") or {}
+
+        if not steps:
+            return self._format_ask_back("ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ เพื่อคำนวณให้ถูกต้อง")
+
+        results_by_alias = {}
+        for step in steps:
+            tool = step.get("tool")
+            params = step.get("params") or {}
+            save_as = step.get("save_as") or tool
+
+            if not tool or (tool != "general_chat" and not get_tool_by_name(tool)):
+                return self._format_ask_back("ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ เพื่อเลือกเครื่องมือให้ถูกต้อง")
+
+            results_by_alias[save_as] = self.tool_executor.execute(tool, params)
+
+        derived = self._compute_derived(results_by_alias, derive)
+        if not derived:
+            return self._format_ask_back("ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ เพื่อคำนวณให้ถูกต้อง")
+
+        # Use LLM to narrate the derived result with consistent style
+        return self._generate_response(question, [derived])
+
+    def _compute_derived(self, results_by_alias: Dict[str, Dict[str, Any]], derive: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        operation = (derive.get("operation") or "").strip().lower()
+        numerator_ref = derive.get("numerator") or {}
+        denominator_ref = derive.get("denominator") or {}
+        precision = derive.get("precision", 2)
+        label = derive.get("label") or "ผลลัพธ์ที่คำนวณได้"
+        unit = derive.get("unit") or ""
+
+        num_val = self._extract_value(results_by_alias, numerator_ref)
+        den_val = self._extract_value(results_by_alias, denominator_ref)
+
+        if num_val is None or den_val in (None, 0):
+            return None
+
+        try:
+            value = float(num_val) / float(den_val)
+        except Exception:
+            return None
+
+        try:
+            precision = int(precision)
+        except Exception:
+            precision = 2
+        value = round(value, max(0, min(6, precision)))
+
+        return {
+            "tool": "derived_metric",
+            "label": label,
+            "value": value,
+            "unit": unit,
+            "operation": operation,
+            "components": {
+                "numerator": num_val,
+                "denominator": den_val
+            },
+            "sources": results_by_alias
+        }
+
+    def _extract_value(self, results_by_alias: Dict[str, Dict[str, Any]], ref: Dict[str, Any]) -> Optional[float]:
+        step = ref.get("step")
+        field = ref.get("field")
+        if not step or step not in results_by_alias:
+            return None
+        res = results_by_alias.get(step) or {}
+        if field and field in res:
+            return res.get(field)
+        # Fallback by tool type
+        tool = res.get("tool")
+        if tool == "count_teachers":
+            return res.get("total_teachers")
+        if tool == "count_students":
+            return res.get("total_students")
+        if tool == "count_schools":
+            return res.get("total_schools")
+        return None
 
     def _ensure_ratio_tool(self, question: str, tool_calls: List[Dict[str, Any]], context: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """If question asks for ratio, ensure get_ratio is included with best-available params."""
@@ -1064,10 +1496,12 @@ class LLMAgent:
 
     def _generate_response(self, question: str, results: List[Dict], suggestions_str: str = "") -> str:
         """Use LLM to generate natural language response from tool results"""
-        
-        # Convert results to JSON string
+        # Convert results to JSON string (optionally strip year/source when not asked)
         import json
-        data_str = json.dumps(results, ensure_ascii=False, indent=2)
+        sanitized_results = results
+        if not self._question_mentions_year(question):
+            sanitized_results = self._strip_fields(results, {"year", "source"})
+        data_str = json.dumps(sanitized_results, ensure_ascii=False, indent=2)
         
         # Construct the dynamic prompt
         system_instruction = RESPONSE_GENERATION_PROMPT
@@ -1108,14 +1542,17 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
             
             **คำสั่ง:**
             - ตอบคำถามนี้โดยใช้ความรู้ทั่วไปของคุณ (เพราะไม่มีข้อมูลใน Database โรงเรียน)
+            - ถ้าผู้ใช้ทักทาย/ขอบคุณ/พูดคุยทั่วไป ให้ตอบสั้น ๆ สุภาพ แล้วชวนถามเรื่องการศึกษา 1 ประโยค
             - **เน้นคำสำคัญ:** ให้ใช้ **ตัวหนา (Bold)** กับคำสำคัญ, ชื่อวิชา, หรือประเด็นหลัก เพื่อให้อ่านง่าย
             - ถ้าเป็นเรื่องขั้นตอน, ระเบียบ, หรือความรู้ทั่วไป ให้ตอบให้เป็นประโยชน์ที่สุด
             - ตอบสั้นๆ กระชับ เป็นกันเอง (ลงท้ายด้วย "ครับ")
+            - ห้ามใช้คำว่า "ค่ะ" หรือ "ครับ/ค่ะ" เด็ดขาด
+            - ถ้าผู้ใช้ไม่ได้ถามเรื่องปี/ช่วงเวลา **ห้ามพูดถึงปี**
             - ห้ามบอกว่า "ไม่มีข้อมูล" หรือ "ไม่พบข้อมูล" ให้พยายามตอบเท่าที่ทำได้
             """
         else:
             # Standard Data Response
-            data_str = json.dumps(results, ensure_ascii=False, indent=2)
+            data_str = json.dumps(sanitized_results, ensure_ascii=False, indent=2)
             prompt = system_instruction.format(
                 data=data_str,
                 question=question
@@ -1137,8 +1574,25 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
             
         logger.error(f"❌ Fallback to deterministic (Quota exhausted)")
         # Fallback: format data nicely
-        fallback_text = self._format_fallback_response(results)
+        fallback_text = self._format_fallback_response(results, question)
         return self._inject_widgets(fallback_text, results, question)
+
+    def _question_mentions_year(self, question: str) -> bool:
+        if not question:
+            return False
+        q = question.lower()
+        year_markers = ["ปี", "ปีการศึกษา", "พ.ศ", "ค.ศ", "20", "25"]
+        if any(m in q for m in year_markers):
+            return True
+        return False
+
+    def _strip_fields(self, obj: Any, keys_to_strip: set) -> Any:
+        """Recursively remove keys from dict/list to avoid unnecessary mentions (e.g., year)."""
+        if isinstance(obj, dict):
+            return {k: self._strip_fields(v, keys_to_strip) for k, v in obj.items() if k not in keys_to_strip}
+        if isinstance(obj, list):
+            return [self._strip_fields(v, keys_to_strip) for v in obj]
+        return obj
 
     def _generate_map_json(self, schools: List[Dict]) -> str:
         """Helper to generate Map Widget JSON for single or multiple schools"""
@@ -1237,52 +1691,63 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                         text += f"\n\n<chart>{chart_json}</chart>"
                         logger.info("📊 Chart widget added as fallback (LLM didn't include)")
                         
-                # Count Schools Chart (Breakdown) - RESTRICTED
+                # Count Schools Chart (Breakdown) - AUTO when relevant
                 elif tool == "count_schools":
-                    # Only show if explicit request OR if it's a comparison context (checked via explicit req for now)
-                    if is_explicit_chart_req: 
-                        by_district = res.get("by_district", {})
-                        by_agency = res.get("by_agency", {})
-                        chart_data = []
-                        title = "จำนวนโรงเรียน"
-                        
-                        if by_district and len(by_district) > 1:
-                            title = "แยกตามอำเภอ"
-                            for k, v in list(by_district.items())[:10]:
-                                 chart_data.append({"name": k, "value": v})
-                        elif by_agency and len(by_agency) > 1:
-                            title = "แยกตามสังกัด"
-                            for k, v in list(by_agency.items())[:10]:
-                                 chart_data.append({"name": k, "value": v})
-                                 
-                        if chart_data:
-                            chart_json = json.dumps({
-                                "type": "bar" if len(chart_data) > 4 else "pie",
-                                "data": chart_data,
-                                "title": title
-                            }, ensure_ascii=False)
-                            if "<chart>" not in text:
-                                text += f"\n\n<chart>{chart_json}</chart>"
+                    by_district = res.get("by_district", {})
+                    by_agency = res.get("by_agency", {})
+                    chart_data = []
+                    title = "จำนวนโรงเรียน"
+                    
+                    if by_district and len(by_district) > 1:
+                        title = "แยกตามอำเภอ"
+                        for k, v in list(by_district.items())[:10]:
+                            chart_data.append({"name": k, "value": v})
+                    elif by_agency and len(by_agency) > 1:
+                        title = "แยกตามสังกัด"
+                        for k, v in list(by_agency.items())[:10]:
+                            chart_data.append({"name": k, "value": v})
+                    
+                    if chart_data and "<chart>" not in text:
+                        chart_json = json.dumps({
+                            "type": "bar" if len(chart_data) > 4 else "pie",
+                            "data": chart_data,
+                            "title": title
+                        }, ensure_ascii=False)
+                        text += f"\n\n<chart>{chart_json}</chart>"
 
-                # Count Teachers Chart (Gender) - RESTRICTED
+                # Count Teachers Chart (Gender) - AUTO when relevant
                 elif tool == "count_teachers":
-                     if is_explicit_chart_req:
-                         by_gender = res.get("by_gender", {})
-                         male = by_gender.get('male', 0)
-                         female = by_gender.get('female', 0)
-                         
-                         if male > 0 or female > 0:
-                             chart_data = [
-                                 {"name": "ชาย", "value": male},
-                                 {"name": "หญิง", "value": female}
-                             ]
-                             chart_json = json.dumps({
-                                "type": "pie",
-                                "data": chart_data,
-                                "title": "สัดส่วนครูแยกตามเพศ"
-                            }, ensure_ascii=False)
-                             if "<chart>" not in text:
-                                text += f"\n\n<chart>{chart_json}</chart>"
+                    by_gender = res.get("by_gender", {})
+                    male = by_gender.get('male', 0)
+                    female = by_gender.get('female', 0)
+                    if (male > 0 or female > 0) and "<chart>" not in text:
+                        chart_data = [
+                            {"name": "ชาย", "value": male},
+                            {"name": "หญิง", "value": female}
+                        ]
+                        chart_json = json.dumps({
+                            "type": "pie",
+                            "data": chart_data,
+                            "title": "สัดส่วนครูแยกตามเพศ"
+                        }, ensure_ascii=False)
+                        text += f"\n\n<chart>{chart_json}</chart>"
+
+                # Count Students Chart (Gender) - AUTO when relevant
+                elif tool == "count_students":
+                    by_gender = res.get("by_gender", {})
+                    male = by_gender.get('male', 0)
+                    female = by_gender.get('female', 0)
+                    if (male > 0 or female > 0) and "<chart>" not in text:
+                        chart_data = [
+                            {"name": "ชาย", "value": male},
+                            {"name": "หญิง", "value": female}
+                        ]
+                        chart_json = json.dumps({
+                            "type": "pie",
+                            "data": chart_data,
+                            "title": "สัดส่วนนักเรียนแยกตามเพศ"
+                        }, ensure_ascii=False)
+                        text += f"\n\n<chart>{chart_json}</chart>"
 
                 # Comparison Chart (Region/Province/School) - ALWAYS SHOW
                 elif tool == "compare":
@@ -1293,15 +1758,13 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                     name1 = e1.get("name", "Entity 1")
                     name2 = e2.get("name", "Entity 2")
                     
-                    # Extract total value safely
-                    val1 = e1.get("data", {}).get("total", 0)
-                    if not val1 and isinstance(e1.get("data"), dict):
-                         # Handle fallback if 'total' key varies (e.g. for simple counts)
-                         val1 = e1.get("data", {}).get(f"total_{metric}", 0) or e1.get("data", {}).get("count", 0)
-
-                    val2 = e2.get("data", {}).get("total", 0)
-                    if not val2 and isinstance(e2.get("data"), dict):
-                         val2 = e2.get("data", {}).get(f"total_{metric}", 0) or e2.get("data", {}).get("count", 0)
+                    # Extract total value safely - handle None data
+                    data1 = e1.get("data") or {}
+                    data2 = e2.get("data") or {}
+                    
+                    # Try multiple possible keys for the value
+                    val1 = data1.get("total_schools", 0) or data1.get("total_students", 0) or data1.get("total_teachers", 0) or data1.get("total", 0) or data1.get("count", 0)
+                    val2 = data2.get("total_schools", 0) or data2.get("total_students", 0) or data2.get("total_teachers", 0) or data2.get("total", 0) or data2.get("count", 0)
                     
                     chart_data = [
                         {"name": name1, "value": val1},
@@ -1317,6 +1780,34 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                         }, ensure_ascii=False)
                         if "<chart>" not in text:
                             text += f"\n\n<chart>{chart_json}</chart>"
+                            logger.info(f"📊 Comparison chart injected: {name1}={val1}, {name2}={val2}")
+
+                # Gender ratio overview (area)
+                elif tool == "analyze_gender_ratio":
+                    overview = res.get("overview") or {}
+                    male = overview.get("male", 0) or 0
+                    female = overview.get("female", 0) or 0
+                    if (male > 0 or female > 0) and "<chart>" not in text:
+                        chart_json = json.dumps({
+                            "type": "pie",
+                            "data": [{"name": "ชาย", "value": male}, {"name": "หญิง", "value": female}],
+                            "title": "สัดส่วนเพศนักเรียน"
+                        }, ensure_ascii=False)
+                        text += f"\n\n<chart>{chart_json}</chart>"
+
+                # Grade distribution chart
+                elif tool == "get_grade_distribution":
+                    dist = res.get("distribution") or []
+                    if dist and "<chart>" not in text:
+                        chart_data = []
+                        for item in dist[:12]:
+                            chart_data.append({"name": item.get("grade", ""), "value": item.get("count", 0)})
+                        chart_json = json.dumps({
+                            "type": "bar",
+                            "data": chart_data,
+                            "title": "จำนวนนักเรียนตามระดับชั้น"
+                        }, ensure_ascii=False)
+                        text += f"\n\n<chart>{chart_json}</chart>"
 
                 # Count Students Chart (Gender) - RESTRICTED
                 elif tool == "count_students":
@@ -1343,12 +1834,95 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
             
         return text
     
-    def _format_fallback_response(self, results: List[Dict]) -> str:
-        """Fallback response formatting when LLM fails - NATURAL FORMAT"""
+    def _format_fallback_response(self, results: List[Dict], question: str = "") -> str:
+        """Fallback response formatting when LLM fails - Balanced, concise, formal-friendly"""
         parts = []
+        q = (question or "").strip()
+        q_lower = q.lower()
+
+        def has_any(keywords: List[str]) -> bool:
+            return any(k in q for k in keywords)
+
+        ask_max = has_any(["มากที่สุด", "สูงที่สุด", "มากสุด", "สูงสุด"])
+        ask_min = has_any(["น้อยที่สุด", "ต่ำที่สุด", "น้อยสุด", "ต่ำสุด"])
+        ask_grade_which = has_any(["ชั้นไหน", "ระดับชั้นไหน"])
+        ask_gender_male = has_any(["เพศชาย", "ชาย"])
+        ask_gender_female = has_any(["เพศหญิง", "หญิง"])
+        ask_person_type = has_any(["ประเภท", "ตำแหน่ง", "กลุ่มบุคลากร", "ประเภทไหน"])
+
+        def normalize_school_label(name: str) -> str:
+            if not name:
+                return ""
+            if "โรงเรียน" in name:
+                return name
+            return f"โรงเรียน{name}"
+
+        def short_grade_label(grade: str) -> str:
+            if not grade:
+                return ""
+            g = grade.strip()
+            g = g.replace("ประถมศึกษาปีที่", "ป.")
+            g = g.replace("มัธยมศึกษาปีที่", "ม.")
+            g = g.replace("อนุบาลปีที่", "อนุบาล ")
+            g = g.replace("อนุบาล", "อนุบาล ")
+            g = g.replace("ประกาศนียบัตรวิชาชีพชั้นสูงชั้นปีที่", "ปวส")
+            g = g.replace("ประกาศนียบัตรวิชาชีพปีที่", "ปวช")
+            return " ".join(g.split())
+
+        def grade_token(value: str) -> str:
+            if not value:
+                return ""
+            g = value.replace(" ", "")
+            g = g.replace("ประถมศึกษาปีที่", "ป")
+            g = g.replace("มัธยมศึกษาปีที่", "ม")
+            g = g.replace("อนุบาลปีที่", "อ")
+            g = g.replace("อนุบาล", "อ")
+            g = g.replace("ประกาศนียบัตรวิชาชีพชั้นสูงชั้นปีที่", "ปวส")
+            g = g.replace("ประกาศนียบัตรวิชาชีพปีที่", "ปวช")
+            g = g.replace(".", "")
+            m = re.search(r'(ปวช|ปวส|ป|ม|อ)?(\d+)', g)
+            if m:
+                prefix = m.group(1) or ""
+                return f"{prefix}{m.group(2)}"
+            return g
+
+        def grade_match(target: str, candidate: str) -> bool:
+            if not target or not candidate:
+                return False
+            t = grade_token(target)
+            c = grade_token(candidate)
+            if t and c and t == c:
+                return True
+            return target in candidate or candidate in target
+
+        def pick_grade_extreme(breakdown: Dict[str, Dict[str, Any]], mode: str, gender_key: Optional[str] = None):
+            if not breakdown:
+                return None
+            best_grade = None
+            best_val = None
+            for g, stats in breakdown.items():
+                val = stats.get(gender_key, stats.get("total", 0)) if gender_key else stats.get("total", 0)
+                if best_val is None:
+                    best_val = val
+                    best_grade = g
+                    continue
+                if mode == "max" and val > best_val:
+                    best_val = val
+                    best_grade = g
+                if mode == "min" and val < best_val:
+                    best_val = val
+                    best_grade = g
+            if best_grade is None:
+                return None
+            return {"grade": best_grade, "count": best_val or 0}
         
+        list_tools = {"search_schools", "list_schools", "advanced_school_search", "filter_schools"}
         for result in results:
             tool = result.get("tool", "unknown")
+            summary = result.get("ai_summary")
+            if summary and tool not in list_tools:
+                parts.append(summary)
+                continue
 
             # Check for suggestions first (Global Handler)
             suggestions = result.get("suggestions")
@@ -1363,7 +1937,7 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                     school_id = s.get('school_id', '')
                     
                     # Show data with fuzzy match disclaimer
-                    text = f"📌 **หมายเหตุ:** ไม่พบ '{search_query}' โดยตรง แต่พบข้อมูลใกล้เคียง:\n\n"
+                    text = f"ไม่พบ '{search_query}' โดยตรง แต่พบข้อมูลใกล้เคียงดังนี้ครับ\n\n"
                     text += f"**{matched_name}**"
                     if province:
                         text += f" (จ.{province})"
@@ -1378,17 +1952,16 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                     if s.get('total_teachers'):
                         text += f"\n- จำนวนครู: {s['total_teachers']:,} คน"
                     
-                    text += "\n\nหากต้องการข้อมูลเพิ่มเติมเกี่ยวกับโรงเรียนนี้ สามารถถามได้เลยครับ 😊"
+                    text += "\n\nหากต้องการข้อมูลเพิ่มเติมเกี่ยวกับโรงเรียนนี้ บอกได้เลยครับ"
                     parts.append(text)
                     continue
                 
                 # MULTIPLE SUGGESTIONS: Ask user to select
-                text = f"ไม่พบข้อมูล '{search_query}' ครับ แต่พบโรงเรียนที่มีชื่อใกล้เคียงดังนี้:\n"
+                text = f"ไม่พบข้อมูล '{search_query}' ครับ แต่พบโรงเรียนชื่อใกล้เคียงดังนี้\n\n"
+                text += "| ลำดับ | ชื่อโรงเรียน | จังหวัด |\n|:--:|:--|:--|\n"
                 for i, s in enumerate(suggestions[:5], 1):
-                    text += f"\n{i}. {s['name']}"
-                    if s.get('province'):
-                        text += f" (จ.{s['province']})"
-                text += "\n\nคุณหมายถึงโรงเรียนไหนครับ? ลองพิมพ์ชื่อโรงเรียนอีกครั้งได้เลยครับ"
+                    text += f"| {i} | {s.get('name','')} | {s.get('province','-')} |\n"
+                text += "\nต้องการโรงเรียนไหนครับ (ตอบเป็นลำดับหรือชื่อเต็มได้เลย)"
                 parts.append(text)
                 continue
 
@@ -1396,26 +1969,21 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
             if result.get("ambiguous"):
                 choices = result.get("choices", [])
                 search_query = result.get("query", {}).get("school_name")
-                text = f"พบโรงเรียนที่มีชื่อหรือคำว่า '{search_query}' จำนวน **{len(choices)}** แห่งครับ เพื่อความถูกต้อง คุณหมายถึงโรงเรียนไหนครับ?\n"
-                
-                for i, c in enumerate(choices[:10], 1): # Limit to 10 choices
+                text = f"พบชื่อที่ตรงกันหลายแห่ง ({len(choices)} แห่ง) เพื่อความถูกต้อง กรุณาเลือกโรงเรียนครับ\n\n"
+                text += "| ลำดับ | ชื่อโรงเรียน | จังหวัด | อำเภอ | หมายเหตุ |\n|:--:|:--|:--|:--|:--|\n"
+                for i, c in enumerate(choices[:10], 1):  # Limit to 10 choices
                     name = c.get('school_name') or c.get('name', '')
                     province = c.get('province', 'ไม่ระบุจังหวัด')
-                    district = c.get('district', '')
-                    
-                    text += f"\n{i}. **{name}** (อ.{district} จ.{province})"
-                    
-                    # Add metrics if available (Immediate Value!)
+                    district = c.get('district', '-')
                     metrics = []
                     if c.get('total_students'):
-                        metrics.append(f"นักเรียน {c['total_students']:,} คน")
+                        metrics.append(f"นักเรียน {c['total_students']:,}")
                     if c.get('total_teachers'):
-                        metrics.append(f"ครู {c['total_teachers']:,} คน")
-                        
-                    if metrics:
-                        text += f" - {', '.join(metrics)}"
-                    
-                text += "\n\nสามารถพิมพ์เลือกเลขข้อ หรือพิมพ์ชื่อเต็มพร้อมจังหวัดได้เลยครับ 😊"
+                        metrics.append(f"ครู {c['total_teachers']:,}")
+                    note = ", ".join(metrics) if metrics else "-"
+                    text += f"| {i} | {name} | {province} | {district} | {note} |\n"
+                
+                text += "\nตอบเป็นลำดับหรือชื่อเต็มพร้อมจังหวัดได้เลยครับ"
                 
                 # Generate Map for Choices (Multi-Marker)
                 try:
@@ -1440,13 +2008,50 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
 
                 parts.append(text)
                 continue
+
+            # Generic error handling (avoid exposing raw trace)
+            if result.get("error"):
+                err = str(result.get("error"))
+                if "school_name" in err or "School name is required" in err:
+                    parts.append("ต้องการชื่อโรงเรียนไหนครับ")
+                elif "province" in err:
+                    parts.append("ต้องการระบุจังหวัดไหนครับ")
+                else:
+                    parts.append("ขออภัยครับ ระบบประมวลผลไม่สำเร็จ ลองถามใหม่หรือระบุให้ชัดขึ้นได้ไหมครับ")
+                continue
             
             if tool == "count_teachers":
                 total = result.get("total_teachers", 0)
                 by_gender = result.get("by_gender", {})
-                text = f"มีครูทั้งหมด **{total:,}** คนครับ"
-                if by_gender:
+                by_person_type = result.get("by_person_type", {})
+                query = result.get("query", {}) or {}
+                school_count = result.get("school_count", 0) or result.get("total_found", 0)
+
+                scope = ""
+                if query.get("school_name"):
+                    scope = f"{normalize_school_label(query.get('school_name'))}"
+                elif query.get("province"):
+                    scope = f"จังหวัด{query.get('province')}"
+                elif query.get("region"):
+                    scope = f"{query.get('region')}"
+                elif query.get("district"):
+                    scope = f"อำเภอ{query.get('district')}"
+
+                if scope:
+                    text = f"{scope}มีครูทั้งหมด **{total:,}** คนครับ"
+                else:
+                    text = f"จำนวนครูทั้งหมด **{total:,}** คนครับ"
+
+                if by_gender and (by_gender.get("male") or by_gender.get("female")):
                     text += f"\n- ชาย: {by_gender.get('male', 0):,} คน\n- หญิง: {by_gender.get('female', 0):,} คน"
+
+                if ask_person_type and by_person_type:
+                    top_type = max(by_person_type.items(), key=lambda kv: kv[1].get("total", 0))
+                    text += f"\nประเภทที่มีจำนวนมากที่สุดคือ **{top_type[0]}** ({top_type[1].get('total', 0):,} คน)"
+
+                if total == 0 and school_count:
+                    text += f"\nพบโรงเรียน {school_count:,} แห่งในขอบเขตนี้ แต่ยังไม่มีข้อมูลครูที่บันทึกไว้ครับ"
+
                 parts.append(text)
                     
             elif tool == "count_students":
@@ -1454,13 +2059,58 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                 by_gender = result.get("by_gender", {})
                 male = by_gender.get('male', 0)
                 female = by_gender.get('female', 0)
-                text = f"มีนักเรียนทั้งหมด **{total:,}** คนครับ"
-                if male > 0 and female > 0:
+                query = result.get("query", {}) or {}
+                grade = query.get("grade")
+                gender = query.get("gender")
+                breakdown = result.get("student_breakdown") or {}
+                school_count = result.get("school_count", 0) or result.get("total_found", 0)
+
+                scope = ""
+                if query.get("school_name"):
+                    scope = f"{normalize_school_label(query.get('school_name'))}"
+                elif query.get("province"):
+                    scope = f"จังหวัด{query.get('province')}"
+                elif query.get("region"):
+                    scope = f"{query.get('region')}"
+                elif query.get("district"):
+                    scope = f"อำเภอ{query.get('district')}"
+
+                grade_label = short_grade_label(grade) if grade else ""
+                gender_label = ""
+                if gender == "ชาย" or (ask_gender_male and not ask_gender_female):
+                    gender_label = "เพศชาย"
+                elif gender == "หญิง" or (ask_gender_female and not ask_gender_male):
+                    gender_label = "เพศหญิง"
+
+                subject = "นักเรียน"
+                if grade_label:
+                    subject += f"ชั้น {grade_label}"
+                if gender_label:
+                    subject += f" {gender_label}"
+
+                if scope:
+                    text = f"{scope}มี{subject}ทั้งหมด **{total:,}** คนครับ"
+                else:
+                    text = f"จำนวน{subject}ทั้งหมด **{total:,}** คนครับ"
+
+                if not gender_label and male > 0 and female > 0:
                     text += f"\n- ชาย: {male:,} คน\n- หญิง: {female:,} คน"
-                elif male > 0 and female == 0:
-                    pass
-                elif female > 0 and male == 0:
-                    pass
+
+                # If asking for extremes by grade, compute from breakdown (if available)
+                if breakdown and (ask_max or ask_min or ask_grade_which):
+                    gender_key = "male" if ask_gender_male and not ask_gender_female else "female" if ask_gender_female and not ask_gender_male else None
+                    if ask_max:
+                        top = pick_grade_extreme(breakdown, "max", gender_key)
+                        if top:
+                            text += f"\nชั้นที่มีนักเรียนมากที่สุดคือ **{top['grade']}** ({top['count']:,} คน)"
+                    if ask_min:
+                        bottom = pick_grade_extreme(breakdown, "min", gender_key)
+                        if bottom:
+                            text += f"\nชั้นที่มีนักเรียนน้อยที่สุดคือ **{bottom['grade']}** ({bottom['count']:,} คน)"
+
+                if total == 0 and school_count:
+                    text += f"\nพบโรงเรียน {school_count:,} แห่งในขอบเขตนี้ แต่ยังไม่มีข้อมูลนักเรียนที่บันทึกไว้ครับ"
+
                 parts.append(text)
                     
             elif tool == "get_school_full_details":
@@ -1470,8 +2120,11 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                     province = result.get("province", "")
                     district = result.get("district", "")
                     agency = result.get("agency", "")
+                    total_students = result.get("total_students", 0)
+                    total_teachers = result.get("total_teachers", 0)
+                    ratio = result.get("ratio", 0)
                     
-                    text = f"📍 โรงเรียน **{name}**"
+                    text = f"โรงเรียน **{name}**"
                     if district and province:
                         text += f" ตั้งอยู่ที่ อ.{district} จ.{province}"
                     elif province:
@@ -1479,12 +2132,28 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                     text += " ครับ\n\n"
                     
                     if agency: text += f"- **สังกัด:** {agency}\n"
+                    if total_students:
+                        text += f"- **นักเรียน:** {total_students:,} คน\n"
+                    if total_teachers:
+                        text += f"- **ครู:** {total_teachers:,} คน\n"
+                    if ratio:
+                        text += f"- **อัตราส่วนครูต่อนักเรียน:** {ratio}\n"
                     if result.get("lat") and result.get("lon"):
                         text += f"- **พิกัด:** {result.get('lat')}, {result.get('lon')}\n"
                         
                     parts.append(text)
                 else:
-                    parts.append("ไม่พบข้อมูลโรงเรียนที่ระบุครับ")
+                    related = result.get("related_summary") or {}
+                    text = "ไม่พบข้อมูลโรงเรียนที่ระบุครับ"
+                    if related.get("province"):
+                        text += f"\nแต่พบข้อมูลภาพรวมจังหวัด{related.get('province')}ดังนี้"
+                        text += f"\n- โรงเรียนทั้งหมด: {related.get('total_schools', 0):,} แห่ง"
+                        if related.get("total_students"):
+                            text += f"\n- นักเรียนทั้งหมด: {related.get('total_students', 0):,} คน"
+                        if related.get("total_teachers"):
+                            text += f"\n- ครูทั้งหมด: {related.get('total_teachers', 0):,} คน"
+                    text += "\nหากต้องการ ลองระบุชื่อโรงเรียนแบบเต็ม หรือบอกจังหวัด/อำเภอเพิ่มเติมได้ครับ"
+                    parts.append(text)
 
             elif tool == "count_schools":
                 total = result.get("total_schools", 0)
@@ -1513,7 +2182,7 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                     # Add insight
                     top_district = list(by_district.keys())[0] if by_district else ""
                     if top_district:
-                        text += f"\n\nจะเห็นว่า{top_district}มีโรงเรียนมากที่สุด หากต้องการดูรายชื่อโรงเรียนในพื้นที่ใดพื้นที่หนึ่ง ถามได้เลยครับ"
+                        text += f"\n\n{top_district}มีโรงเรียนมากที่สุด หากต้องการดูรายชื่อโรงเรียนในพื้นที่ใด ถามได้เลยครับ"
                 elif len(by_agency) > 1:
                     # Show by_agency if multiple
                     text += " แบ่งตามสังกัดได้ดังนี้"
@@ -1523,12 +2192,120 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                     # Add insight
                     top_agency = list(by_agency.keys())[0] if by_agency else ""
                     if top_agency:
-                        text += f"\n\nจะเห็นว่า{top_agency}มีส่วนแบ่งมากที่สุด หากต้องการดูรายละเอียดเพิ่มเติม ถามได้เลยครับ"
+                        text += f"\n\n{top_agency}มีจำนวนมากที่สุด หากต้องการดูรายละเอียดเพิ่มเติม ถามได้เลยครับ"
                 else:
                     # Single agency - add general insight
                     text += f"\n\nหากต้องการดูรายชื่อโรงเรียนหรือข้อมูลอื่นๆ สามารถถามได้เลยครับ"
                 
                 parts.append(text)
+
+            elif tool == "get_province_summary":
+                summary = result.get("summary", {}) or {}
+                province = summary.get("province") or result.get("query", {}).get("province") or ""
+                schools = summary.get("schools", {}) or {}
+                students = summary.get("students", {}) or {}
+                teachers = summary.get("teachers", {}) or {}
+
+                text = f"สรุปภาพรวมจังหวัด{province}ครับ"
+                text += f"\n- โรงเรียนทั้งหมด: {schools.get('total', 0):,} แห่ง"
+                text += f"\n- นักเรียนทั้งหมด: {students.get('total', 0):,} คน"
+                text += f"\n- ครูทั้งหมด: {teachers.get('total', 0):,} คน"
+
+                if ask_person_type and teachers.get("by_person_type"):
+                    top_type = max(teachers["by_person_type"].items(), key=lambda kv: kv[1].get("total", 0))
+                    text += f"\nประเภทครูที่มีจำนวนมากที่สุดคือ **{top_type[0]}** ({top_type[1].get('total', 0):,} คน)"
+
+                parts.append(text)
+
+            elif tool == "get_grade_distribution":
+                distribution = result.get("distribution") or []
+                query = result.get("query", {}) or {}
+                grade = query.get("grade")
+                school_name = result.get("school_name") or query.get("school_name")
+                related = result.get("related_summary") or {}
+
+                # Build breakdown dict for easier computation
+                breakdown = {}
+                for item in distribution:
+                    g = item.get("grade") or ""
+                    breakdown[g] = {
+                        "total": item.get("count", 0),
+                        "male": item.get("male", 0),
+                        "female": item.get("female", 0)
+                    }
+
+                scope = ""
+                if school_name:
+                    scope = normalize_school_label(school_name)
+                elif query.get("province"):
+                    scope = f"จังหวัด{query.get('province')}"
+                elif query.get("district"):
+                    scope = f"อำเภอ{query.get('district')}"
+
+                if grade and breakdown:
+                    # Grade-specific query
+                    target = None
+                    for g in breakdown.keys():
+                        if grade_match(grade, g):
+                            target = g
+                            break
+                    if target:
+                        stats = breakdown[target]
+                        grade_label = short_grade_label(target)
+                        gender_key = "male" if ask_gender_male and not ask_gender_female else "female" if ask_gender_female and not ask_gender_male else None
+                        count = stats.get(gender_key, stats.get("total", 0)) if gender_key else stats.get("total", 0)
+                        gender_label = "เพศชาย" if gender_key == "male" else "เพศหญิง" if gender_key == "female" else ""
+                        if scope:
+                            text = f"{scope}มีนักเรียนชั้น {grade_label} {gender_label}ทั้งหมด **{count:,}** คนครับ"
+                        else:
+                            text = f"นักเรียนชั้น {grade_label} {gender_label}ทั้งหมด **{count:,}** คนครับ"
+                        parts.append(text)
+                        continue
+
+                if breakdown and (ask_max or ask_min or ask_grade_which):
+                    gender_key = "male" if ask_gender_male and not ask_gender_female else "female" if ask_gender_female and not ask_gender_male else None
+                    text = f"สรุประดับชั้น{('ของ' + scope) if scope else ''}ครับ"
+                    if ask_max:
+                        top = pick_grade_extreme(breakdown, "max", gender_key)
+                        if top:
+                            text += f"\nชั้นที่มีนักเรียนมากที่สุดคือ **{top['grade']}** ({top['count']:,} คน)"
+                    if ask_min:
+                        bottom = pick_grade_extreme(breakdown, "min", gender_key)
+                        if bottom:
+                            text += f"\nชั้นที่มีนักเรียนน้อยที่สุดคือ **{bottom['grade']}** ({bottom['count']:,} คน)"
+                    parts.append(text)
+                elif breakdown:
+                    # Default: show top 6 grades
+                    items = sorted(breakdown.items(), key=lambda kv: kv[1].get("total", 0), reverse=True)[:6]
+                    header = f"จำนวนนักเรียนแยกตามระดับชั้น{('ของ' + scope) if scope else ''} (แสดง 6 อันดับแรก)"
+                    text = f"{header}\n\n| ระดับชั้น | จำนวน |\n| --- | ---: |"
+                    for g, stats in items:
+                        text += f"\n| {g} | {stats.get('total', 0):,} |"
+                    parts.append(text)
+                else:
+                    if related:
+                        rel_scope = ""
+                        if related.get("school_name"):
+                            rel_scope = normalize_school_label(related.get("school_name"))
+                        elif related.get("district") and related.get("province"):
+                            rel_scope = f"อำเภอ{related.get('district')} จ.{related.get('province')}"
+                        elif related.get("province"):
+                            rel_scope = f"จังหวัด{related.get('province')}"
+
+                        total_students = related.get("total_students", 0)
+                        by_gender = related.get("by_gender", {})
+                        text = "ยังไม่มีข้อมูลแยกระดับชั้นในระบบตอนนี้ครับ"
+                        if rel_scope:
+                            text += f" แต่พบข้อมูลภาพรวมของ{rel_scope}ดังนี้"
+                        else:
+                            text += " แต่พบข้อมูลภาพรวมดังนี้"
+                        text += f"\n- นักเรียนทั้งหมด: {total_students:,} คน"
+                        if by_gender and (by_gender.get("male") or by_gender.get("female")):
+                            text += f"\n- ชาย: {by_gender.get('male', 0):,} คน\n- หญิง: {by_gender.get('female', 0):,} คน"
+                        text += "\nหากต้องการ ระบุโรงเรียนหรือระดับชั้นที่ต้องการได้ครับ"
+                        parts.append(text)
+                    else:
+                        parts.append("ยังไม่มีข้อมูลแยกระดับชั้นในขอบเขตที่ระบุครับ แต่สามารถระบุโรงเรียนหรือจังหวัดให้ชัดขึ้นได้ครับ")
                         
             elif tool == "filter_schools":
                 # Use the pre-calculated AI summary from tool_executor which handles total vs limit correctly
@@ -1684,10 +2461,10 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
             # Use LLM to generate a natural conversational response
             prompt = f"""คุณคือ "น้องดีโอ" (DO AI) ผู้ช่วย AI อารมณ์ดีจากกระทรวงศึกษาธิการ
             
-            **บุคลิกภาพ:**
-            - 👦 **เป็นผู้ชายเท่านั้น** ลงท้ายด้วย "ครับ" เสมอ (ห้ามใช้ "คะ/ค่ะ" เด็ดขาด)
-            - 🤝 **พูดคุยเป็นธรรมชาติ** เหมือนเพื่อนคุยกับเพื่อน ไม่เป็นทางการเกินไป
-            - 🚫 **ห้ามขึ้นต้นด้วย "สวัสดีครับ"** ให้เข้าเรื่องทันทีเพื่อความกระชับ
+            **บุคลิกภาพ (สมดุล/สุภาพแต่เป็นกันเอง):**
+            - ลงท้ายด้วย "ครับ" แบบพอดี (ห้ามใช้ "คะ/ค่ะ")
+            - โทนสุภาพแบบงานบริการ ไม่ใช้คำสแลง
+            - ห้ามขึ้นต้นด้วย "สวัสดีครับ" ให้เข้าเรื่องทันทีเพื่อความกระชับ
             
             **สถานการณ์:**
             ผู้ใช้ถามคำถามที่คุณไม่มีเครื่องมือตอบโดยตรง จึงต้องตอบด้วยความรู้ทั่วไป
@@ -1695,9 +2472,11 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
             ข้อความจากผู้ใช้: "{question}"
             
             **การตอบ:**
-            - ตอบสั้นๆ กระชับ (ไม่เกิน 3 บรรทัด)
-            - ถ้าเป็นคำถามทั่วไป ตอบตามความรู้ที่มี
-            - ถ้าถามข้อมูลลึกที่ต้องใช้ Database ให้บอกว่า "ขออภัยครับ ข้อมูลนี้ผมยังเข้าถึงไม่ได้ในขณะนี้ครับ" """
+            - ตอบกระชับ 2–4 ประโยค
+            - ถ้าเป็นคำถามทั่วไป ตอบตามความรู้ที่มีแบบตรงคำถาม
+            - ถ้าถามข้อมูลลึกที่ต้องใช้ฐานข้อมูล ให้บอกสั้นๆ ว่า "ขออภัยครับ ข้อมูลนี้ผมยังเข้าถึงไม่ได้ในขณะนี้ครับ" และถามกลับแบบสั้น 1 คำถาม
+            - ถ้าไม่ได้ถามเรื่องปี/ช่วงเวลา ห้ามพูดถึงปี
+            - ไม่ใช้อีโมจิ หรือใช้ได้ไม่เกิน 1 ตัว """
 
             response = self.llm.generate_content(prompt, timeout=20)
             if response and response.text:
@@ -1708,8 +2487,8 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
         
         # Ultimate fallback if LLM also fails
         return (
-            "สวัสดีครับ! ผมคือน้องดีโอ 🤖 พร้อมช่วยตอบข้อมูลการศึกษาไทยครับ\n\n"
-            "💡 **ลองถามได้เลยครับ:**\n"
+            "พร้อมช่วยครับ ลองบอกพื้นที่หรือชื่อโรงเรียนที่ต้องการได้นะครับ\n\n"
+            "ตัวอย่าง:\n"
             "• 'กรุงเทพมีโรงเรียนกี่แห่ง'\n"
             "• 'โรงเรียน X มีนักเรียนกี่คน'\n"
             "• 'สพป.เชียงใหม่ เขต 1 ครอบคลุมอำเภออะไรบ้าง'"
@@ -1718,9 +2497,6 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
     def _error_response(self, error: str) -> str:
         """Response when an error occurs"""
         return (
-            "😅 อุ๊ปส์ ขออภัยครับ ผมมีปัญหาในการประมวลผลครับ\n\n"
-            "💡 **ลองทำแบบนี้ดูครับ:**\n"
-            "• ถามคำถามใหม่อีกครั้ง\n"
-            "• ลองเปลี่ยนวิธีถาม เช่น 'โรงเรียนในกรุงเทพ' แทน 'โรงเรียน กทม'\n"
-            "• ถามเรื่องอื่นที่สนใจได้เลยครับ 🚀"
+            "ขออภัยครับ ตอนนี้ผมประมวลผลไม่สำเร็จ\n\n"
+            "ลองถามใหม่อีกครั้ง หรือระบุให้ชัดขึ้น เช่น จังหวัดหรือชื่อโรงเรียนครับ"
         )

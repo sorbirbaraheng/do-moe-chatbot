@@ -208,6 +208,9 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                 if params.get('province'):
                     self.memory.last_province = params['province']
                     logger.info(f"🧠 Memory updated: province={params['province']}")
+                if params.get('region'):
+                    self.memory.last_region = params['region']
+                    logger.info(f"🧠 Memory updated: region={params['region']}")
                 if params.get('school_name'):
                     self.memory.last_school_name = params['school_name']
                     logger.info(f"🧠 Memory updated: school_name={params['school_name']}")
@@ -215,6 +218,31 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     self.memory.last_district = params['district']
                 if params.get('agency'):
                     self.memory.last_agency = params['agency']
+
+                # Track scope + freshness for smarter context
+                scope_type = None
+                scope_value = None
+                if params.get('school_name'):
+                    scope_type = "school"
+                    scope_value = params.get('school_name')
+                elif params.get('district'):
+                    scope_type = "district"
+                    scope_value = params.get('district')
+                elif params.get('province'):
+                    scope_type = "province"
+                    scope_value = params.get('province')
+                elif params.get('region'):
+                    scope_type = "region"
+                    scope_value = params.get('region')
+
+                if scope_type and self.memory:
+                    self.memory.last_scope_type = scope_type
+                    self.memory.last_scope_value = scope_value
+                    try:
+                        import time
+                        self.memory.last_updated_at = time.time()
+                    except Exception:
+                        pass
             
             return response
         except Exception as e:
@@ -246,7 +274,8 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         # 3) Short follow-up without explicit entity
         follow_up_words = [
             "แล้ว", "ล่ะ", "ต่อ", "อีก", "เพิ่ม", "เหมือนกัน", "สรุป",
-            "บ้าง", "ทั้งหมด", "เท่าไหร่", "กี่", "ที่ไหน", "รายละเอียด"
+            "บ้าง", "ทั้งหมด", "เท่าไหร่", "กี่", "ที่ไหน", "รายละเอียด",
+            "ล่าสุด", "ปีล่าสุด", "ปีนี้"
         ]
         is_short = len(msg) <= 35
         has_follow = any(w in msg for w in follow_up_words)
@@ -381,19 +410,32 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     yield history, ""
                     return
 
-        # ⚠️ DEBUG: Disable cache for testing - set to False to re-enable
-        DEBUG_DISABLE_CACHE = True
+        # ⚠️ Cache toggle via env (default: enabled)
+        enable_cache = os.getenv("ENABLE_SEMANTIC_CACHE", "1") == "1"
+        DEBUG_DISABLE_CACHE = not enable_cache
         
         # Check if this is a school-specific query (bypass cache for fresh results)
-        is_school_specific_query = hasattr(self.memory, 'last_school_name') and self.memory.last_school_name
+        def _is_school_specific_message(msg: str, school_name: str) -> bool:
+            if not msg or not school_name:
+                return False
+            msg_norm = msg.replace(" ", "")
+            school_norm = school_name.replace("โรงเรียน", "").replace(" ", "")
+            if school_norm and school_norm in msg_norm:
+                return True
+            school_keywords = ["โรงเรียน", "วิทยาลัย", "สถาบัน", "มหาวิทยาลัย"]
+            return any(k in msg for k in school_keywords)
+
+        is_school_specific_query = False
+        if hasattr(self.memory, 'last_school_name') and self.memory.last_school_name:
+            is_school_specific_query = _is_school_specific_message(message, self.memory.last_school_name)
         
         if is_school_specific_query:
             logger.info(f"🏫 School-specific query detected (school_name: {self.memory.last_school_name}) - skipping cache")
         
         # Check Semantic Cache (disabled for testing)
         if DEBUG_DISABLE_CACHE:
-            logger.info("🔧 DEBUG: Cache DISABLED for testing")
-        elif not is_school_specific_query:
+            logger.info("🔧 Cache DISABLED by env (ENABLE_SEMANTIC_CACHE=0)")
+        elif not is_school_specific_query and self.cache:
             cached_response = self.cache.check(message)
             if cached_response:
                 history[-1]["content"] = cached_response
@@ -498,12 +540,18 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             if self.memory:
                 if self.memory.last_province:
                     rich_context_dict['last_province'] = self.memory.last_province
+                if self.memory.last_region:
+                    rich_context_dict['last_region'] = self.memory.last_region
                 if self.memory.last_school_name:
                     rich_context_dict['last_school_name'] = self.memory.last_school_name
                 if self.memory.last_district:
                     rich_context_dict['last_district'] = self.memory.last_district
                 if self.memory.last_agency:
                     rich_context_dict['last_agency'] = self.memory.last_agency
+                if self.memory.last_scope_type:
+                    rich_context_dict['last_scope_type'] = self.memory.last_scope_type
+                if self.memory.last_scope_value:
+                    rich_context_dict['last_scope_value'] = self.memory.last_scope_value
             
             
             agent_response = self.process_with_llm_agent(

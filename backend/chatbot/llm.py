@@ -57,8 +57,15 @@ class MultiProviderLLM:
         self.gemini_client = None
         self.embeddings_available = True
         
-        # Try to load keys from Firestore first
-        self._load_keys_from_firestore()
+        # Try to load keys from Firestore first (unless disabled)
+        if os.getenv("DISABLE_FIRESTORE", "0") == "1":
+            self.groq_keys = [GROQ_API_KEY] if GROQ_API_KEY and GROQ_API_KEY != "your_groq_api_key_here" else []
+            self.gemini_keys = [GEMINI_API_KEY] if GEMINI_API_KEY else []
+            self.groq_key_index = 0
+            self.gemini_key_index = 0
+            logger.info("⚠️ Firestore disabled via env. Using .env keys only.")
+        else:
+            self._load_keys_from_firestore()
         
         # Initialize Gemini Client
         self._init_gemini_client()

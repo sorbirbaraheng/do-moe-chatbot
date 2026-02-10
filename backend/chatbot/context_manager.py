@@ -226,7 +226,7 @@ class ContextManager:
             → "โรงเรียนสวนกุหลาบมีนักเรียนกี่คน?"
         """
         # Check if query contains pronouns or references
-        pronoun_patterns = ["มัน", "เขา", "ที่นั่น", "โรงเรียนนั้น", "จังหวัดนั้น", 
+        pronoun_patterns = ["มัน", "เขา", "ที่นั่น", "โรงเรียนนั้น", "โรงเรียนนี้", "จังหวัดนั้น",
                            "มีกี่คน", "มีเท่าไหร่", "แล้ว", "ล่ะ"]
         
         needs_resolution = any(p in query for p in pronoun_patterns)
