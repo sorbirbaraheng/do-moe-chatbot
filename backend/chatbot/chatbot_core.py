@@ -466,13 +466,40 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             
         parsed = self.memory.apply_context(parsed, message)
         
-        # NEW: Check if frontend injected a school_name via memory
+        # NEW: Check if frontend injected a school_name via memory (only use when likely follow-up)
         if hasattr(self.memory, 'last_school_name') and self.memory.last_school_name:
-            logger.info(f"🏫 Frontend injected school_name: {self.memory.last_school_name}")
-            parsed.intent = QueryIntent.SCHOOL_DETAIL
-            parsed.school_name = self.memory.last_school_name
-            # Clear it after use to prevent stale data
-            # self.memory.last_school_name = None # DISABLED: Lets context persist for multi-turn drill-down
+            school_name = self.memory.last_school_name
+            msg = message or ""
+            msg_norm = msg.replace(" ", "")
+            school_norm = school_name.replace("โรงเรียน", "").replace(" ", "")
+            follow_kws = ["แล้ว", "ต่อ", "อีก", "เพิ่ม", "ขอรายละเอียด", "รายละเอียด", "พิกัด", "ที่ไหน", "เบอร์ติดต่อ", "ครูกี่", "นักเรียนกี่", "ข้อมูล"]
+            is_followup = len(msg) <= 28 and any(k in msg for k in follow_kws)
+            has_school_ref = school_norm and school_norm in msg_norm
+            has_school_kw = any(k in msg for k in ["โรงเรียน", "วิทยาลัย", "สถาบัน", "มหาวิทยาลัย"])
+            is_broad_scope = any(k in msg for k in ["จังหวัด", "อำเภอ", "ภาค", "อันดับ", "มากที่สุด", "น้อยที่สุด", "สรุป"])
+            is_aggregate_intent = parsed.intent in [
+                QueryIntent.COUNT,
+                QueryIntent.RANKING_MOST,
+                QueryIntent.RANKING_LEAST,
+                QueryIntent.SCHOOL_COUNT,
+                QueryIntent.STUDENT_COUNT,
+                QueryIntent.TEACHER_COUNT,
+                QueryIntent.LIST,
+                QueryIntent.SCHOOL_LIST,
+                QueryIntent.SEARCH,
+                QueryIntent.SCHOOL_SEARCH,
+                QueryIntent.FILTER_LESS_THAN,
+                QueryIntent.FILTER_GREATER_THAN,
+                QueryIntent.FILTER_EQUALS,
+                QueryIntent.RATIO,
+            ]
+
+            if (has_school_ref or has_school_kw or is_followup) and not is_broad_scope and not is_aggregate_intent:
+                logger.info(f"🏫 Using memory school_name for follow-up: {school_name}")
+                parsed.intent = QueryIntent.SCHOOL_DETAIL
+                parsed.school_name = school_name
+            else:
+                logger.info(f"🏫 Skipped memory school_name (not follow-up): {school_name}")
         
         # NEW: Override parsed.level with frontend-provided level for correct collection routing
         if hasattr(self.memory, 'frontend_level') and self.memory.frontend_level:

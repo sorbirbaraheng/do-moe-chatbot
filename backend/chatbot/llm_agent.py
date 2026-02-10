@@ -467,12 +467,15 @@ class LLMAgent:
         # Extract region/province from short reply
         region = self._extract_region(text)
         province = self._extract_province(text)
+        district = self._extract_district(text)
         # Handle "ทั้งภาคใต้/ทั้งภาคเหนือ" style
         if not region and "ทั้งภาค" in text:
             region = self._extract_region(text.replace("ทั้ง", ""))
+        threshold = self._extract_threshold_followup(text)
+        person_type = self._extract_person_type(text)
 
         # If nothing useful found
-        if year is None and not is_latest and not region and not province:
+        if year is None and not is_latest and not region and not province and not district and not threshold.get("value") and not person_type:
             return None
 
         tool = active.get("name") or active.get("tool")
@@ -493,18 +496,22 @@ class LLMAgent:
                 plan["steps"] = steps
             return [{"name": "__multi_step__", "params": {"plan": plan}}]
 
-        # Apply year to last active count tool
+        # Apply year/person_type/scope to last active count tool
         if tool in ["count_teachers", "count_students"]:
             if year:
                 params["year"] = year
             else:
                 # Latest = no year filter (use most recent data)
                 params.pop("year", None)
+            if person_type and tool == "count_teachers":
+                params["person_type"] = person_type
             # Apply scope if provided in follow-up
             if region and not params.get("region") and not params.get("province"):
                 params["region"] = region
             if province and not params.get("province") and not params.get("region"):
                 params["province"] = province
+            if district and not params.get("district"):
+                params["district"] = district
             return [{"name": tool, "params": params}]
 
         # Apply scope to count_schools / ratio
@@ -513,10 +520,73 @@ class LLMAgent:
                 params["region"] = region
             if province and not params.get("province") and not params.get("region"):
                 params["province"] = province
+            if district and not params.get("district"):
+                params["district"] = district
+            return [{"name": tool, "params": params}]
+
+        # Threshold follow-up for filter_schools
+        if tool == "filter_schools":
+            if threshold.get("value") is not None:
+                params["value"] = threshold["value"]
+            if threshold.get("operator"):
+                params["operator"] = threshold["operator"]
+            # Switch metric if user mentions it explicitly
+            if any(k in text for k in ["ครู", "อาจารย์", "บุคลากร"]):
+                params["metric"] = "teachers"
+            if "นักเรียน" in text:
+                params["metric"] = "students"
+            if region and not params.get("region") and not params.get("province"):
+                params["region"] = region
+            if province and not params.get("province") and not params.get("region"):
+                params["province"] = province
+            if district and not params.get("district"):
+                params["district"] = district
+            return [{"name": tool, "params": params}]
+
+        if tool == "count_by_system_type":
+            if "นอกระบบ" in text:
+                params["system_type"] = "นอกระบบ"
+            if "ในระบบ" in text:
+                params["system_type"] = "ในระบบ"
+            if region and not params.get("region") and not params.get("province"):
+                params["region"] = region
+            if province and not params.get("province") and not params.get("region"):
+                params["province"] = province
+            if district and not params.get("district"):
+                params["district"] = district
             return [{"name": tool, "params": params}]
 
         # If active query is get_school_full_details or search, ignore year follow-up
         return None
+
+    def _extract_threshold_followup(self, text: str) -> Dict[str, Any]:
+        """Extract numeric threshold/operator from a short follow-up like 'มากกว่า 1500 คน'."""
+        if not text:
+            return {"value": None, "operator": None}
+        thai_to_arabic = str.maketrans("๐๑๒๓๔๕๖๗๘๙", "0123456789")
+        normalized = text.translate(thai_to_arabic)
+        import re
+        value = None
+        operator = None
+
+        # Operators first
+        if any(k in normalized for k in [">=", "อย่างน้อย"]):
+            operator = "gte"
+        elif any(k in normalized for k in ["<=", "ไม่เกิน", "ไม่เกินกว่า"]):
+            operator = "lte"
+        elif any(k in normalized for k in [">", "มากกว่า", "เกิน", "สูงกว่า", "มากขึ้น"]):
+            operator = "gt"
+        elif any(k in normalized for k in ["<", "น้อยกว่า", "ต่ำกว่า", "ไม่ถึง"]):
+            operator = "lt"
+
+        match = re.search(r'(\d+)', normalized)
+        if match:
+            try:
+                value = int(match.group(1))
+            except Exception:
+                value = None
+
+        return {"value": value, "operator": operator}
 
     def _extract_year_token(self, text: str) -> Optional[int]:
         # Convert Thai numerals to Arabic
@@ -662,23 +732,23 @@ class LLMAgent:
         - No more regex extraction or garbage filtering - LLM handles everything
         """
         question_region = self._extract_region(question)
+        q_text = question or ""
+        q_norm = q_text.replace(" ", "")
+        follow_kws = ["แล้ว", "ต่อ", "อีก", "เพิ่ม", "ขอรายละเอียด", "รายละเอียด", "พิกัด", "ที่ไหน", "เบอร์ติดต่อ", "ครูกี่", "นักเรียนกี่", "ข้อมูล"]
+        is_followup = len(q_text) <= 28 and any(k in q_text for k in follow_kws)
         
         for tool in tool_calls:
             params = tool.get('params', {})
             
-            # Tools that accept province/school parameters
-            # NOTE: list_schools is NOT included - it should NOT get school_name from context
-            # (it lists schools in an area, not specific school details)
-            school_tools = ['count_students', 'count_teachers', 'count_schools', 'search_schools', 
-                           'get_school_full_details', 'get_ratio', 'filter_schools',
-                           'advanced_school_search']
+            # Tools that accept school_name (specific school only)
+            school_specific_tools = ['get_school_full_details', 'get_grade_distribution']
             # Tools that accept ONLY province (not school_name)
             province_only_tools = ['list_schools', 'advanced_school_search', 'filter_schools']
             aggregation_tools = ['count_students', 'count_teachers', 'count_schools']
             skip_context_tools = ['compare', 'ranking', 'general_chat']
             
             # Context injection for follow-up questions ONLY
-            if context and tool['name'] not in skip_context_tools:
+            if context and tool['name'] not in skip_context_tools and is_followup:
                 # Inject school_name from context ONLY for specific school queries
                 # NOT for list/search/filter type queries
                 
@@ -686,13 +756,10 @@ class LLMAgent:
                 ctx_school = context.get('last_school_name') or context.get('current_school')
                 ctx_province = context.get('last_province') or context.get('current_province')
                 
-                if not params.get('school_name') and ctx_school:
-                    if tool['name'] in school_tools:
-                        if tool['name'] not in province_only_tools:
-                            # CRITICAL: For aggregations, only inject if we are SURE it's a follow-up
-                            # e.g. "How many students?" -> checks context -> "Satree Yala"
-                            params['school_name'] = ctx_school
-                            logger.info(f"💉 Injected context school_name: {ctx_school}")
+                if not params.get('school_name') and ctx_school and tool['name'] in school_specific_tools:
+                    if ctx_school.replace("โรงเรียน", "").replace(" ", "") in q_norm or is_followup:
+                        params['school_name'] = ctx_school
+                        logger.info(f"💉 Injected context school_name: {ctx_school}")
 
                 # Inject province from context
                 if not params.get('province') and ctx_province:
@@ -704,8 +771,8 @@ class LLMAgent:
                         # This avoids incorrectly narrowing searches for named schools.
                         if params.get('school_name'):
                             continue
-                        # Combine school_tools + province_only_tools for province injection
-                        province_aware_tools = school_tools + province_only_tools
+                        # Combine school-specific + province-only tools for province injection
+                        province_aware_tools = school_specific_tools + province_only_tools + aggregation_tools
                         if isinstance(ctx_province, str) and tool['name'] in province_aware_tools:
                             params['province'] = ctx_province
                             logger.info(f"💉 Injected context province: {ctx_province}")
@@ -1545,8 +1612,8 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
             - ถ้าผู้ใช้ทักทาย/ขอบคุณ/พูดคุยทั่วไป ให้ตอบสั้น ๆ สุภาพ แล้วชวนถามเรื่องการศึกษา 1 ประโยค
             - **เน้นคำสำคัญ:** ให้ใช้ **ตัวหนา (Bold)** กับคำสำคัญ, ชื่อวิชา, หรือประเด็นหลัก เพื่อให้อ่านง่าย
             - ถ้าเป็นเรื่องขั้นตอน, ระเบียบ, หรือความรู้ทั่วไป ให้ตอบให้เป็นประโยชน์ที่สุด
-            - ตอบสั้นๆ กระชับ เป็นกันเอง (ลงท้ายด้วย "ครับ")
-            - ห้ามใช้คำว่า "ค่ะ" หรือ "ครับ/ค่ะ" เด็ดขาด
+            - ตอบสุภาพ เป็นกันเอง แบบงานบริการ ความยาวประมาณ 3–5 ประโยค (ลงท้ายด้วย "ครับ" พอดี ๆ)
+            - ห้ามใช้คำว่า "ค่ะ"
             - ถ้าผู้ใช้ไม่ได้ถามเรื่องปี/ช่วงเวลา **ห้ามพูดถึงปี**
             - ห้ามบอกว่า "ไม่มีข้อมูล" หรือ "ไม่พบข้อมูล" ให้พยายามตอบเท่าที่ทำได้
             """
@@ -2472,7 +2539,7 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
             ข้อความจากผู้ใช้: "{question}"
             
             **การตอบ:**
-            - ตอบกระชับ 2–4 ประโยค
+            - ตอบสุภาพแบบงานบริการ 3–5 ประโยค
             - ถ้าเป็นคำถามทั่วไป ตอบตามความรู้ที่มีแบบตรงคำถาม
             - ถ้าถามข้อมูลลึกที่ต้องใช้ฐานข้อมูล ให้บอกสั้นๆ ว่า "ขออภัยครับ ข้อมูลนี้ผมยังเข้าถึงไม่ได้ในขณะนี้ครับ" และถามกลับแบบสั้น 1 คำถาม
             - ถ้าไม่ได้ถามเรื่องปี/ช่วงเวลา ห้ามพูดถึงปี
