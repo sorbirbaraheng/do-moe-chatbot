@@ -80,6 +80,28 @@ const AppContent: React.FC = () => {
   const [pastChats, setPastChats] = useState<ChatSession[]>([]);
   const [sidebarImgError, setSidebarImgError] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // ✨ Mobile Menu State
+  const [isTalkMode, setIsTalkMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('talk_mode') === 'true';
+  });
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [autoListenSignal, setAutoListenSignal] = useState(0);
+  const [stopListeningSignal, setStopListeningSignal] = useState(0);
+  const [speechUnlocked, setSpeechUnlocked] = useState(false);
+  const [speechError, setSpeechError] = useState('');
+  const [voicesReady, setVoicesReady] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceUri, setSelectedVoiceUri] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    return localStorage.getItem('speech_voice_uri') || '';
+  });
+  const [speechMuted, setSpeechMuted] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('speech_muted') === 'true';
+  });
+  const [micLevel, setMicLevel] = useState(0);
+  const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   // Persist Chat State
   useEffect(() => {
@@ -87,6 +109,67 @@ const AppContent: React.FC = () => {
     localStorage.setItem('current_messages', JSON.stringify(messages));
     localStorage.setItem('current_chat_id', currentChatId);
   }, [category, messages, currentChatId]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('talk_mode', String(isTalkMode));
+    }
+  }, [isTalkMode]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('talk-mode-active', isTalkMode);
+    return () => document.body.classList.remove('talk-mode-active');
+  }, [isTalkMode]);
+
+  useEffect(() => {
+    if (isTalkMode) {
+      setAutoListenSignal(s => s + 1);
+    } else {
+      setStopListeningSignal(s => s + 1);
+      setIsListening(false);
+    }
+  }, [isTalkMode]);
+
+  useEffect(() => {
+    if (!isTalkMode) {
+      setSpeechUnlocked(false);
+    }
+  }, [isTalkMode]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('speech_muted', String(speechMuted));
+    }
+  }, [speechMuted]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && selectedVoiceUri) {
+      localStorage.setItem('speech_voice_uri', selectedVoiceUri);
+    }
+  }, [selectedVoiceUri]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    const synth = window.speechSynthesis;
+    const updateVoices = () => {
+      const voices = synth.getVoices();
+      if (voices.length > 0) {
+        setVoicesReady(true);
+        setAvailableVoices(voices);
+        if (selectedVoiceUri && voices.some(v => v.voiceURI === selectedVoiceUri)) {
+          return;
+        }
+        const thai = voices.find(v => v.lang?.toLowerCase().startsWith('th'));
+        setSelectedVoiceUri(thai?.voiceURI || voices[0].voiceURI || '');
+      }
+    };
+    updateVoices();
+    synth.onvoiceschanged = updateVoices;
+    return () => {
+      synth.onvoiceschanged = null;
+    };
+  }, [selectedVoiceUri]);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -496,7 +579,177 @@ const AppContent: React.FC = () => {
     handleSendMessage(newContent, null);
   };
 
+  const stripForSpeech = (text: string): string => {
+    if (!text) return '';
+    let cleaned = text;
+    cleaned = cleaned.replace(/<thinking>[\s\S]*?<\/thinking>/g, '');
+    cleaned = cleaned.replace(/<chart>[\s\S]*?<\/chart>/g, '');
+    cleaned = cleaned.replace(/<map>[\s\S]*?<\/map>/g, '');
+    cleaned = cleaned.replace(/`{3}[\s\S]*?`{3}/g, '');
+    cleaned = cleaned.replace(/`([^`]+)`/g, '$1');
+    cleaned = cleaned.replace(/!\[.*?\]\(.*?\)/g, '');
+    cleaned = cleaned.replace(/\[(.*?)\]\(.*?\)/g, '$1');
+    cleaned = cleaned.replace(/^\s*\|.*\|\s*$/gm, '');
+    cleaned = cleaned.replace(/^\s*-{3,}\s*$/gm, '');
+    cleaned = cleaned.replace(/[*_>#`]+/g, '');
+    cleaned = cleaned.replace(/\n{2,}/g, '\n');
+    cleaned = cleaned.replace(/<[^>]+>/g, '');
+    return cleaned.trim();
+  };
+
+  const getPreferredVoice = (): SpeechSynthesisVoice | null => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
+    const voices = window.speechSynthesis.getVoices();
+    if (selectedVoiceUri) {
+      const chosen = voices.find(v => v.voiceURI === selectedVoiceUri);
+      if (chosen) return chosen;
+    }
+    const thai = voices.find(v => v.lang?.toLowerCase().startsWith('th'));
+    if (thai) return thai;
+    return voices.find(v => v.lang?.toLowerCase().startsWith('en')) || null;
+  };
+
+  const getFallbackVoice = (): SpeechSynthesisVoice | null => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
+    const voices = window.speechSynthesis.getVoices();
+    return voices.find(v => v.lang?.toLowerCase().startsWith('en')) || voices[0] || null;
+  };
+
+  const stopSpeaking = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+  };
+
+  const playTestBeep = () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      gain.gain.value = 0.04;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.15);
+      osc.onended = () => {
+        ctx.close().catch(() => undefined);
+      };
+    } catch {
+      // ignore
+    }
+  };
+
+  const unlockSpeech = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (speechUnlocked) return;
+    try {
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0;
+      window.speechSynthesis.speak(u);
+      window.speechSynthesis.resume();
+      setSpeechUnlocked(true);
+      setSpeechError('');
+      setTimeout(() => {
+        const voices = window.speechSynthesis.getVoices();
+        if (!voices || voices.length === 0) {
+          setSpeechError('ไม่พบเสียงในระบบ');
+        }
+      }, 300);
+    } catch {
+      // ignore
+    }
+  };
+
+  const primeSpeech = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    try {
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0;
+      window.speechSynthesis.speak(u);
+    } catch {
+      // ignore
+    }
+  };
+
+  const speakText = (text: string): boolean => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
+    if (speechMuted) {
+      setSpeechError('ปิดเสียงอยู่');
+      return false;
+    }
+    if (!speechUnlocked) {
+      setSpeechError('แตะเพื่อเปิดเสียง');
+      return false;
+    }
+    const cleaned = stripForSpeech(text);
+    if (!cleaned) return false;
+    if (isSpeaking) stopSpeaking();
+    window.speechSynthesis.resume();
+
+    let triedFallback = false;
+    const speakWithVoice = (voiceOverride?: SpeechSynthesisVoice | null) => {
+      const utterance = new SpeechSynthesisUtterance(cleaned.slice(0, 1200));
+      const voice = voiceOverride ?? getPreferredVoice();
+      if (voice) utterance.voice = voice;
+      utterance.lang = voice?.lang || 'th-TH';
+      utterance.rate = 1.02;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+      utterance.onstart = () => {
+        setSpeechError('');
+      };
+      utterance.onend = () => {
+        setIsSpeaking(false);
+        if (isTalkMode) {
+          setTimeout(() => setAutoListenSignal(s => s + 1), 350);
+        }
+      };
+      utterance.onerror = (event: any) => {
+        const err = event?.error || event?.name || 'TTS error';
+        if (!triedFallback && err !== 'canceled') {
+          const fallback = getFallbackVoice();
+          if (fallback && fallback !== voice) {
+            triedFallback = true;
+            setTimeout(() => speakWithVoice(fallback), 200);
+            return;
+          }
+        }
+        if (err === 'canceled' && isTalkMode && !isListening) {
+          // Retry once in case speech was cancelled by timing issues
+          if (!triedFallback) {
+            triedFallback = true;
+            try {
+              window.speechSynthesis.cancel();
+            } catch {
+              // ignore
+            }
+            setTimeout(() => speakWithVoice(voiceOverride ?? getPreferredVoice()), 200);
+            return;
+          }
+        }
+        setSpeechError(`เสียงมีปัญหา: ${err}`);
+        playTestBeep();
+        setIsSpeaking(false);
+        if (isTalkMode) {
+          setTimeout(() => setAutoListenSignal(s => s + 1), 350);
+        }
+      };
+      speechUtteranceRef.current = utterance;
+      setIsSpeaking(true);
+      window.speechSynthesis.speak(utterance);
+    };
+
+    speakWithVoice();
+    return true;
+  };
+
   const handleSendMessage = async (text: string, imageData: string | null) => {
+    stopSpeaking();
     const userMessageId = generateId();
     const modelMessageId = generateId();
     const userMessage: Message = { id: userMessageId, role: 'user', content: text || "[รูปภาพ]", timestamp: new Date() };
@@ -603,6 +856,13 @@ const AppContent: React.FC = () => {
       const ragDebugInfo = getLastRagDebugInfo();
       setMessages(prev => prev.map(m => m.id === modelMessageId ? { ...m, content: fullContent, ragDebugInfo } : m));
 
+      if (isTalkMode) {
+        const spoke = speakText(fullContent);
+        if (!spoke) {
+          setTimeout(() => setAutoListenSignal(s => s + 1), 350);
+        }
+      }
+
       // 3. Log AI Response
       await chatService.logMessage({
         sessionId: currentChatId,
@@ -674,6 +934,23 @@ const AppContent: React.FC = () => {
     }
 
     if (viewName === 'chat') {
+      const talkStatus = !speechUnlocked
+        ? 'แตะเพื่อเปิดเสียง'
+        : isListening
+          ? 'กำลังฟัง...'
+          : isLoading
+            ? 'กำลังคิด...'
+            : isSpeaking
+              ? 'กำลังพูด...'
+              : 'แตะเพื่อพูด';
+      const statusGlow = isListening
+        ? 'from-[#00C7FF]/35 via-[#007AFF]/30 to-transparent'
+        : isSpeaking
+          ? 'from-[#AF52DE]/35 via-[#5856D6]/30 to-transparent'
+          : isLoading
+            ? 'from-[#34C759]/30 via-[#30D158]/25 to-transparent'
+            : 'from-[#A0A0A0]/20 via-[#C7C7CC]/15 to-transparent';
+      const ringAmp = isListening ? micLevel : (isSpeaking ? 0.25 : 0.12);
       return (
         <div key="view-chat" className={`${commonClasses} flex flex-col`}>
           {/* Unifed Background Texture - Matches Landing Page with Heavy Overlay */}
@@ -829,34 +1106,193 @@ const AppContent: React.FC = () => {
                 </div>
               </header>
 
-              <div ref={chatContainerRef} className="flex-1 overflow-y-auto no-scrollbar relative">
+              <div
+                ref={chatContainerRef}
+                className={`flex-1 overflow-y-auto no-scrollbar relative ${isTalkMode ? 'pointer-events-none' : 'pointer-events-auto'}`}
+              >
                 {/* Mobile category selector removed - unified single chatbot mode */}
+
+                <>
+                  <div
+                    className={`fixed inset-0 z-20 talk-overlay ${isTalkMode ? 'talk-overlay-active' : 'talk-overlay-hidden'}`}
+                    aria-hidden={!isTalkMode}
+                  >
+                    <div className="talk-blob blob-1"></div>
+                    <div className="talk-blob blob-2"></div>
+                    <div className="talk-blob blob-3"></div>
+                    <div className="talk-vignette"></div>
+                    <div className="absolute inset-0 grain-overlay"></div>
+                  </div>
+                  {/* Siri-like Voice Orb Overlay */}
+                  <div
+                    className={`fixed inset-0 z-30 flex items-center justify-center talk-orb-layer ${isTalkMode ? 'talk-orb-active pointer-events-auto' : 'talk-orb-hidden pointer-events-none'}`}
+                    aria-hidden={!isTalkMode}
+                  >
+                    <div className="relative flex flex-col items-center gap-4">
+                      <div className={`absolute -inset-14 rounded-full bg-gradient-to-br ${statusGlow} blur-[80px] opacity-90`}></div>
+                      <div
+                        className="talk-orb"
+                        style={{ ['--level' as any]: isListening ? micLevel : (isSpeaking ? 0.25 : 0.08) }}
+                      >
+                        <div className="talk-orb-glow"></div>
+                        <div className="talk-orb-core"></div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {[0.55, 0.8, 1.05, 1.35, 1.05, 0.8, 0.55].map((level, i) => {
+                          const scale = isListening
+                            ? Math.max(0.25, 0.25 + micLevel * level * 1.4)
+                            : undefined;
+                          return (
+                            <span
+                              key={`wave-${i}`}
+                              className={`siri-wave-bar ${isListening ? '' : (isSpeaking || isLoading ? 'siri-wave-active' : 'siri-wave-idle')}`}
+                              style={{
+                                animationDelay: `${i * 90}ms`,
+                                transform: scale ? `scaleY(${scale})` : undefined,
+                                transition: isListening ? 'transform 80ms linear' : undefined
+                              }}
+                            />
+                          );
+                        })}
+                      </div>
+                      <div className="siri-ring">
+                        {Array.from({ length: 28 }).map((_, i) => (
+                          <span
+                            key={`ring-${i}`}
+                            className="siri-ring-bar"
+                            style={{
+                              ['--rot' as any]: `${i * (360 / 28)}deg`,
+                              ['--amp' as any]: ringAmp.toFixed(3),
+                              ['--delay' as any]: `${i * 35}ms`
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          unlockSpeech();
+                          if (!isListening && !isLoading) {
+                            setAutoListenSignal(s => s + 1);
+                          }
+                        }}
+                        className={`talk-ready-btn ${isListening ? 'talk-ready-disabled' : ''}`}
+                        disabled={isListening || isLoading}
+                      >
+                        {talkStatus}
+                      </button>
+                      <div className="text-[11px] font-medium text-white/70">
+                        {speechError
+                          ? speechError
+                          : voicesReady
+                            ? 'เสียงพร้อมใช้งาน'
+                            : 'กำลังโหลดเสียง...'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Controls Dock */}
+                  <div
+                    className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-40 talk-controls-layer ${isTalkMode ? 'talk-controls-active' : 'talk-controls-hidden'}`}
+                    aria-hidden={!isTalkMode}
+                  >
+                    <div className="talk-controls">
+                      <button
+                        type="button"
+                        onClick={() => setSpeechMuted(prev => !prev)}
+                        className={`talk-control-btn ${
+                          speechMuted ? 'talk-control-muted' : 'talk-control-active'
+                        }`}
+                        title={speechMuted ? 'เปิดเสียง' : 'ปิดเสียง'}
+                      >
+                        {speechMuted ? 'ปิดเสียงอยู่' : 'เสียงเปิด'}
+                      </button>
+                      <select
+                        value={selectedVoiceUri}
+                        onChange={(e) => setSelectedVoiceUri(e.target.value)}
+                        className="talk-voice-select"
+                      >
+                        {availableVoices.length === 0 && (
+                          <option value="">{voicesReady ? 'ไม่พบเสียง' : 'กำลังโหลดเสียง...'}</option>
+                        )}
+                        {availableVoices.map(v => (
+                          <option key={v.voiceURI} value={v.voiceURI}>
+                            {v.name} ({v.lang})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (speechMuted) setSpeechMuted(false);
+                          unlockSpeech();
+                          setTimeout(() => {
+                            const ok = speakText('ทดสอบเสียงน้องดีโอครับ');
+                            if (!ok) playTestBeep();
+                          }, 50);
+                        }}
+                        className="talk-control-btn"
+                      >
+                        ทดสอบเสียง
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsTalkMode(false);
+                          stopSpeaking();
+                          setStopListeningSignal(s => s + 1);
+                          setIsListening(false);
+                        }}
+                        className="talk-control-btn talk-control-exit"
+                      >
+                        ปิดโหมด
+                      </button>
+                    </div>
+                  </div>
+                </>
 
                 <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-32 pt-6">
                   {messages.length === 0 && (
                     <div className="flex flex-col items-center justify-center min-h-[60vh] pb-20 animate-in fade-in zoom-in-95 duration-1000 ease-out">
 
-                      {/* Unified DO AI Welcome - Premium Apple Style */}
+                      {/* Unified DO AI Welcome - Apple Liquid Glass */}
                       <div className="text-center mb-12 relative group">
                         {/* Ambient Glow */}
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-gradient-to-tr from-blue-400/30 to-purple-400/30 rounded-full blur-[60px] opacity-60 group-hover:opacity-100 transition-opacity duration-1000"></div>
+                        <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-[320px] h-[320px] bg-gradient-to-tr from-[#7CC5FF]/35 via-[#9B8CFF]/30 to-[#C7A6FF]/25 rounded-full blur-[90px] opacity-70 group-hover:opacity-100 transition-opacity duration-1000"></div>
 
-                        {/* Glass Icon Container */}
-                        <div className="relative w-24 h-24 mx-auto mb-8 rounded-[28px] bg-white/40 backdrop-blur-2xl border border-white/60 shadow-[0_20px_40px_-12px_rgba(0,0,0,0.1),inset_0_0_0_1px_rgba(255,255,255,0.5)] flex items-center justify-center overflow-hidden transition-transform duration-700 hover:scale-105 hover:rotate-3">
-                          <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-transparent opacity-50"></div>
-                          <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-[#007AFF] to-[#5856D6] flex items-center justify-center shadow-inner">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-8 h-8 drop-shadow-md">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
-                            </svg>
+                        <div className="hero-glass hero-float mx-auto max-w-2xl">
+                          <div className="hero-badge">MOE‑One • ศทส. สป.</div>
+
+                          {/* Glass Icon Container */}
+                          <div className="hero-orb">
+                            <div className="hero-orb-glow"></div>
+                            <div className="hero-orb-core">
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-8 h-8 drop-shadow-md">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
+                              </svg>
+                            </div>
                           </div>
-                        </div>
 
-                        <h2 className="text-[32px] md:text-[40px] font-bold text-[#1D1D1F] tracking-[-0.03em] mb-4 leading-tight">
-                          สวัสดีครับ! ผมคือ <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#007AFF] to-[#5856D6]">DO AI</span> ✨
-                        </h2>
-                        <p className="text-[16px] md:text-[18px] text-gray-500 font-medium max-w-lg mx-auto leading-relaxed tracking-tight">
-                          ถามได้ทุกเรื่องเกี่ยวกับข้อมูลการศึกษา ไม่ว่าจะเป็นโรงเรียน ครู นักเรียน หรือสถิติต่างๆ ผมพร้อมช่วยเหลือครับ!
-                        </p>
+                          <h2 className="text-[30px] md:text-[40px] font-bold text-[#1D1D1F] tracking-[-0.035em] mb-3 leading-tight">
+                            สวัสดีครับ! ผมคือ <span className="hero-title-accent">น้องดีโอ</span>
+                          </h2>
+                          <p className="hero-sub">
+                            ผู้ช่วยข้อมูลการศึกษา MOE‑One ที่สรุปให้ไว เข้าใจง่าย และอ้างอิงจากฐานข้อมูลจริง
+                          </p>
+                          <p className="hero-sub hero-sub-muted">
+                            ค้นหาโรงเรียน ครู นักเรียน และสถิติระดับจังหวัด/อำเภอ/โรงเรียนได้ทันที
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const chatInput = document.querySelector('textarea');
+                              if (chatInput) (chatInput as HTMLTextAreaElement).focus();
+                            }}
+                            className="hero-cta-btn"
+                          >
+                            เริ่มถามเลย
+                          </button>
+                        </div>
                       </div>
 
                       {/* Sample Questions Grid - Glassmorphism Cards */}
@@ -870,7 +1306,7 @@ const AppContent: React.FC = () => {
                           <button
                             key={idx}
                             onClick={() => handleSendMessage(item.text, null)}
-                            className="group relative flex items-center gap-4 px-6 py-5 text-left rounded-[24px] bg-white/60 backdrop-blur-xl border border-white/60 shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-[0_15px_40px_rgba(0,122,255,0.1),inset_0_0_0_1px_rgba(255,255,255,0.8)] hover:bg-white/80 hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
+                            className="hero-sample-card group relative flex items-center gap-4 px-6 py-5 text-left rounded-[24px] backdrop-blur-xl border shadow-[0_6px_22px_rgba(0,0,0,0.08)] hover:shadow-[0_18px_40px_rgba(0,122,255,0.18),inset_0_0_0_1px_rgba(255,255,255,0.85)] hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
                           >
                             <span className="w-10 h-10 flex items-center justify-center rounded-2xl bg-white shadow-sm text-lg border border-black/5 group-hover:scale-110 transition-transform duration-300">
                               {item.icon}
@@ -923,16 +1359,41 @@ const AppContent: React.FC = () => {
               </div>
 
               {/* Input Area - Clean Floating */}
-              <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-6 z-20 pointer-events-none">
+              <div
+                className={`absolute bottom-0 left-0 right-0 p-3 sm:p-6 z-20 transition-all duration-500 ease-out ${isTalkMode ? 'opacity-0 translate-y-4 pointer-events-none' : 'opacity-100 translate-y-0 pointer-events-auto'}`}
+                style={{ display: isTalkMode ? 'none' : 'block' }}
+              >
                 <div className="pointer-events-auto max-w-4xl mx-auto">
                   <ChatInput
                     onSend={handleSendMessage}
                     disabled={isLoading}
                     isLoading={isLoading}
+                    isSpeaking={isSpeaking}
                     onStop={() => {
                       abortCurrentStream();
                       setIsLoading(false);
                     }}
+                    talkMode={isTalkMode}
+                    onToggleTalkMode={() => {
+                      setIsTalkMode(prev => {
+                        const next = !prev;
+                          if (!next) {
+                            stopSpeaking();
+                            setStopListeningSignal(s => s + 1);
+                          }
+                          if (next) {
+                            primeSpeech();
+                            unlockSpeech();
+                            setAutoListenSignal(s => s + 1);
+                          }
+                        return next;
+                      });
+                    }}
+                    onStopSpeaking={stopSpeaking}
+                    autoListenSignal={autoListenSignal}
+                    stopListeningSignal={stopListeningSignal}
+                    onListeningChange={setIsListening}
+                    onMicLevel={setMicLevel}
                   />
                 </div>
               </div>

@@ -312,7 +312,7 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                 relative transition-all duration-500 ease-out
                 px-4 py-3 md:px-5 md:py-4 rounded-[20px] md:rounded-[22px] shadow-sm
                 ${isUser
-                ? 'rounded-tr-[4px] bg-gradient-to-br from-[#007AFF] to-[#0051FF] text-white selection:bg-white/20 shadow-[0_4px_12px_rgba(0,122,255,0.2)]'
+                ? 'rounded-tr-[4px] user-bubble-glass text-white selection:bg-white/20 shadow-[0_14px_30px_rgba(88,60,200,0.35)]'
                 : message.isError
                   ? 'rounded-tl-[4px] bg-red-50/90 backdrop-blur-xl border border-red-200/50 text-red-900 shadow-sm'
                   : 'rounded-tl-[4px] bg-white/70 backdrop-blur-2xl border border-white/80 text-[#1D1D1F] shadow-[0_10px_30px_rgba(0,0,0,0.04)]'}

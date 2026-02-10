@@ -528,6 +528,37 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         
         if is_non_general_category:
             intent_type = self._classify_intent_with_llm(message)
+
+            # If parser already produced a concrete education intent, do not downgrade to GENERAL
+            education_intents = {
+                QueryIntent.SCHOOL_COUNT,
+                QueryIntent.STUDENT_COUNT,
+                QueryIntent.TEACHER_COUNT,
+                QueryIntent.SCHOOL_LIST,
+                QueryIntent.SCHOOL_DETAIL,
+                QueryIntent.RANKING_MOST,
+                QueryIntent.RANKING_LEAST,
+                QueryIntent.FILTER_LESS_THAN,
+                QueryIntent.FILTER_GREATER_THAN,
+                QueryIntent.FILTER_EQUALS,
+                QueryIntent.RATIO,
+                QueryIntent.SEARCH,
+                QueryIntent.LIST,
+                QueryIntent.COMPARE,
+            }
+
+            follow_kws = ["แล้ว", "ต่อ", "อีก", "เพิ่ม", "ล่ะ", "ละ", "ครับ", "ไหม"]
+            is_followup = len(message or "") <= 28 and any(k in (message or "") for k in follow_kws)
+            has_context = any([
+                getattr(self.memory, "last_province", None),
+                getattr(self.memory, "last_district", None),
+                getattr(self.memory, "last_school_name", None),
+                getattr(self.memory, "last_agency", None),
+            ])
+
+            if parsed.intent in education_intents or (parsed.threshold is not None) or (is_followup and has_context):
+                intent_type = "EDUCATION"
+
             logger.info(f"🧠 LLM Classified Intent: {intent_type}")
             
             EDUCATION_KEYWORDS = ['โรงเรียน', 'นักเรียน', 'ครู', 'การศึกษา', 'สพฐ', 'สช']

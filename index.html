@@ -660,6 +660,456 @@
       animation-delay: 8s;
     }
 
+    /* Siri-like Wave Bars */
+    .siri-wave-bar {
+      width: 6px;
+      height: 18px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(0, 122, 255, 0.9), rgba(88, 86, 214, 0.9));
+      transform-origin: center bottom;
+      box-shadow: 0 4px 14px rgba(0, 122, 255, 0.25);
+    }
+
+    .siri-wave-active {
+      animation: siriWave 1.1s ease-in-out infinite;
+      opacity: 0.9;
+    }
+
+    .siri-wave-idle {
+      animation: siriWaveIdle 2s ease-in-out infinite;
+      opacity: 0.35;
+    }
+
+    @keyframes siriWave {
+      0% { transform: scaleY(0.4); opacity: 0.55; }
+      50% { transform: scaleY(1); opacity: 1; }
+      100% { transform: scaleY(0.45); opacity: 0.6; }
+    }
+
+    @keyframes siriWaveIdle {
+      0% { transform: scaleY(0.25); }
+      50% { transform: scaleY(0.5); }
+      100% { transform: scaleY(0.3); }
+    }
+
+    /* User bubble - Purple Liquid Glass */
+    .user-bubble-glass {
+      position: relative;
+      background: linear-gradient(135deg, rgba(14, 16, 20, 0.98) 0%, rgba(17, 20, 26, 0.96) 52%, rgba(27, 31, 40, 0.92) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      backdrop-filter: blur(18px);
+      box-shadow: 0 16px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+      text-shadow: 0 1px 10px rgba(0, 0, 0, 0.5);
+    }
+
+    .user-bubble-glass::after {
+      content: '';
+      position: absolute;
+      inset: 1px;
+      border-radius: inherit;
+      background: radial-gradient(circle at 20% 20%, rgba(255,255,255,0.28), rgba(255,255,255,0) 55%);
+      opacity: 0.9;
+      pointer-events: none;
+      mix-blend-mode: screen;
+    }
+
+    /* Hero Liquid Glass */
+    .hero-glass {
+      position: relative;
+      padding: 36px 34px 32px;
+      border-radius: 32px;
+      background: linear-gradient(145deg, rgba(255,255,255,0.78), rgba(255,255,255,0.52));
+      border: 1px solid rgba(255,255,255,0.75);
+      backdrop-filter: blur(26px);
+      box-shadow:
+        0 28px 70px rgba(18, 22, 40, 0.10),
+        inset 0 1px 0 rgba(255,255,255,0.75);
+      overflow: hidden;
+    }
+
+    .hero-glass::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: radial-gradient(circle at 15% 15%, rgba(255,255,255,0.65), rgba(255,255,255,0) 55%);
+      opacity: 0.85;
+      pointer-events: none;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      margin: 0 auto 18px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.7);
+      border: 1px solid rgba(255,255,255,0.9);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(29,29,31,0.55);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+    }
+
+    .hero-orb {
+      position: relative;
+      width: 92px;
+      height: 92px;
+      margin: 0 auto 18px;
+      border-radius: 24px;
+      background: rgba(255,255,255,0.65);
+      border: 1px solid rgba(255,255,255,0.8);
+      backdrop-filter: blur(20px);
+      box-shadow:
+        0 18px 40px rgba(24, 28, 50, 0.12),
+        inset 0 1px 0 rgba(255,255,255,0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .hero-orb-glow {
+      position: absolute;
+      inset: -18px;
+      border-radius: 28px;
+      background: radial-gradient(circle at 30% 30%, rgba(0,199,255,0.35), rgba(88,86,214,0.12));
+      filter: blur(18px);
+      opacity: 0.85;
+    }
+
+    .hero-orb-core {
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, #4C6FFF, #00C3FF);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: inset 0 6px 12px rgba(255,255,255,0.4), 0 14px 30px rgba(76,111,255,0.35);
+    }
+
+    .hero-title-accent {
+      background: linear-gradient(90deg, #4C6FFF, #7A6CFF 55%, #00C3FF);
+      -webkit-background-clip: text;
+      color: transparent;
+    }
+
+    .hero-sub {
+      font-size: 16px;
+      font-weight: 600;
+      color: rgba(28, 28, 30, 0.7);
+      line-height: 1.6;
+      margin: 0 auto 6px;
+      max-width: 560px;
+    }
+
+    .hero-sub-muted {
+      font-size: 14px;
+      font-weight: 500;
+      color: rgba(60, 60, 67, 0.5);
+    }
+
+    .hero-cta-btn {
+      margin-top: 18px;
+      padding: 12px 26px;
+      border-radius: 999px;
+      background: linear-gradient(145deg, rgba(255,255,255,0.9), rgba(255,255,255,0.62));
+      border: 1px solid rgba(255,255,255,0.9);
+      font-size: 14px;
+      font-weight: 700;
+      color: rgba(28, 28, 30, 0.78);
+      box-shadow: 0 10px 24px rgba(15, 20, 40, 0.12), inset 0 1px 0 rgba(255,255,255,0.85);
+      backdrop-filter: blur(18px);
+      transition: transform 240ms ease, box-shadow 240ms ease, color 240ms ease;
+    }
+
+    .hero-cta-btn:hover {
+      transform: translateY(-1px) scale(1.02);
+      color: rgba(15, 15, 20, 0.9);
+      box-shadow: 0 16px 30px rgba(36, 54, 120, 0.16);
+    }
+
+    .hero-cta-btn:active {
+      transform: scale(0.98);
+    }
+
+    .hero-sample-card {
+      background: rgba(255,255,255,0.82);
+      border-color: rgba(255,255,255,0.85);
+    }
+
+    .hero-sample-card:hover {
+      background: rgba(255,255,255,0.92);
+    }
+
+    .hero-float {
+      animation: heroFloat 7s ease-in-out infinite;
+    }
+
+    @keyframes heroFloat {
+      0% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+      100% { transform: translateY(0); }
+    }
+
+    /* Talk Mode Overlay */
+    .talk-overlay {
+      background: radial-gradient(circle at 50% 40%, rgba(255,255,255,0.15), rgba(0,0,0,0.75) 55%, rgba(0,0,0,0.92));
+      overflow: hidden;
+      opacity: 0;
+      transform: scale(1.02);
+      transition: opacity 420ms cubic-bezier(0.32,0.72,0,1), transform 650ms cubic-bezier(0.16,1,0.3,1);
+      pointer-events: none;
+    }
+
+    .talk-overlay-active {
+      opacity: 1;
+      transform: scale(1);
+      pointer-events: none;
+    }
+
+    .talk-overlay-hidden {
+      opacity: 0;
+      transform: scale(1.02);
+      pointer-events: none;
+    }
+
+    .talk-orb-layer {
+      opacity: 0;
+      transform: translateY(14px) scale(0.98);
+      transition: opacity 360ms cubic-bezier(0.32,0.72,0,1), transform 680ms cubic-bezier(0.16,1,0.3,1);
+    }
+
+    .talk-orb-active {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    .talk-orb-hidden {
+      opacity: 0;
+      transform: translateY(14px) scale(0.98);
+    }
+
+    .talk-controls-layer {
+      opacity: 0;
+      transform: translateY(16px) scale(0.98);
+      transition: opacity 320ms cubic-bezier(0.32,0.72,0,1), transform 560ms cubic-bezier(0.16,1,0.3,1);
+      pointer-events: none;
+    }
+
+    .talk-controls-active {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    .talk-controls-hidden {
+      opacity: 0;
+      transform: translateY(16px) scale(0.98);
+      pointer-events: none;
+    }
+
+    body.talk-mode-active {
+      overflow: hidden;
+    }
+
+    .talk-vignette {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 50% 50%, transparent 0%, rgba(0,0,0,0.5) 70%, rgba(0,0,0,0.85) 100%);
+      mix-blend-mode: multiply;
+    }
+
+    /* Liquid Glass Blobs */
+    .talk-blob {
+      position: absolute;
+      border-radius: 999px;
+      filter: blur(60px);
+      opacity: 0.55;
+      mix-blend-mode: screen;
+      animation: floatBlob 12s ease-in-out infinite;
+    }
+
+    .talk-blob.blob-1 {
+      width: 320px;
+      height: 320px;
+      background: radial-gradient(circle at 30% 30%, rgba(0, 122, 255, 0.65), rgba(88, 86, 214, 0.08));
+      top: 10%;
+      left: 15%;
+      animation-delay: 0s;
+    }
+
+    .talk-blob.blob-2 {
+      width: 260px;
+      height: 260px;
+      background: radial-gradient(circle at 60% 40%, rgba(175, 82, 222, 0.55), rgba(88, 86, 214, 0.06));
+      bottom: 15%;
+      right: 18%;
+      animation-delay: 2s;
+    }
+
+    .talk-blob.blob-3 {
+      width: 220px;
+      height: 220px;
+      background: radial-gradient(circle at 40% 50%, rgba(0, 199, 255, 0.55), rgba(0, 122, 255, 0.06));
+      top: 55%;
+      right: 35%;
+      animation-delay: 4s;
+    }
+
+    @keyframes floatBlob {
+      0% { transform: translate3d(0, 0, 0) scale(1); }
+      50% { transform: translate3d(20px, -15px, 0) scale(1.08); }
+      100% { transform: translate3d(0, 0, 0) scale(1); }
+    }
+
+    .talk-orb {
+      position: relative;
+      width: 180px;
+      height: 180px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.25);
+      box-shadow: 0 25px 80px rgba(0,0,0,0.45);
+      backdrop-filter: blur(30px);
+      transform: scale(calc(0.92 + var(--level, 0) * 0.12));
+      transition: transform 90ms linear;
+    }
+
+    .talk-orb-glow {
+      position: absolute;
+      inset: -18px;
+      border-radius: 999px;
+      background: conic-gradient(from 120deg, rgba(0,122,255,0.55), rgba(175,82,222,0.55), rgba(0,199,255,0.55), rgba(0,122,255,0.55));
+      filter: blur(22px);
+      opacity: 0.75;
+      animation: orbSpin 8s linear infinite;
+    }
+
+    .talk-orb-core {
+      width: 90px;
+      height: 90px;
+      border-radius: 999px;
+      background: radial-gradient(circle at 35% 30%, #9EC5FF, #4C6FFF);
+      box-shadow: inset 0 8px 18px rgba(255,255,255,0.3), 0 18px 40px rgba(76,111,255,0.35);
+    }
+
+    @keyframes orbSpin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .siri-ring {
+      position: relative;
+      width: 220px;
+      height: 220px;
+      margin-top: -10px;
+    }
+
+    .siri-ring-bar {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 4px;
+      height: 26px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(0,199,255,0.9), rgba(88,86,214,0.85));
+      transform-origin: center 98px;
+      transform: rotate(var(--rot)) translateY(-98px) scaleY(calc(0.35 + var(--amp, 0.12) * 1.2));
+      box-shadow: 0 4px 16px rgba(0,122,255,0.25);
+      animation: ringGlow 1.5s ease-in-out infinite;
+      animation-delay: var(--delay);
+    }
+
+    @keyframes ringGlow {
+      0% { opacity: 0.35; }
+      50% { opacity: 0.95; }
+      100% { opacity: 0.4; }
+    }
+
+    .talk-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 18px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.18);
+      border: 1px solid rgba(255,255,255,0.35);
+      backdrop-filter: blur(22px);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.35);
+    }
+
+    .talk-control-btn {
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #fff;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      transition: all 0.2s ease;
+    }
+
+    .talk-control-btn:hover {
+      background: rgba(255,255,255,0.25);
+    }
+
+    .talk-control-muted {
+      background: rgba(255,59,48,0.25);
+      border-color: rgba(255,59,48,0.4);
+      color: #ffd1cc;
+    }
+
+    .talk-control-active {
+      color: #e6f0ff;
+    }
+
+    .talk-control-exit {
+      background: rgba(255,255,255,0.2);
+      color: #fff;
+    }
+
+    .talk-voice-select {
+      min-width: 180px;
+      padding: 8px 12px;
+      font-size: 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.18);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: #fff;
+      outline: none;
+    }
+
+    .talk-ready-btn {
+      font-size: 13px;
+      font-weight: 600;
+      color: #111827;
+      padding: 10px 18px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.75);
+      border: 1px solid rgba(255,255,255,0.9);
+      box-shadow: 0 10px 22px rgba(0,0,0,0.18);
+      transition: transform 200ms ease, opacity 200ms ease, box-shadow 240ms ease;
+      pointer-events: auto;
+    }
+
+    .talk-ready-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 26px rgba(0,0,0,0.22);
+    }
+
+    .talk-ready-disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
     /* Grain/Noise Effect */
     .grain-overlay {
       position: absolute;

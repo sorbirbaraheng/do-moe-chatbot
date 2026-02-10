@@ -162,6 +162,59 @@ class LLMAgent:
                 msg = "สวัสดีครับ ยินดีช่วยครับ อยากสอบถามเรื่องการศึกษาด้านไหนครับ"
                 return [{"name": "__ask_back__", "params": {"message": msg, "pending_tool": None}}]
 
+        # Quick path for threshold filter queries (avoid LLM misclassification)
+        q_raw = (question or "")
+        province = self._extract_province(q_raw)
+        district = self._extract_district(q_raw)
+        region = self._extract_region(q_raw)
+        school_name = self._extract_school_name(q_raw)
+
+        threshold = self._extract_threshold_followup(q_raw)
+        if threshold.get("value") is not None and threshold.get("operator"):
+            has_school_scope = any(k in q_raw for k in ["โรงเรียน", "อำเภอ", "เขต", "ตำบล", "แขวง", "จังหวัด"])
+            if has_school_scope:
+                metric = "teachers" if any(k in q_raw for k in ["ครู", "อาจารย์", "บุคลากร"]) else "students"
+                params = {
+                    "metric": metric,
+                    "operator": threshold["operator"],
+                    "value": threshold["value"],
+                    "limit": 20
+                }
+                if province:
+                    params["province"] = province
+                if district:
+                    params["district"] = district
+                if region:
+                    params["region"] = region
+                return [{"name": "filter_schools", "params": params}]
+
+        # Lightweight multi-metric shortcut (avoid LLM when user clearly asks multiple metrics)
+        has_students = any(k in q_raw for k in ["นักเรียน", "ผู้เรียน"])
+        has_teachers = any(k in q_raw for k in ["ครู", "อาจารย์", "บุคลากร"])
+        has_schools = any(k in q_raw for k in ["โรงเรียน", "สถานศึกษา", "กี่โรง", "กี่แห่ง"])
+        has_summary = any(k in q_raw for k in ["สรุป", "ภาพรวม", "ทั้งหมดรวม", "รวมทั้งหมด"])
+
+        # If asking for multiple metrics for a province -> use province summary (fewer calls)
+        if province and not school_name and (has_summary or (has_students and has_teachers) or (has_students and has_schools) or (has_teachers and has_schools)):
+            return [{"name": "get_province_summary", "params": {"province": province}}]
+
+        # If asking about a specific school with multiple metrics -> use school details
+        if school_name and (has_students or has_teachers):
+            return [{"name": "get_school_full_details", "params": {"school_name": school_name, "province": province}}]
+
+        # Multi-metric counts at district/region scope -> run multiple tools
+        if (has_students and has_teachers) or (has_students and has_schools) or (has_teachers and has_schools):
+            params_base = {"province": province, "district": district, "region": region}
+            tool_calls = []
+            if has_schools:
+                tool_calls.append({"name": "count_schools", "params": params_base})
+            if has_students:
+                tool_calls.append({"name": "count_students", "params": params_base})
+            if has_teachers:
+                tool_calls.append({"name": "count_teachers", "params": params_base})
+            if len(tool_calls) >= 2:
+                return tool_calls
+
         structured = extract_query_structured_via_llm(question, self.llm, context=context or {})
         confidence = structured.get("confidence")
         data_required = bool(structured.get("data_required"))
@@ -791,6 +844,20 @@ class LLMAgent:
                     params['region'] = question_region
                     logger.info(f"💉 Injected region from question: {question_region}")
 
+            # Inject district from question when missing (non-followup safe)
+            if not params.get('district'):
+                question_district = self._extract_district(question)
+                if question_district:
+                    district_tools = [
+                        'count_students', 'count_teachers', 'count_schools',
+                        'list_schools', 'search_schools', 'filter_schools',
+                        'get_grade_distribution', 'analyze_gender_ratio',
+                        'count_by_system_type'
+                    ]
+                    if tool['name'] in district_tools:
+                        params['district'] = question_district
+                        logger.info(f"💉 Injected district from question: {question_district}")
+
             # Normalize ranking params when LLM is vague (e.g., "จังหวัดที่มีโรงเรียนมากที่สุด")
             if tool['name'] == "ranking":
                 q_lower = question.lower()
@@ -1247,7 +1314,14 @@ class LLMAgent:
         if match:
             school = match.group(1).strip()
             # Blacklist common false positives
-            if any(x in school for x in ['การสอน', 'การเรียน', 'การศึกษา', 'อะไรบ้าง', 'อย่างไร', 'ไหม', 'ที่', 'ที่มี', 'ซึ่ง', 'ทั้งหมด', 'กี่', 'ใด', 'นี้', 'นั้น', 'โน้น']):
+            bad_tokens = [
+                'การสอน', 'การเรียน', 'การศึกษา', 'อะไรบ้าง', 'อย่างไร', 'ไหม',
+                'ที่มี', 'ซึ่ง', 'ทั้งหมด', 'กี่', 'ใด', 'นี้', 'นั้น', 'โน้น',
+                'สพฐ', 'สช', 'อปท', 'ตชด', 'กทม', 'เอกชน', 'ในระบบ', 'นอกระบบ',
+                'นักเรียน', 'ครู', 'บุคลากร', 'คน', 'แห่ง', 'มากกว่า', 'น้อยกว่า',
+                'ไม่เกิน', 'ต่ำกว่า', 'อย่างน้อย', 'ที่นักเรียน', 'ที่ครู'
+            ]
+            if any(x in school for x in bad_tokens):
                 logger.info(f"🏫 Ignoring false positive school name: '{school}'")
                 return None
                 
@@ -1261,6 +1335,10 @@ class LLMAgent:
         if match_num:
             candidate = match_num.group(1).strip()
             # Filter out grade patterns like "ม 2", "ป 6"
+            bad_num_tokens = ['นักเรียน', 'ครู', 'คน', 'แห่ง', 'มากกว่า', 'น้อยกว่า', 'ไม่เกิน', 'ต่ำกว่า', 'อย่างน้อย']
+            if candidate.startswith("ที่") or any(x in candidate for x in bad_num_tokens):
+                logger.info(f"🏫 Ignoring false positive school name (num pattern): '{candidate}'")
+                return None
             if len(candidate) > 5 and not re.match(r'^[มป]\s*\d', candidate):
                 logger.info(f"🏫 Extracted school (name+number pattern): '{candidate}'")
                 return candidate
@@ -1477,8 +1555,28 @@ class LLMAgent:
         return None
     
     def _extract_district(self, question: str) -> Optional[str]:
-        """Extract district name from question (Bangkok districts)"""
+        """Extract district name from question (Bangkok + general 'อำเภอ/เขต')"""
         import re
+
+        # General patterns: อำเภอ/เขต
+        # e.g. "อำเภอกะพ้อ", "อำเภอเมืองสุราษฎร์ธานี", "เขตบางรัก"
+        match = re.search(r'อำเภอ\s*(เมือง[ก-๙]+)', question)
+        if match:
+            return match.group(1).strip()
+
+        match = re.search(r'อำเภอ\s*([ก-๙]+)', question)
+        if match:
+            district = match.group(1).strip()
+            if district == "เมือง":
+                # If province exists, return เมือง{จังหวัด}
+                prov = self._extract_province(question)
+                if prov:
+                    return f"เมือง{prov}"
+            return district
+
+        match = re.search(r'เขต\s*([ก-๙]+)', question)
+        if match:
+            return match.group(1).strip()
         
         # Bangkok districts list
         bangkok_districts = [
@@ -2119,6 +2217,9 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                 if total == 0 and school_count:
                     text += f"\nพบโรงเรียน {school_count:,} แห่งในขอบเขตนี้ แต่ยังไม่มีข้อมูลครูที่บันทึกไว้ครับ"
 
+                if total > 0:
+                    text += "\nหากต้องการแยกตามประเภทบุคลากร เพศ หรืออำเภอ/เขต แจ้งได้เลยครับ"
+
                 parts.append(text)
                     
             elif tool == "count_students":
@@ -2177,6 +2278,9 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
 
                 if total == 0 and school_count:
                     text += f"\nพบโรงเรียน {school_count:,} แห่งในขอบเขตนี้ แต่ยังไม่มีข้อมูลนักเรียนที่บันทึกไว้ครับ"
+
+                if total > 0:
+                    text += "\nถ้าต้องการแยกตามระดับชั้น เพศ หรืออำเภอ/เขต ผมช่วยแยกให้ได้ครับ"
 
                 parts.append(text)
                     
@@ -2281,6 +2385,8 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                 if ask_person_type and teachers.get("by_person_type"):
                     top_type = max(teachers["by_person_type"].items(), key=lambda kv: kv[1].get("total", 0))
                     text += f"\nประเภทครูที่มีจำนวนมากที่สุดคือ **{top_type[0]}** ({top_type[1].get('total', 0):,} คน)"
+
+                text += "\nหากต้องการเจาะลึกระดับอำเภอ/สังกัด หรือแยกเพศ แจ้งได้เลยครับ"
 
                 parts.append(text)
 

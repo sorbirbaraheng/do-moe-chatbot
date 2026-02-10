@@ -19,14 +19,100 @@ interface ChatInputProps {
   disabled?: boolean;
   isLoading?: boolean; // ✨ For showing stop button
   onStop?: () => void; // ✨ Callback to stop AI generation
+  isSpeaking?: boolean;
+  talkMode?: boolean;
+  onToggleTalkMode?: () => void;
+  onStopSpeaking?: () => void;
+  autoListenSignal?: number;
+  stopListeningSignal?: number;
+  onListeningChange?: (listening: boolean) => void;
+  onMicLevel?: (level: number) => void;
 }
 
-const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled, isLoading = false, onStop }) => {
+const ChatInput: React.FC<ChatInputProps> = ({
+  onSend,
+  disabled,
+  isLoading = false,
+  onStop,
+  isSpeaking = false,
+  talkMode = false,
+  onToggleTalkMode,
+  onStopSpeaking,
+  autoListenSignal = 0,
+  stopListeningSignal = 0,
+  onListeningChange,
+  onMicLevel
+}) => {
   const [text, setText] = useState('');
   const [image, setImage] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingVoiceSendRef = useRef<string | null>(null);
+  const shouldAutoSendRef = useRef(false);
+  const recognitionRef = useRef<any>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const meterRafRef = useRef<number | null>(null);
+
+  const stopAudioMeter = async () => {
+    if (meterRafRef.current !== null) {
+      cancelAnimationFrame(meterRafRef.current);
+      meterRafRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try {
+        await audioContextRef.current.close();
+      } catch {
+        // ignore
+      }
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+    onListeningChange?.(false);
+    onMicLevel?.(0);
+  };
+
+  const startAudioMeter = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+
+      const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const audioContext = new AudioCtx();
+      audioContextRef.current = audioContext;
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 512;
+      analyserRef.current = analyser;
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+
+      const dataArray = new Uint8Array(analyser.fftSize);
+      const tick = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteTimeDomainData(dataArray);
+        let sumSquares = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const norm = (dataArray[i] - 128) / 128;
+          sumSquares += norm * norm;
+        }
+        const rms = Math.sqrt(sumSquares / dataArray.length);
+        const level = Math.min(1, Math.max(0, rms * 2.2));
+        onMicLevel?.(level);
+        meterRafRef.current = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch {
+      // ignore mic meter errors
+    }
+  };
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -69,26 +155,97 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled, isLoading = fal
       return;
     }
 
+    if (talkMode && isSpeaking) {
+      return;
+    }
+
     if (isListening) {
       setIsListening(false);
       return;
     }
 
+    if (!talkMode || isSpeaking) {
+      onStopSpeaking?.();
+    }
+    shouldAutoSendRef.current = talkMode;
+    pendingVoiceSendRef.current = null;
+
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
     recognition.lang = 'th-TH';
     recognition.continuous = false;
     recognition.interimResults = false;
 
-    recognition.onstart = () => setIsListening(true);
-    recognition.onend = () => setIsListening(false);
+    recognition.onstart = () => {
+      setIsListening(true);
+      onListeningChange?.(true);
+      startAudioMeter();
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+      onListeningChange?.(false);
+      recognitionRef.current = null;
+      stopAudioMeter();
+      if (shouldAutoSendRef.current && pendingVoiceSendRef.current && !disabled) {
+        const voiceText = pendingVoiceSendRef.current;
+        pendingVoiceSendRef.current = null;
+        shouldAutoSendRef.current = false;
+        onSend(voiceText, null);
+        setText('');
+        if (textareaRef.current) textareaRef.current.style.height = 'auto';
+      }
+    };
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
-      setText(prev => prev + (prev ? ' ' : '') + transcript);
+      if (talkMode) {
+        pendingVoiceSendRef.current = transcript;
+        setText(transcript);
+      } else {
+        setText(prev => prev + (prev ? ' ' : '') + transcript);
+      }
     };
 
     recognition.start();
   };
+
+  useEffect(() => {
+    if (!talkMode && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+      setIsListening(false);
+      onListeningChange?.(false);
+      stopAudioMeter();
+    }
+  }, [talkMode, onListeningChange]);
+
+  useEffect(() => {
+    if (stopListeningSignal === 0) return;
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+    }
+    setIsListening(false);
+    onListeningChange?.(false);
+    stopAudioMeter();
+  }, [stopListeningSignal, onListeningChange]);
+
+  useEffect(() => {
+    if (!talkMode) return;
+    if (disabled) return;
+    if (isListening) return;
+    if (isSpeaking) return;
+    if (autoListenSignal === 0) return;
+    toggleListening();
+  }, [autoListenSignal, talkMode, disabled, isListening, isSpeaking]);
 
   return (
     <div className="flex flex-col gap-3 w-full max-w-4xl mx-auto px-2 md:px-4">
@@ -174,22 +331,42 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled, isLoading = fal
 
             {/* Right Tools */}
             <div className="flex items-center gap-2">
-              {/* Dictation Icon */}
+              {/* Text & Talk Mode Toggle (Pill) */}
               <button
                 type="button"
-                onClick={toggleListening}
-                className={`w-9 h-9 md:w-10 md:h-10 rounded-full flex items-center justify-center transition-all active:scale-95
-                  ${isListening
-                    ? 'bg-[#FF3B30] text-white animate-pulse shadow-inner'
+                onClick={onToggleTalkMode}
+                className={`h-9 md:h-10 px-3 rounded-full flex items-center gap-2 transition-all active:scale-95 text-[12px] font-semibold
+                  ${talkMode
+                    ? 'bg-gradient-to-r from-[#007AFF] to-[#5856D6] text-white shadow-[0_6px_16px_rgba(0,122,255,0.35)]'
                     : 'bg-black/5 hover:bg-black/10 text-[#1D1D1F]/60'
                   }`}
-                title="Voice"
+                title="Text & Talk Mode"
+                aria-pressed={talkMode}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-[18px] h-[18px] md:w-[20px] md:h-[20px]">
-                  <path d="M8.25 4.5a3.75 3.75 0 117.5 0v8.25a3.75 3.75 0 11-7.5 0V4.5z" />
-                  <path d="M6 10.5a.75.75 0 01.75.75v1.5a5.25 5.25 0 1010.5 0v-1.5a.75.75 0 011.5 0v1.5a6.751 6.751 0 01-6 6.709v2.291h3a.75.75 0 010 1.5h-7.5a.75.75 0 010-1.5h3v-2.291a6.751 6.751 0 01-6-6.709v-1.5A.75.75 0 016 10.5z" />
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-[16px] h-[16px]">
+                  <path d="M3 10.5a.75.75 0 01.75-.75h1.5a.75.75 0 010 1.5h-1.5A.75.75 0 013 10.5zm4.5-3a.75.75 0 01.75-.75h1.5a.75.75 0 010 1.5h-1.5A.75.75 0 017.5 7.5zm0 6a.75.75 0 01.75-.75h1.5a.75.75 0 010 1.5h-1.5a.75.75 0 01-.75-.75zm4.5-7.5a.75.75 0 01.75-.75h1.5a.75.75 0 010 1.5h-1.5a.75.75 0 01-.75-.75zm0 9a.75.75 0 01.75-.75h1.5a.75.75 0 010 1.5h-1.5a.75.75 0 01-.75-.75zm4.5-6a.75.75 0 01.75-.75h1.5a.75.75 0 010 1.5h-1.5a.75.75 0 01-.75-.75zm0 3a.75.75 0 01.75-.75h1.5a.75.75 0 010 1.5h-1.5a.75.75 0 01-.75-.75z" />
                 </svg>
+                <span>Talk</span>
               </button>
+
+              {/* Dictation Icon */}
+              {!talkMode && (
+                <button
+                  type="button"
+                  onClick={toggleListening}
+                  className={`w-9 h-9 md:w-10 md:h-10 rounded-full flex items-center justify-center transition-all active:scale-95
+                    ${isListening
+                      ? 'bg-[#FF3B30] text-white animate-pulse shadow-inner'
+                      : 'bg-black/5 hover:bg-black/10 text-[#1D1D1F]/60'
+                    }`}
+                  title="Voice"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-[18px] h-[18px] md:w-[20px] md:h-[20px]">
+                    <path d="M8.25 4.5a3.75 3.75 0 117.5 0v8.25a3.75 3.75 0 11-7.5 0V4.5z" />
+                    <path d="M6 10.5a.75.75 0 01.75.75v1.5a5.25 5.25 0 1010.5 0v-1.5a.75.75 0 011.5 0v1.5a6.751 6.751 0 01-6 6.709v2.291h3a.75.75 0 010 1.5h-7.5a.75.75 0 010-1.5h3v-2.291a6.751 6.751 0 01-6-6.709v-1.5A.75.75 0 016 10.5z" />
+                  </svg>
+                </button>
+              )}
 
               {/* Send / Stop Button - Apple 2026 Style */}
               {isLoading && onStop ? (
