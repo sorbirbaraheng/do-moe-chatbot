@@ -125,16 +125,14 @@ const AppContent: React.FC = () => {
 
   useEffect(() => {
     if (isTalkMode) {
+      // Auto-unlock speech when entering Talk Mode (uses the tap gesture)
+      unlockSpeech();
+      primeSpeech();
       setAutoListenSignal(s => s + 1);
     } else {
       setStopListeningSignal(s => s + 1);
       setIsListening(false);
-    }
-  }, [isTalkMode]);
-
-  useEffect(() => {
-    if (!isTalkMode) {
-      setSpeechUnlocked(false);
+      // NOTE: Do NOT reset speechUnlocked here — keep it unlocked for the session
     }
   }, [isTalkMode]);
 
@@ -649,8 +647,14 @@ const AppContent: React.FC = () => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
     if (speechUnlocked) return;
     try {
-      const u = new SpeechSynthesisUtterance(' ');
-      u.volume = 0;
+      // Cancel any stuck utterances first
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance('.');
+      u.volume = 0.01; // Near-zero but not 0 — some browsers ignore volume=0
+      u.lang = 'th-TH';
+      u.onend = () => {
+        console.log('[TTS] Speech unlocked successfully');
+      };
       window.speechSynthesis.speak(u);
       window.speechSynthesis.resume();
       setSpeechUnlocked(true);
@@ -659,10 +663,12 @@ const AppContent: React.FC = () => {
         const voices = window.speechSynthesis.getVoices();
         if (!voices || voices.length === 0) {
           setSpeechError('ไม่พบเสียงในระบบ');
+        } else {
+          console.log(`[TTS] ${voices.length} voices available`);
         }
       }, 300);
-    } catch {
-      // ignore
+    } catch (e) {
+      console.error('[TTS] Unlock failed:', e);
     }
   };
 
@@ -677,6 +683,26 @@ const AppContent: React.FC = () => {
     }
   };
 
+  // Chrome workaround: SpeechSynthesis pauses silently after ~15s
+  // Calling resume() periodically keeps it alive
+  const resumeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startResumeWorkaround = () => {
+    stopResumeWorkaround();
+    resumeIntervalRef.current = setInterval(() => {
+      if (window.speechSynthesis?.speaking) {
+        window.speechSynthesis.resume();
+      }
+    }, 5000);
+  };
+
+  const stopResumeWorkaround = () => {
+    if (resumeIntervalRef.current) {
+      clearInterval(resumeIntervalRef.current);
+      resumeIntervalRef.current = null;
+    }
+  };
+
   const speakText = (text: string): boolean => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
     if (speechMuted) {
@@ -684,27 +710,50 @@ const AppContent: React.FC = () => {
       return false;
     }
     if (!speechUnlocked) {
-      setSpeechError('แตะเพื่อเปิดเสียง');
-      return false;
+      // Auto-attempt unlock on first speak
+      unlockSpeech();
+      if (!speechUnlocked) {
+        setSpeechError('แตะเพื่อเปิดเสียง');
+        return false;
+      }
     }
     const cleaned = stripForSpeech(text);
-    if (!cleaned) return false;
+    if (!cleaned) {
+      console.warn('[TTS] No text to speak after cleaning');
+      return false;
+    }
     if (isSpeaking) stopSpeaking();
-    window.speechSynthesis.resume();
+
+    // Cancel any stuck utterances and force resume
+    window.speechSynthesis.cancel();
+    // Small delay after cancel to let browser reset
+    setTimeout(() => {
+      window.speechSynthesis.resume();
+    }, 50);
 
     let triedFallback = false;
     const speakWithVoice = (voiceOverride?: SpeechSynthesisVoice | null) => {
-      const utterance = new SpeechSynthesisUtterance(cleaned.slice(0, 1200));
+      // Truncate to 800 chars for reliability (long text can cause TTS to fail silently)
+      const utterance = new SpeechSynthesisUtterance(cleaned.slice(0, 800));
       const voice = voiceOverride ?? getPreferredVoice();
-      if (voice) utterance.voice = voice;
+      if (voice) {
+        utterance.voice = voice;
+        console.log(`[TTS] Using voice: ${voice.name} (${voice.lang})`);
+      } else {
+        console.warn('[TTS] No voice found, using default');
+      }
       utterance.lang = voice?.lang || 'th-TH';
       utterance.rate = 1.02;
       utterance.pitch = 1.0;
       utterance.volume = 1.0;
       utterance.onstart = () => {
+        console.log('[TTS] Speaking started');
         setSpeechError('');
+        startResumeWorkaround(); // Start Chrome pause workaround
       };
       utterance.onend = () => {
+        console.log('[TTS] Speaking ended');
+        stopResumeWorkaround();
         setIsSpeaking(false);
         if (isTalkMode) {
           setTimeout(() => setAutoListenSignal(s => s + 1), 350);
@@ -712,16 +761,18 @@ const AppContent: React.FC = () => {
       };
       utterance.onerror = (event: any) => {
         const err = event?.error || event?.name || 'TTS error';
+        console.error('[TTS] Error:', err);
+        stopResumeWorkaround();
         if (!triedFallback && err !== 'canceled') {
           const fallback = getFallbackVoice();
           if (fallback && fallback !== voice) {
+            console.log('[TTS] Retrying with fallback voice:', fallback.name);
             triedFallback = true;
             setTimeout(() => speakWithVoice(fallback), 200);
             return;
           }
         }
         if (err === 'canceled' && isTalkMode && !isListening) {
-          // Retry once in case speech was cancelled by timing issues
           if (!triedFallback) {
             triedFallback = true;
             try {
@@ -729,7 +780,7 @@ const AppContent: React.FC = () => {
             } catch {
               // ignore
             }
-            setTimeout(() => speakWithVoice(voiceOverride ?? getPreferredVoice()), 200);
+            setTimeout(() => speakWithVoice(voiceOverride ?? getPreferredVoice()), 300);
             return;
           }
         }
@@ -745,7 +796,8 @@ const AppContent: React.FC = () => {
       window.speechSynthesis.speak(utterance);
     };
 
-    speakWithVoice();
+    // Small delay to ensure cancel() has taken effect
+    setTimeout(() => speakWithVoice(), 100);
     return true;
   };
 
@@ -1197,9 +1249,8 @@ const AppContent: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setSpeechMuted(prev => !prev)}
-                        className={`talk-control-btn ${
-                          speechMuted ? 'talk-control-muted' : 'talk-control-active'
-                        }`}
+                        className={`talk-control-btn ${speechMuted ? 'talk-control-muted' : 'talk-control-active'
+                          }`}
                         title={speechMuted ? 'เปิดเสียง' : 'ปิดเสียง'}
                       >
                         {speechMuted ? 'ปิดเสียงอยู่' : 'เสียงเปิด'}
@@ -1374,15 +1425,15 @@ const AppContent: React.FC = () => {
                     onToggleTalkMode={() => {
                       setIsTalkMode(prev => {
                         const next = !prev;
-                          if (!next) {
-                            stopSpeaking();
-                            setStopListeningSignal(s => s + 1);
-                          }
-                          if (next) {
-                            primeSpeech();
-                            unlockSpeech();
-                            setAutoListenSignal(s => s + 1);
-                          }
+                        if (!next) {
+                          stopSpeaking();
+                          setStopListeningSignal(s => s + 1);
+                        }
+                        if (next) {
+                          primeSpeech();
+                          unlockSpeech();
+                          setAutoListenSignal(s => s + 1);
+                        }
                         return next;
                       });
                     }}
