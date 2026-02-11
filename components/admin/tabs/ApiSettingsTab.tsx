@@ -547,8 +547,16 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
                 <button
                     onClick={async () => {
                         try {
-                            // Get Flask API URL (default to localhost:5001)
-                            const flaskUrl = draftApiKeys.school.flaskApiUrl || 'http://127.0.0.1:5001';
+                            // Smart URL detection: auto-switch to LAN IP
+                            let flaskUrl = draftApiKeys.school.flaskApiUrl || 'http://127.0.0.1:5001';
+                            const isLocal = flaskUrl.includes('localhost') || flaskUrl.includes('127.0.0.1');
+                            const isLan = typeof window !== 'undefined' &&
+                                window.location.hostname !== 'localhost' &&
+                                window.location.hostname !== '127.0.0.1';
+
+                            if (isLocal && isLan) {
+                                flaskUrl = `http://${window.location.hostname}:5001`;
+                            }
 
                             const response = await fetch(`${flaskUrl}/api/sync-config`, {
                                 method: 'POST',
@@ -558,7 +566,7 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
 
                             const data = await response.json();
                             if (data.success) {
-                                alert('✅ Synced successfully! Backend now has your API keys.');
+                                alert(`✅ Synced successfully! Backend (${flaskUrl}) now has your API keys.`);
                             } else {
                                 alert(`❌ Sync failed: ${data.error}`);
                             }

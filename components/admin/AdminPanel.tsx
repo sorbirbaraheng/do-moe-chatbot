@@ -328,9 +328,22 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
         setSaveMessage('🔄 กำลังตรวจสอบการเชื่อมต่อ Flask API...');
 
         try {
-            const { default: ChatbotAPI } = await import('../../services/chatbot-api.js');
+            const { default: ChatbotAPI, getFlaskBaseUrl } = await import('../../services/chatbot-api.js');
+
+            // Smart URL detection: auto-switch to LAN IP if accessing from non-localhost
+            let flaskUrl = draftApiKeys[category].flaskApiUrl;
+            const isConfigLocal = flaskUrl?.includes('localhost') || flaskUrl?.includes('127.0.0.1');
+            const isBrowserLan = typeof window !== 'undefined' &&
+                window.location.hostname !== 'localhost' &&
+                window.location.hostname !== '127.0.0.1';
+
+            if (isConfigLocal && isBrowserLan) {
+                flaskUrl = getFlaskBaseUrl(5001);
+                console.log(`[Admin] Smart URL: ${draftApiKeys[category].flaskApiUrl} → ${flaskUrl}`);
+            }
+
             const api = new ChatbotAPI(
-                draftApiKeys[category].flaskApiUrl,
+                flaskUrl,
                 draftApiKeys[category].flaskApiKey
             );
 
@@ -342,7 +355,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
             }));
 
             if (result.success) {
-                setSaveMessage(`✅ Flask API Connected! (${result.latencyMs}ms)`);
+                setSaveMessage(`✅ Flask API Connected! (${result.latencyMs}ms) → ${flaskUrl}`);
             } else {
                 setSaveMessage(`❌ Flask API Failed: ${result.message}`);
             }
