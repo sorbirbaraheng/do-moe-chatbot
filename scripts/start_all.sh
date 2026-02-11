@@ -2,7 +2,7 @@
 # =============================================================================
 # DO-MOE Chatbot - Start All Services
 # =============================================================================
-# Location: scripts/start_all.sh
+# Location: /start_ascriptsll.sh
 # Usage: ./scripts/start_all.sh (from project root)
 # This script starts both Frontend (Next.js) and Backend (Gunicorn) services
 # =============================================================================

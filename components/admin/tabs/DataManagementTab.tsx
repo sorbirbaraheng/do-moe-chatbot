@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { DataManagementTabProps } from './types';
+import { adminFetch } from '../../../services/adminApi';
 
 const DataManagementTab: React.FC<DataManagementTabProps> = () => {
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -17,7 +18,7 @@ const DataManagementTab: React.FC<DataManagementTabProps> = () => {
         formData.append('file', file);
 
         try {
-            const response = await fetch('http://localhost:5001/api/admin/upload', {
+            const response = await adminFetch('/api/admin/upload', {
                 method: 'POST',
                 body: formData,
             });
@@ -39,7 +40,7 @@ const DataManagementTab: React.FC<DataManagementTabProps> = () => {
         setReindexing(true);
         setStatusMsg('กำลัง Re-index...');
         try {
-            const response = await fetch('http://localhost:5001/api/admin/reindex', {
+            const response = await adminFetch('/api/admin/reindex', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ target: 'all' })

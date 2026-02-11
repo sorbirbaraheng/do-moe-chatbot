@@ -198,10 +198,23 @@ def create_flask_api():
     from flask_cors import CORS
     from flask_limiter import Limiter
     from flask_limiter.util import get_remote_address
+    from datetime import datetime, timezone
+    import base64
+    import hashlib
+    import hmac
     import json
+    import time
+    from werkzeug.security import check_password_hash
 
     app = Flask(__name__)
-    CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+
+    allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "").strip()
+    if allowed_origins_env:
+        allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+    else:
+        allowed_origins = "*"
+
+    CORS(app, resources={r"/*": {"origins": allowed_origins}}, supports_credentials=True)
 
     limiter = Limiter(
         get_remote_address,
@@ -220,11 +233,13 @@ def create_flask_api():
     @app.after_request
     def after_request(response):
         """Global CORS header enforcement"""
-        response.headers.add('Access-Control-Allow-Origin', '*')
+        if 'Access-Control-Allow-Origin' not in response.headers and isinstance(allowed_origins, str):
+            response.headers.add('Access-Control-Allow-Origin', allowed_origins)
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-API-Key')
         response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
         response.headers.add('Access-Control-Allow-Credentials', 'true')
-        response.headers.add('Content-Type', 'application/json; charset=utf-8') # Ensure Thai support
+        if 'Content-Type' not in response.headers:
+            response.headers.add('Content-Type', 'application/json; charset=utf-8')  # Ensure Thai support
         return response
     
     if not qdrant_client:
@@ -233,6 +248,367 @@ def create_flask_api():
     
     chatbot = EducationChatbot(qdrant_client)
     enable_debug_endpoints = os.getenv("ENABLE_DEBUG_ENDPOINTS", "0") == "1"
+
+    # ------------------------------------------------------------------
+    # Admin Auth + RBAC + Audit
+    # ------------------------------------------------------------------
+    ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+    ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH")
+    OPERATOR_PASSWORD = os.getenv("OPERATOR_PASSWORD")
+    OPERATOR_PASSWORD_HASH = os.getenv("OPERATOR_PASSWORD_HASH")
+    VIEWER_PASSWORD = os.getenv("VIEWER_PASSWORD")
+    VIEWER_PASSWORD_HASH = os.getenv("VIEWER_PASSWORD_HASH")
+    ADMIN_TOKEN_SECRET = os.getenv("ADMIN_TOKEN_SECRET") or os.getenv("FLASK_SECRET_KEY") or "dev-insecure-secret"
+    ADMIN_TOKEN_TTL_SECONDS = int(os.getenv("ADMIN_TOKEN_TTL_SECONDS", "43200"))
+    DISABLE_FIRESTORE = os.getenv("DISABLE_FIRESTORE", "0") == "1"
+
+    ROLE_RANK = {"viewer": 0, "operator": 1, "admin": 2}
+
+    def _check_password(password: str, plain_value: Optional[str], hashed_value: Optional[str]) -> bool:
+        if hashed_value:
+            try:
+                return check_password_hash(hashed_value, password)
+            except Exception:
+                return False
+        if plain_value:
+            return hmac.compare_digest(password, plain_value)
+        return False
+
+    def _resolve_role(password: str) -> Optional[str]:
+        if _check_password(password, ADMIN_PASSWORD, ADMIN_PASSWORD_HASH):
+            return "admin"
+        if _check_password(password, OPERATOR_PASSWORD, OPERATOR_PASSWORD_HASH):
+            return "operator"
+        if _check_password(password, VIEWER_PASSWORD, VIEWER_PASSWORD_HASH):
+            return "viewer"
+        return None
+
+    def _b64encode(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+    def _b64decode(data: str) -> bytes:
+        pad = "=" * (-len(data) % 4)
+        return base64.urlsafe_b64decode(data + pad)
+
+    def _sign(value: str) -> str:
+        digest = hmac.new(ADMIN_TOKEN_SECRET.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).digest()
+        return _b64encode(digest)
+
+    def _create_token(role: str) -> str:
+        now = int(time.time())
+        payload = {"role": role, "iat": now, "exp": now + ADMIN_TOKEN_TTL_SECONDS}
+        payload_str = json.dumps(payload, separators=(",", ":"))
+        payload_b64 = _b64encode(payload_str.encode("utf-8"))
+        signature = _sign(payload_b64)
+        return f"{payload_b64}.{signature}"
+
+    def _verify_token(token: str) -> Optional[dict]:
+        try:
+            payload_b64, signature = token.split(".", 1)
+        except ValueError:
+            return None
+        expected_sig = _sign(payload_b64)
+        if not hmac.compare_digest(signature, expected_sig):
+            return None
+        try:
+            payload = json.loads(_b64decode(payload_b64))
+        except Exception:
+            return None
+        if int(payload.get("exp", 0)) < int(time.time()):
+            return None
+        return payload
+
+    def _get_request_role() -> Optional[str]:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return None
+        token = auth_header.replace("Bearer ", "", 1).strip()
+        payload = _verify_token(token)
+        if not payload:
+            return None
+        return payload.get("role")
+
+    def _require_role(min_role: str) -> tuple[Optional[str], Optional[tuple]]:
+        role = _get_request_role()
+        if not role:
+            return None, (jsonify({"success": False, "error": "Unauthorized"}), 401)
+        if ROLE_RANK.get(role, -1) < ROLE_RANK.get(min_role, 0):
+            return role, (jsonify({"success": False, "error": "Forbidden"}), 403)
+        return role, None
+
+    def _get_client_ip() -> str:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return request.remote_addr or "-"
+
+    def _get_firestore_db():
+        if DISABLE_FIRESTORE:
+            return None
+        try:
+            import firebase_admin
+            from firebase_admin import credentials, firestore
+
+            try:
+                firebase_admin.get_app()
+            except ValueError:
+                service_account_path = Path(__file__).parent / "serviceAccountKey.json"
+                if service_account_path.exists():
+                    cred = credentials.Certificate(str(service_account_path))
+                    firebase_admin.initialize_app(cred)
+                else:
+                    firebase_admin.initialize_app()
+            return firestore.client()
+        except Exception as e:
+            logger.warning(f"⚠️ Firestore unavailable: {e}")
+            return None
+
+    def _write_shared_config(config_data: dict):
+        config_path = Path(__file__).parent / 'shared_config.json'
+        try:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config_data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to write shared_config.json: {e}")
+
+    def _load_config_from_storage() -> dict:
+        # Firestore first (if enabled)
+        db = _get_firestore_db()
+        if db:
+            try:
+                doc = db.collection("settings").document("main-config").get()
+                if doc.exists:
+                    return doc.to_dict() or {}
+            except Exception as e:
+                logger.warning(f"⚠️ Firestore config read failed: {e}")
+        # Fallback shared_config.json
+        config_path = Path(__file__).parent / 'shared_config.json'
+        if config_path.exists():
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"⚠️ shared_config.json read failed: {e}")
+        return {}
+
+    def _merge_config(existing: dict, updates: dict) -> dict:
+        merged = json.loads(json.dumps(existing or {}))
+        for key, value in (updates or {}).items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key].update(value)
+            else:
+                merged[key] = value
+        return merged
+
+    def _redact_config(config_data: dict) -> dict:
+        redacted = json.loads(json.dumps(config_data or {}))
+        api_keys = redacted.get("apiKeys", {})
+        for cat in ["general", "school", "student"]:
+            cat_keys = api_keys.get(cat, {})
+            for field in ["geminiKeys", "groqKeys"]:
+                if isinstance(cat_keys.get(field), list):
+                    cat_keys[field] = ["••••••"] * len(cat_keys[field])
+            for field in ["embeddingApiKey", "ragApiKey", "pineconeApiKey", "flaskApiKey"]:
+                if cat_keys.get(field):
+                    cat_keys[field] = "••••••"
+            api_keys[cat] = cat_keys
+        redacted["apiKeys"] = api_keys
+        return redacted
+
+    def _summarize_config_update(payload: dict) -> dict:
+        summary = {}
+        if not payload:
+            return summary
+
+        if "apiKeys" in payload:
+            summary["apiKeys"] = {}
+            for cat, cat_payload in (payload.get("apiKeys") or {}).items():
+                if not isinstance(cat_payload, dict):
+                    continue
+                summary["apiKeys"][cat] = {
+                    "geminiKeys": len(cat_payload.get("geminiKeys") or []),
+                    "groqKeys": len(cat_payload.get("groqKeys") or []),
+                    "flaskApiUrl": bool(cat_payload.get("flaskApiUrl")),
+                    "flaskApiEnabled": cat_payload.get("flaskApiEnabled"),
+                    "ragEndpoint": bool(cat_payload.get("ragEndpoint")),
+                }
+
+        if "prompts" in payload:
+            prompts = payload.get("prompts") or {}
+            summary["prompts"] = {
+                "version": prompts.get("version"),
+                "languageStyle": prompts.get("languageStyle") or None,
+            }
+
+        if "model" in payload:
+            model = payload.get("model") or {}
+            summary["model"] = {
+                "name": model.get("name"),
+                "temperature": model.get("temperature"),
+                "maxTokens": model.get("maxTokens"),
+            }
+
+        if "rag" in payload:
+            summary["rag"] = payload.get("rag")
+
+        if "uxPolicy" in payload:
+            ux = payload.get("uxPolicy") or {}
+            summary["uxPolicy"] = {
+                "responseLength": ux.get("responseLength"),
+                "languageStyle": ux.get("languageStyle"),
+                "showRagDebug": ux.get("showRagDebug"),
+            }
+
+        return summary
+
+    def _audit_log(action: str, status: str = "success", role: Optional[str] = None, detail: Optional[dict] = None):
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp_ms": int(time.time() * 1000),
+            "action": action,
+            "status": status,
+            "role": role or "-",
+            "ip": _get_client_ip(),
+            "path": request.path,
+            "detail": detail or {},
+        }
+
+        db = _get_firestore_db()
+        if db:
+            try:
+                db.collection("admin_audit").add(entry)
+                return
+            except Exception as e:
+                logger.warning(f"⚠️ Firestore audit write failed: {e}")
+
+        audit_path = Path(__file__).parent / "admin_audit.jsonl"
+        try:
+            with open(audit_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.warning(f"⚠️ Audit file write failed: {e}")
+
+    def _read_audit_logs(limit: int, cursor: Optional[str]):
+        db = _get_firestore_db()
+        if db:
+            try:
+                from google.cloud import firestore
+                query = db.collection("admin_audit").order_by("timestamp_ms", direction=firestore.Query.DESCENDING).order_by("__name__", direction=firestore.Query.DESCENDING)
+                if cursor:
+                    try:
+                        cursor_data = json.loads(_b64decode(cursor))
+                        doc_id = cursor_data.get("id")
+                        if doc_id:
+                            doc = db.collection("admin_audit").document(doc_id).get()
+                            if doc.exists:
+                                query = query.start_after(doc)
+                    except Exception:
+                        pass
+                docs = list(query.limit(limit + 1).stream())
+                items = []
+                for doc in docs[:limit]:
+                    payload = doc.to_dict() or {}
+                    payload["id"] = doc.id
+                    items.append(payload)
+                next_cursor = None
+                has_more = len(docs) > limit
+                if has_more and items:
+                    last = items[-1]
+                    next_cursor = _b64encode(json.dumps({"id": last.get("id")}).encode("utf-8"))
+                return items, next_cursor, has_more
+            except Exception as e:
+                logger.warning(f"⚠️ Firestore audit read failed: {e}")
+
+        audit_path = Path(__file__).parent / "admin_audit.jsonl"
+        if audit_path.exists():
+            try:
+                with open(audit_path, "r", encoding="utf-8") as f:
+                    lines = [json.loads(line) for line in f if line.strip()]
+                lines.sort(key=lambda x: x.get("timestamp_ms", 0), reverse=True)
+                start = int(cursor or 0)
+                items = lines[start:start + limit]
+                next_cursor = str(start + len(items)) if start + len(items) < len(lines) else None
+                has_more = next_cursor is not None
+                return items, next_cursor, has_more
+            except Exception as e:
+                logger.warning(f"⚠️ Audit file read failed: {e}")
+        return [], None, False
+
+    @app.route('/api/admin/login', methods=['POST', 'OPTIONS'])
+    @limiter.exempt
+    def admin_login():
+        if request.method == 'OPTIONS':
+            return '', 204
+        data = request.json or {}
+        password = data.get('password', '')
+        role = _resolve_role(password)
+        if not role:
+            _audit_log("admin_login", status="failed", role="unknown", detail={"reason": "invalid_password"})
+            return jsonify({'success': False, 'error': 'รหัสผ่านไม่ถูกต้อง'}), 401
+
+        token = _create_token(role)
+        _audit_log("admin_login", status="success", role=role)
+        return jsonify({'success': True, 'token': token, 'role': role})
+
+    @app.route('/api/admin/config', methods=['GET', 'POST', 'OPTIONS'])
+    def admin_config():
+        if request.method == 'OPTIONS':
+            return '', 204
+
+        role, error = _require_role('viewer')
+        if error:
+            return error
+
+        if request.method == 'GET':
+            config_data = _load_config_from_storage()
+            if role == 'viewer':
+                config_data = _redact_config(config_data)
+            return jsonify({'success': True, 'config': config_data})
+
+        # POST
+        role, error = _require_role('operator')
+        if error:
+            return error
+
+        payload = request.json or {}
+        existing = _load_config_from_storage()
+        merged = _merge_config(existing, payload)
+
+        db = _get_firestore_db()
+        if db and not DISABLE_FIRESTORE:
+            try:
+                db.collection("settings").document("main-config").set(payload, merge=True)
+            except Exception as e:
+                logger.warning(f"⚠️ Firestore config update failed: {e}")
+
+        _write_shared_config(merged)
+        _audit_log("admin_config_update", role=role, detail=_summarize_config_update(payload))
+        return jsonify({'success': True})
+
+    @app.route('/api/admin/audit', methods=['GET', 'OPTIONS'])
+    def admin_audit():
+        if request.method == 'OPTIONS':
+            return '', 204
+
+        role, error = _require_role('operator')
+        if error:
+            return error
+
+        try:
+            limit = int(request.args.get('limit', 20))
+        except Exception:
+            limit = 20
+        cursor = request.args.get('cursor')
+
+        logs, next_cursor, has_more = _read_audit_logs(limit, cursor)
+        return jsonify({'success': True, 'logs': logs, 'nextCursor': next_cursor, 'hasMore': has_more})
+
+    @app.route('/api/config/public', methods=['GET'])
+    @limiter.exempt
+    def public_config():
+        config_data = _load_config_from_storage()
+        config_data = _redact_config(config_data)
+        return jsonify({'success': True, 'config': config_data})
     
     @app.route('/api/health', methods=['GET'])
     @limiter.exempt
@@ -412,6 +788,9 @@ def create_flask_api():
     @app.route('/api/sessions', methods=['GET'])
     def list_sessions():
         """Admin endpoint to list all active sessions"""
+        role, error = _require_role('viewer')
+        if error:
+            return error
         try:
             limit = request.args.get('limit', 50)
             conn = session_db.sqlite3.connect(session_db.DB_PATH)
@@ -441,6 +820,7 @@ def create_flask_api():
                 
             return jsonify({'success': True, 'sessions': results})
         except Exception as e:
+            _audit_log("admin_sessions_list", status="failed", role=role, detail={"error": str(e)})
             return jsonify({'success': False, 'error': str(e)})
     
     @app.route('/api/sync-config', methods=['POST', 'OPTIONS'])
@@ -448,6 +828,10 @@ def create_flask_api():
         """Receives API keys from Admin Panel"""
         if request.method == 'OPTIONS':
             return '', 204
+
+        role, error = _require_role('operator')
+        if error:
+            return error
         
         try:
             data = request.json
@@ -460,6 +844,7 @@ def create_flask_api():
                 json.dump(data, f, ensure_ascii=False, indent=2)
             
             logger.info(f"✅ Config synced to {config_path}")
+            _audit_log("sync_config", role=role, detail={"path": str(config_path)})
             return jsonify({
                 'success': True, 
                 'message': 'Config synced successfully',
@@ -467,6 +852,7 @@ def create_flask_api():
             })
         except Exception as e:
             logger.error(f"❌ Config sync failed: {e}")
+            _audit_log("sync_config", status="failed", role=role, detail={"error": str(e)})
             return jsonify({'success': False, 'error': str(e)}), 500
     
     @app.route('/api/schools/list', methods=['POST', 'OPTIONS'])
@@ -560,6 +946,10 @@ def create_flask_api():
         """Handle file upload for admin data sync"""
         if request.method == 'OPTIONS':
             return '', 204
+
+        role, error = _require_role('operator')
+        if error:
+            return error
         
         try:
             if 'file' not in request.files:
@@ -581,6 +971,7 @@ def create_flask_api():
                 file.save(str(file_path))
                 
                 logger.info(f"✅ File uploaded: {file_path}")
+                _audit_log("admin_upload", role=role, detail={"filename": filename})
                 return jsonify({
                     'success': True, 
                     'message': 'File uploaded successfully',
@@ -589,6 +980,7 @@ def create_flask_api():
                 
         except Exception as e:
             logger.error(f"❌ Upload failed: {e}")
+            _audit_log("admin_upload", status="failed", role=role, detail={"error": str(e)})
             return jsonify({'success': False, 'error': str(e)}), 500
 
     @app.route('/api/admin/reindex', methods=['POST', 'OPTIONS'])
@@ -596,12 +988,17 @@ def create_flask_api():
         """Trigger re-indexing process"""
         if request.method == 'OPTIONS':
             return '', 204
+
+        role, error = _require_role('operator')
+        if error:
+            return error
             
         try:
             data = request.json or {}
             target = data.get('target', 'all')
             
             logger.info(f"🔄 Re-index triggered for: {target}")
+            _audit_log("admin_reindex", role=role, detail={"target": target})
             
             # Run in background thread to avoid blocking API
             import threading
@@ -626,6 +1023,7 @@ def create_flask_api():
             
         except Exception as e:
             logger.error(f"❌ Re-index trigger failed: {e}")
+            _audit_log("admin_reindex", status="failed", role=role, detail={"error": str(e)})
             return jsonify({'success': False, 'error': str(e)}), 500
 
     return app

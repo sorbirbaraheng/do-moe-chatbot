@@ -8,6 +8,7 @@ export { default as UxPolicyTab } from './UxPolicyTab';
 export { SessionMonitorTab } from './SessionMonitorTab';
 export { default as AnalyticsTab } from './AnalyticsTab';
 export { default as UserManagementTab } from './UserManagementTab';
+export { default as AdminAuditTab } from './AdminAuditTab';
 
 // Types
 export * from './types';

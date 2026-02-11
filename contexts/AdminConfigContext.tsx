@@ -17,6 +17,8 @@ import { AdminConfig } from '../types/admin.types';
 import { DEFAULT_CONFIG } from '../config';
 import { db } from '../services/firebase';
 import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
+import { updateAdminConfig, fetchAdminConfig, fetchPublicConfig } from '../services/adminApi';
+import { getAdminRole, canEditAdmin, getAdminToken } from '../services/adminAuth';
 
 // Re-export for backward compatibility
 export type { AdminConfig } from '../types/admin.types';
@@ -25,7 +27,7 @@ export type { AdminConfig } from '../types/admin.types';
 interface AdminConfigContextType {
     config: AdminConfig;
     updateConfig: (newConfig: Partial<AdminConfig>) => Promise<boolean>;
-    updateApiKeys: (category: 'general' | 'school' | 'student', apiKeys: Partial<AdminConfig['apiKeys']['general']>) => Promise<void>;
+    updateApiKeys: (category: 'general' | 'school' | 'student', apiKeys: Partial<AdminConfig['apiKeys']['general']>, options?: { persist?: boolean }) => Promise<void>;
     updatePrompts: (prompts: Partial<AdminConfig['prompts']>) => void;
     updateModel: (model: Partial<AdminConfig['model']>) => void;
     updateRAG: (rag: Partial<AdminConfig['rag']>) => void;
@@ -93,6 +95,19 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
             }
         }, (error) => {
             console.error("Firestore sync error:", error);
+            // Fallback to backend config (public or admin) when Firestore is unavailable
+            const loadFromBackend = async () => {
+                try {
+                    const hasToken = !!getAdminToken();
+                    const data = hasToken ? await fetchAdminConfig() : await fetchPublicConfig();
+                    setConfig(prev => ({ ...prev, ...data }));
+                } catch (err) {
+                    console.error("Backend config fallback failed:", err);
+                } finally {
+                    setIsLoaded(true);
+                }
+            };
+            loadFromBackend();
         });
         return () => unsubscribe();
     }, []);
@@ -142,8 +157,8 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
             console.log(`[Auto IP] Detected Flask API URL: ${detectedUrl} (LAN: ${isLan})`);
 
             // Update both categories
-            updateApiKeys('school', { flaskApiUrl: detectedUrl });
-            updateApiKeys('student', { flaskApiUrl: detectedUrl });
+            updateApiKeys('school', { flaskApiUrl: detectedUrl }, { persist: false });
+            updateApiKeys('student', { flaskApiUrl: detectedUrl }, { persist: false });
         }
     }, [config.apiKeys.school?.flaskApiUrl, config.apiKeys.student?.flaskApiUrl, isLoaded]);
 
@@ -156,18 +171,17 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
             return updated;
         });
 
+        const role = getAdminRole();
+        if (!canEditAdmin(role)) {
+            console.warn('[Config] Update blocked: insufficient role');
+            return false;
+        }
+
         try {
-            const docRef = doc(db, 'settings', CONFIG_DOC_ID);
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("Firestore write timed out (10s)")), 10000)
-            );
-            await Promise.race([
-                setDoc(docRef, newConfig, { merge: true }),
-                timeoutPromise
-            ]);
+            await updateAdminConfig(newConfig);
             return true;
         } catch (error) {
-            console.warn("Firestore save failed or timed out:", error);
+            console.warn("Admin API save failed:", error);
             return false;
         }
     };
@@ -195,7 +209,7 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
         updateConfig({ uxPolicy: { ...config.uxPolicy, ...uxPolicy } });
     };
 
-    const updateApiKeys = async (category: 'general' | 'school' | 'student', updates: Partial<AdminConfig['apiKeys']['general']>) => {
+    const updateApiKeys = async (category: 'general' | 'school' | 'student', updates: Partial<AdminConfig['apiKeys']['general']>, options: { persist?: boolean } = {}) => {
         // 1. Optimistic Update (Local State)
         setConfig(prev => ({
             ...prev,
@@ -205,26 +219,22 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
             }
         }));
 
-        // 2. Safe Firestore Update (Dot Notation)
-        // Using dot notation (e.g. "apiKeys.school.flaskApiUrl") ensures we ONLY update specific fields
-        // and NEVER overwrite the entire map if our local state is stale.
+        if (options.persist === false) return;
+
+        const role = getAdminRole();
+        if (!canEditAdmin(role)) {
+            console.warn('[Config] API key update blocked: insufficient role');
+            return;
+        }
+
         try {
-            const docRef = doc(db, 'settings', CONFIG_DOC_ID);
-            const dotNotationUpdates: Record<string, any> = {};
-
-            Object.entries(updates).forEach(([key, value]) => {
-                dotNotationUpdates[`apiKeys.${category}.${key}`] = value;
+            await updateAdminConfig({
+                apiKeys: {
+                    [category]: updates
+                }
             });
-
-            // Use updateDoc for atomic field updates
-            // (Use setDoc with merge if document might not exist, but updateDoc is safer for existing docs)
-            const { updateDoc } = await import('firebase/firestore');
-            await updateDoc(docRef, dotNotationUpdates);
-
-            console.log(`[Config] Safe update for ${category}:`, Object.keys(updates));
         } catch (error) {
-            console.error('[Config] Failed to update API keys:', error);
-            // Revert or retry could be added here
+            console.error('[Config] Failed to update API keys via Admin API:', error);
         }
     };
 

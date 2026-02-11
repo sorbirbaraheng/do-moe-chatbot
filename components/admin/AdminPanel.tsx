@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { MOE_COLORS } from '../../constants';
 import { useAdminConfig, AdminConfig } from '../../contexts/AdminConfigContext';
 import { resetChatSession } from '../../services/geminiService';
+import { canEditAdmin, getAdminRole, clearAdminSession } from '../../services/adminAuth';
 import {
     ApiSettingsTab,
     PromptsTab,
@@ -12,16 +13,18 @@ import {
     SessionMonitorTab,
     AnalyticsTab,
     UserManagementTab,
+    AdminAuditTab,
 } from './tabs';
 
 interface AdminPanelProps {
     onClose: () => void;
+    onLogout: () => void;
 }
 
-type TabId = 'api' | 'prompts' | 'monitor' | 'analytics' | 'users';
+type TabId = 'api' | 'prompts' | 'monitor' | 'analytics' | 'users' | 'audit';
 
 // SIMPLIFIED: Only keep functional tabs
-const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
+const tabs: { id: TabId; label: string; icon: React.ReactNode; minRole: 'viewer' | 'operator' | 'admin' }[] = [
     {
         id: 'api',
         label: 'API Settings',
@@ -30,6 +33,7 @@ const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
             </svg>
         ),
+        minRole: 'operator',
     },
     {
         id: 'prompts',
@@ -39,6 +43,7 @@ const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
                 <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
             </svg>
         ),
+        minRole: 'operator',
     },
     {
         id: 'monitor',
@@ -48,6 +53,7 @@ const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 0 1-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0 1 15 18.257V17.25m6-12V15a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 15V5.25m18 0A2.25 2.25 0 0 0 18.75 3H5.25A2.25 2.25 0 0 0 3 5.25m18 0V12a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 12V5.25" />
             </svg>
         ),
+        minRole: 'viewer',
     },
     {
         id: 'analytics',
@@ -57,6 +63,7 @@ const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
             </svg>
         ),
+        minRole: 'viewer',
     },
     {
         id: 'users',
@@ -66,11 +73,37 @@ const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
             </svg>
         ),
+        minRole: 'admin',
     },
+    {
+        id: 'audit',
+        label: '🧾 Audit Logs',
+        icon: (
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6M7.5 4.5h9A1.5 1.5 0 0 1 18 6v12a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 18V6A1.5 1.5 0 0 1 7.5 4.5Z" />
+            </svg>
+        ),
+        minRole: 'operator',
+    }
 ];
 
-const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
+const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
     const [activeTab, setActiveTab] = useState<TabId>('api');
+    const role = getAdminRole() || 'viewer';
+    const canEdit = canEditAdmin(role);
+    const roleMeta: Record<typeof role, { label: string; desc: string; className: string }> = {
+        viewer: { label: 'Viewer', desc: 'อ่านอย่างเดียว', className: 'bg-gray-100 text-gray-600' },
+        operator: { label: 'Operator', desc: 'แก้ไขการตั้งค่า', className: 'bg-blue-100 text-blue-700' },
+        admin: { label: 'Admin', desc: 'สิทธิ์เต็ม', className: 'bg-purple-100 text-purple-700' },
+    };
+
+    useEffect(() => {
+        const roleRank: Record<typeof role, number> = { viewer: 0, operator: 1, admin: 2 };
+        const allowed = tabs.filter(tab => roleRank[role] >= roleRank[tab.minRole]);
+        if (allowed.length > 0 && !allowed.some(tab => tab.id === activeTab)) {
+            setActiveTab(allowed[0].id);
+        }
+    }, [role]);
     const {
         config,
         updateConfig,
@@ -326,6 +359,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
     };
 
     const handleSave = async () => {
+        if (!canEdit) {
+            setSaveMessage('⚠️ สิทธิ์ไม่เพียงพอสำหรับการบันทึก');
+            setTimeout(() => setSaveMessage(''), 3000);
+            return;
+        }
         setIsSaving(true);
 
         // Filter out empty keys
@@ -475,11 +513,16 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
 
             case 'users':
                 return <UserManagementTab />;
+            case 'audit':
+                return <AdminAuditTab />;
 
             default:
                 return <ApiSettingsTab {...sharedProps} activeApiCategory={activeApiCategory} setActiveApiCategory={setActiveApiCategory} handleTestGemini={handleTestGemini} handleTestGroq={handleTestGroq} handleTestRAG={handleTestRAG} handleTestFlask={handleTestFlask} handleOptimizeQueue={handleOptimizeQueue} keyStatuses={keyStatuses} keyErrorMessages={keyErrorMessages} keyErrorTypes={keyErrorTypes} testingKeyIndex={testingKeyIndex} />;
         }
     };
+
+    const roleRank: Record<typeof role, number> = { viewer: 0, operator: 1, admin: 2 };
+    const visibleTabs = tabs.filter(tab => roleRank[role] >= roleRank[tab.minRole]);
 
     return (
         <div className="fixed inset-0 z-50 hidden md:flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-300">
@@ -497,7 +540,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
                     </div>
 
                     <nav className="flex-1 space-y-1">
-                        {tabs.map((tab) => (
+                        {visibleTabs.map((tab) => (
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id)}
@@ -583,6 +626,15 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
                         {hasUnsavedChanges && <span className="w-2 h-2 bg-orange-400 rounded-full animate-pulse"></span>}
                         ปิดหน้าต่าง Admin
                     </button>
+                    <button
+                        onClick={() => {
+                            clearAdminSession();
+                            onLogout();
+                        }}
+                        className="w-full py-3 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all flex items-center justify-center gap-2 mt-2"
+                    >
+                        ออกจากระบบแอดมิน
+                    </button>
                 </div>
 
                 {/* Main Content */}
@@ -592,13 +644,20 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
                             {tabs.find(t => t.id === activeTab)?.label}
                         </h1>
                         <div className="flex items-center gap-3">
+                            <div className="flex flex-col items-end leading-tight">
+                                <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded-full ${roleMeta[role].className}`}>
+                                    {roleMeta[role].label}
+                                </span>
+                                <span className="text-[10px] text-black/40 mt-1">{roleMeta[role].desc}</span>
+                            </div>
                             {saveMessage && (
                                 <span className="text-sm text-green-600 font-medium animate-in fade-in">{saveMessage}</span>
                             )}
                             <button
                                 onClick={handleSave}
-                                disabled={isSaving}
-                                className="px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-all disabled:opacity-50 flex items-center gap-2"
+                                disabled={isSaving || !canEdit}
+                                title={!canEdit ? 'สิทธิ์ Viewer ไม่สามารถบันทึกได้' : undefined}
+                                className={`px-6 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${canEdit ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
                             >
                                 {isSaving && (
                                     <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24">
@@ -612,6 +671,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
                     </header>
 
                     <main className="flex-1 overflow-y-auto p-6">
+                        {!canEdit && (
+                            <div className="mb-4 px-4 py-3 rounded-xl bg-amber-50 text-amber-700 text-sm font-medium">
+                                โหมดอ่านอย่างเดียว (Viewer) ไม่สามารถบันทึกการเปลี่ยนแปลงได้
+                            </div>
+                        )}
                         {renderTabContent()}
                     </main>
                 </div>

@@ -1,15 +1,12 @@
 import React, { useState } from 'react';
-import { signInAnonymously } from 'firebase/auth';
-import { auth } from '../../services/firebase';
 import { MOE_COLORS } from '../../constants';
+import { adminLogin } from '../../services/adminApi';
+import { setAdminSession } from '../../services/adminAuth';
 
 interface AdminLoginProps {
     onSuccess: () => void;
     onCancel: () => void;
 }
-
-// Default admin password (in production, this should be stored securely)
-const ADMIN_PASSWORD = '123';
 
 const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onCancel }) => {
     const [password, setPassword] = useState('');
@@ -22,19 +19,14 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onCancel }) => {
         setIsLoading(true);
 
         try {
-            // Simulate verification delay
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-            if (password === ADMIN_PASSWORD) {
-                // Ensure we have a firebase session for Firestore writes
-                if (!auth.currentUser) {
-                    await signInAnonymously(auth);
-                }
+            const result = await adminLogin(password);
+            if (result.success) {
+                setAdminSession(result.token, result.role, false);
                 onSuccess();
-            } else {
-                setError('รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
-                setIsLoading(false);
+                return;
             }
+            setError(result.error || 'รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
+            setIsLoading(false);
         } catch (err) {
             console.error("Admin Login Error:", err);
             setError('เกิดข้อผิดพลาดในการเชื่อมต่อ');

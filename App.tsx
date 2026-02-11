@@ -21,6 +21,7 @@ import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
 import AdminPanel from './components/admin/AdminPanel';
 import AdminLogin from './components/admin/AdminLogin';
+import { getAdminToken, clearAdminSession } from './services/adminAuth';
 import MobileMenu from './components/MobileMenu';
 import { Category, Message, User } from './types';
 import { sendMessageStream, startChat, updateGeminiConfig, resetChatSession, getLastRagDebugInfo, abortCurrentStream } from './services/geminiService';
@@ -525,7 +526,7 @@ const AppContent: React.FC = () => {
 
     // Clear Admin Session
     setIsAdminAuthenticated(false);
-    sessionStorage.removeItem('is_admin_authenticated');
+    clearAdminSession();
 
     // Reset RAG Debug Mode for safety
     await updateConfig({ uxPolicy: { ...config.uxPolicy, showRagDebug: false } });
@@ -902,15 +903,11 @@ const AppContent: React.FC = () => {
     }
   };
 
-  // Admin Session persistence (Session-only)
+  // Admin Session persistence (Token-based)
   useEffect(() => {
-    const savedAdminAuth = sessionStorage.getItem('is_admin_authenticated') === 'true';
-    if (savedAdminAuth) setIsAdminAuthenticated(true);
+    const token = getAdminToken();
+    if (token) setIsAdminAuthenticated(true);
   }, []);
-
-  useEffect(() => {
-    sessionStorage.setItem('is_admin_authenticated', isAdminAuthenticated.toString());
-  }, [isAdminAuthenticated]);
 
   const renderViewContent = (viewName: View, isExiting: boolean) => {
     const animationClass = isExiting ? 'fluid-exit z-0 pointer-events-none' : 'fluid-entrance z-10';
@@ -1433,6 +1430,11 @@ const AppContent: React.FC = () => {
             setShowAdminPanel(false);
             // NOTE: We do NOT reset isAdminAuthenticated here
             // so the admin can continue to see RAG debug info in the chat.
+          }}
+          onLogout={() => {
+            clearAdminSession();
+            setIsAdminAuthenticated(false);
+            setShowAdminPanel(false);
           }}
         />
       )}

@@ -2,7 +2,7 @@
 # =============================================================================
 # DO-MOE Chatbot - Stop All Services
 # =============================================================================
-# Usage: ./stop_all.sh
+# Usage: ./scripts/stop_all.sh
 # This script stops both Frontend (Next.js) and Backend (Gunicorn) services
 # =============================================================================
 
