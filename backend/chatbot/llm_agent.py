@@ -86,6 +86,9 @@ class LLMAgent:
             
             logger.info(f"🔧 Selected {len(tool_calls)} tool(s): {[t['name'] for t in tool_calls]}")
             
+            # Step 1.5: Enrich tool params with context (follow-up region/province injection)
+            tool_calls = self._enrich_tool_params(question, tool_calls, context)
+            
             # Step 2: Execute all selected tools
             results = []
             deterministic_tools = [
@@ -113,21 +116,29 @@ class LLMAgent:
                 results.append(result)
             
             # Step 3: Generate Response
-            # Deterministic mode for data queries (improves accuracy & speed)
+            # Hybrid mode: template for data accuracy → LLM for natural language
             use_deterministic = os.getenv("ENABLE_DETERMINISTIC_RESPONSES", "1") == "1"
             if should_use_deterministic and len(results) == 1 and use_deterministic:
-                 logger.info("⚡ Using Deterministic Response (Template)")
-                 return self._inject_widgets(self._format_fallback_response(results, question), results), active_query
+                 logger.info("⚡ Deterministic path → Naturalizing with LLM...")
+                 template_text = self._format_fallback_response(results, question)
+                 natural_text = self._naturalize_response(template_text, question, results)
+                 # Add suggestion chips to deterministic path too
+                 suggestions_list = self._get_proactive_suggestions(tool_calls, results)
+                 if suggestions_list:
+                     import json
+                     natural_text += "\n\n<suggestions>" + json.dumps(suggestions_list, ensure_ascii=False) + "</suggestions>"
+                 return self._inject_widgets(natural_text, results), active_query
             
             # Step 4: Fallback to LLM for complex queries
-            suggestions_str = self._get_proactive_suggestions(tool_calls, results)
+            suggestions_list = self._get_proactive_suggestions(tool_calls, results)
             
             # GENERATE RESPONSE
             response = self._generate_response(question, results)
             
-            # FORCE APPEND SUGGESTIONS
-            if suggestions_str:
-                response += "\n\n" + suggestions_str
+            # Embed suggestions as structured tag (frontend renders as clickable chips)
+            if suggestions_list:
+                import json
+                response += "\n\n<suggestions>" + json.dumps(suggestions_list, ensure_ascii=False) + "</suggestions>"
 
             # Ensure widgets are injected when relevant (if LLM didn't include them)
             response = self._inject_widgets(response, results, question)
@@ -162,58 +173,53 @@ class LLMAgent:
                 msg = "สวัสดีครับ ยินดีช่วยครับ อยากสอบถามเรื่องการศึกษาด้านไหนครับ"
                 return [{"name": "__ask_back__", "params": {"message": msg, "pending_tool": None}}]
 
-        # Quick path for threshold filter queries (avoid LLM misclassification)
+
+        # ══════════════════════════════════════════════════════════════
+        # LLM-FIRST: Only keep concept groups that LLM can't Know
+        # All other routing delegated to LLM structured extraction
+        # ══════════════════════════════════════════════════════════════
         q_raw = (question or "")
-        province = self._extract_province(q_raw)
-        district = self._extract_district(q_raw)
-        region = self._extract_region(q_raw)
-        school_name = self._extract_school_name(q_raw)
 
-        threshold = self._extract_threshold_followup(q_raw)
-        if threshold.get("value") is not None and threshold.get("operator"):
-            has_school_scope = any(k in q_raw for k in ["โรงเรียน", "อำเภอ", "เขต", "ตำบล", "แขวง", "จังหวัด"])
-            if has_school_scope:
-                metric = "teachers" if any(k in q_raw for k in ["ครู", "อาจารย์", "บุคลากร"]) else "students"
-                params = {
-                    "metric": metric,
-                    "operator": threshold["operator"],
-                    "value": threshold["value"],
-                    "limit": 20
-                }
-                if province:
-                    params["province"] = province
-                if district:
-                    params["district"] = district
-                if region:
-                    params["region"] = region
-                return [{"name": "filter_schools", "params": params}]
-
-        # Lightweight multi-metric shortcut (avoid LLM when user clearly asks multiple metrics)
-        has_students = any(k in q_raw for k in ["นักเรียน", "ผู้เรียน"])
-        has_teachers = any(k in q_raw for k in ["ครู", "อาจารย์", "บุคลากร"])
-        has_schools = any(k in q_raw for k in ["โรงเรียน", "สถานศึกษา", "กี่โรง", "กี่แห่ง"])
-        has_summary = any(k in q_raw for k in ["สรุป", "ภาพรวม", "ทั้งหมดรวม", "รวมทั้งหมด"])
-
-        # If asking for multiple metrics for a province -> use province summary (fewer calls)
-        if province and not school_name and (has_summary or (has_students and has_teachers) or (has_students and has_schools) or (has_teachers and has_schools)):
-            return [{"name": "get_province_summary", "params": {"province": province}}]
-
-        # If asking about a specific school with multiple metrics -> use school details
-        if school_name and (has_students or has_teachers):
-            return [{"name": "get_school_full_details", "params": {"school_name": school_name, "province": province}}]
-
-        # Multi-metric counts at district/region scope -> run multiple tools
-        if (has_students and has_teachers) or (has_students and has_schools) or (has_teachers and has_schools):
-            params_base = {"province": province, "district": district, "region": region}
-            tool_calls = []
-            if has_schools:
-                tool_calls.append({"name": "count_schools", "params": params_base})
+        # ── Quick-path: Concept group "3 จังหวัดชายแดนภาคใต้" ──
+        southern_border_kws = ["3 จังหวัดชายแดน", "สามจังหวัดชายแดน", "3จังหวัดชายแดน", "จังหวัดชายแดนภาคใต้"]
+        if any(k in q_raw for k in southern_border_kws):
+            border_provinces = "ปัตตานี,ยะลา,นราธิวาส"
+            has_students = any(k in q_raw for k in ["นักเรียน", "ผู้เรียน"])
+            has_teachers = any(k in q_raw for k in ["ครู", "อาจารย์", "บุคลากร"])
+            has_schools = any(k in q_raw for k in ["โรงเรียน", "สถานศึกษา", "กี่โรง", "กี่แห่ง"])
             if has_students:
-                tool_calls.append({"name": "count_students", "params": params_base})
-            if has_teachers:
-                tool_calls.append({"name": "count_teachers", "params": params_base})
-            if len(tool_calls) >= 2:
-                return tool_calls
+                m = "students"
+            elif has_teachers:
+                m = "teachers"
+            elif has_schools or "โรงเรียน" in q_raw:
+                m = "schools"
+            else:
+                m = "all"
+            logger.info(f"⚡ Quick-path CONCEPT GROUP (3 จังหวัดชายแดน): metric={m}")
+            return [{"name": "compare_provinces", "params": {"provinces": border_provinces, "metrics": m}}]
+
+        # ── Quick-path: EEC concept group ──
+        eec_kws = ["eec", "อีอีซี", "EEC", "ระเบียงเศรษฐกิจ"]
+        if any(k in q_raw.lower() for k in eec_kws):
+            eec_provinces = "ชลบุรี,ระยอง,ฉะเชิงเทรา"
+            has_students = any(k in q_raw for k in ["นักเรียน", "ผู้เรียน"])
+            has_teachers = any(k in q_raw for k in ["ครู", "อาจารย์", "บุคลากร"])
+            has_schools = any(k in q_raw for k in ["โรงเรียน", "สถานศึกษา", "กี่โรง", "กี่แห่ง"])
+            if has_students:
+                m = "students"
+            elif has_teachers:
+                m = "teachers"
+            elif has_schools or "โรงเรียน" in q_raw:
+                m = "schools"
+            else:
+                m = "all"
+            logger.info(f"⚡ Quick-path CONCEPT GROUP (EEC): metric={m}")
+            return [{"name": "compare_provinces", "params": {"provinces": eec_provinces, "metrics": m}}]
+
+        # ══════════════════════════════════════════════════════════════
+        # LLM STRUCTURED EXTRACTION — primary tool selection
+        # ══════════════════════════════════════════════════════════════
+
 
         structured = extract_query_structured_via_llm(question, self.llm, context=context or {})
         confidence = structured.get("confidence")
@@ -272,6 +278,14 @@ class LLMAgent:
             return [{"name": "__ask_back__", "params": {"message": "ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ เพื่อเลือกเครื่องมือให้ถูกต้อง", "pending_tool": None}}]
 
         params = self._sanitize_structured_params(tool, params)
+
+        # Enrich: inject person_type if LLM forgot (common for "ข้าราชการครู กี่คน")
+        if tool == "count_teachers" and not params.get("person_type"):
+            pt = self._extract_person_type(question)
+            if pt:
+                params["person_type"] = pt
+                logger.info(f"👔 Enriched person_type from question: {pt}")
+
         # Route-guard: fix obvious misrouting (e.g., province summary vs school detail)
         tool, params = self._route_guard(question, tool, params)
         clarification = self._build_clarification(tool, params)
@@ -285,6 +299,14 @@ class LLMAgent:
         """Lightweight guard to fix common tool mis-selections without overriding valid intents."""
         if not tool:
             return tool, params
+
+        # Never override these tools — they are intentionally selected by LLM
+        PROTECTED_TOOLS = {"ranking", "compare_provinces", "filter_schools", "find_best_ratio_schools",
+                           "ranking_by_agency", "ranking_subdistricts", "compare",
+                           "count_students", "count_teachers", "count_schools"}
+        if tool in PROTECTED_TOOLS:
+            return tool, params
+
         q = (question or "")
         q_lower = q.lower()
 
@@ -297,8 +319,8 @@ class LLMAgent:
         has_grade = any(k in q for k in ["ระดับชั้น", "ชั้นไหน", "ระดับชั้นไหน", "ป.", "ม.", "อนุบาล", "ปวช", "ปวส"])
         has_gender_ratio = any(k in q for k in ["สัดส่วนเพศ", "อัตราส่วนเพศ"])
 
-        # If asking for both students + teachers at province scope, use province summary
-        if (has_students and has_teachers) and params.get("province"):
+        # If asking for both students + teachers at province scope (WITHOUT school name), use province summary
+        if (has_students and has_teachers) and params.get("province") and not params.get("school_name"):
             return "get_province_summary", {"province": params.get("province")}
 
         # System type queries (in-system/out-of-system)
@@ -844,6 +866,16 @@ class LLMAgent:
                     params['region'] = question_region
                     logger.info(f"💉 Injected region from question: {question_region}")
 
+            # Inject region from CONTEXT (memory) for follow-up queries when missing
+            if not params.get('region') and not question_region and context and is_followup:
+                ctx_region = context.get('last_region')
+                if ctx_region:
+                    region_tools = ['count_students', 'count_teachers', 'count_schools',
+                                    'list_schools', 'ranking', 'advanced_school_search']
+                    if tool['name'] in region_tools:
+                        params['region'] = ctx_region
+                        logger.info(f"💉 Injected region from context (follow-up): {ctx_region}")
+
             # Inject district from question when missing (non-followup safe)
             if not params.get('district'):
                 question_district = self._extract_district(question)
@@ -1109,7 +1141,10 @@ class LLMAgent:
              return [{"name": "get_school_full_details", "params": {"school_name": school_name, "province": province}}]
 
         # 2. RATIO - อัตราส่วน (BEFORE ครู detection!)
-        if any(kw in question_lower for kw in ['อัตราส่วน', 'ต่อครู', 'ratio', 'นักเรียน:ครู', 'ครู:นักเรียน']):
+        # BUT skip if ranking keywords present (e.g., "อัตราส่วนสูงที่สุด" → handled by ranking quick-path above)
+        ranking_kws_check = ["มากที่สุด", "น้อยที่สุด", "สูงสุด", "ต่ำสุด", "ดีที่สุด", "แย่ที่สุด", "อันดับ"]
+        is_ratio_ranking = any(k in question for k in ranking_kws_check)
+        if any(kw in question_lower for kw in ['อัตราส่วน', 'ต่อครู', 'ratio', 'นักเรียน:ครู', 'ครู:นักเรียน']) and not is_ratio_ranking:
             return [{"name": "get_ratio", "params": params}]
         
         # 2.5 THRESHOLD FILTER - โรงเรียนที่มีนักเรียน/ครู น้อยกว่า/มากกว่า X คน
@@ -1319,7 +1354,12 @@ class LLMAgent:
                 'ที่มี', 'ซึ่ง', 'ทั้งหมด', 'กี่', 'ใด', 'นี้', 'นั้น', 'โน้น',
                 'สพฐ', 'สช', 'อปท', 'ตชด', 'กทม', 'เอกชน', 'ในระบบ', 'นอกระบบ',
                 'นักเรียน', 'ครู', 'บุคลากร', 'คน', 'แห่ง', 'มากกว่า', 'น้อยกว่า',
-                'ไม่เกิน', 'ต่ำกว่า', 'อย่างน้อย', 'ที่นักเรียน', 'ที่ครู'
+                'ไม่เกิน', 'ต่ำกว่า', 'อย่างน้อย', 'ที่นักเรียน', 'ที่ครู',
+                # Ranking/size/comparison stop words
+                'มาก', 'น้อย', 'ขนาด', 'ขนาดเล็ก', 'ขนาดใหญ่', 'ขนาดกลาง',
+                'ดีที่สุด', 'แย่ที่สุด', 'มากที่สุด', 'น้อยที่สุด', 'อันดับ',
+                'ชายแดน', 'ใกล้', 'ไกล', 'ทุก', 'หมด', 'ทั้ง', 'แต่ละ', 'รวม',
+                'ไหน', 'อะไร', 'เท่าไหร่', 'เท่าไร',
             ]
             if any(x in school for x in bad_tokens):
                 logger.info(f"🏫 Ignoring false positive school name: '{school}'")
@@ -1369,6 +1409,25 @@ class LLMAgent:
             if kw in question:
                 logger.info(f"🏫 Extracted school (famous keyword): '{kw}'")
                 return kw
+        
+        # 3.5 NEW: Institution prefix patterns (ศูนย์, สถาบัน, กศน, etc.)
+        # These are education institutions that don't start with "โรงเรียน"
+        institution_stop = r'(?=\s*(?:มี|กี่|ที่|ใน|ครู|นักเรียน|หน่อย|ครับ|ค่ะ|นะ|บ้าง|$))'
+        institution_patterns = [
+            r'(ศูนย์ส่งเสริมการเรียนรู้[ก-๙a-zA-Z\s]+?)' + institution_stop,
+            r'(ศูนย์การเรียนรู้[ก-๙a-zA-Z\s]+?)' + institution_stop,
+            r'(ศูนย์การศึกษา[ก-๙a-zA-Z\s]+?)' + institution_stop,
+            r'(ศูนย์กศน[ก-๙a-zA-Z\s\.]+?)' + institution_stop,
+            r'(กศน\.?\s*[ก-๙a-zA-Z\s]+?)' + institution_stop,
+            r'(สถาบัน[ก-๙a-zA-Z\s]+?)' + institution_stop,
+        ]
+        for pattern in institution_patterns:
+            match = re.search(pattern, question)
+            if match:
+                institution = match.group(1).strip()
+                if len(institution) > 5:
+                    logger.info(f"🏫 Extracted school (institution pattern): '{institution}'")
+                    return institution
         
         # 4. Fallback: Simple prefix patterns
         # Use lookahead to stop at common keywords
@@ -1620,10 +1679,10 @@ class LLMAgent:
         match = re.search(pattern, question)
         return ("", "")
     
-    def _get_proactive_suggestions(self, tool_calls: List[Dict], results: List[Dict]) -> str:
+    def _get_proactive_suggestions(self, tool_calls: List[Dict], results: List[Dict]) -> List[str]:
         """
         Generate proactive follow-up suggestions based on tool results.
-        Returns a string of suggestions to be appended to the LLM prompt.
+        Returns a list of suggestion strings for frontend to render as clickable chips.
         """
         suggestions = []
         
@@ -1634,30 +1693,83 @@ class LLMAgent:
             # Scenario 1: User asked for school details
             if name == "get_school_full_details" or (name == "search_schools" and result.get("total_count", 0) == 1):
                 school_name = params.get("school_name") or "โรงเรียนนี้"
-                suggestions.append(f"- เปรียบเทียบจำนวนนักเรียนของ {school_name} กับโรงเรียนใกล้เคียง")
-                suggestions.append(f"- ดูอัตราส่วนครูต่อนักเรียนของ {school_name}")
-                suggestions.append(f"- ดูจำนวนนักเรียนแยกตามระดับชั้น (ชาย/หญิง)")
+                suggestions.append(f"เปรียบเทียบจำนวนนักเรียนของ {school_name} กับโรงเรียนใกล้เคียง")
+                suggestions.append(f"ดูอัตราส่วนครูต่อนักเรียนของ {school_name}")
+                suggestions.append(f"ดูจำนวนนักเรียนแยกตามระดับชั้น (ชาย/หญิง)")
 
             # Scenario 2: User asked for student count (School level)
             elif name == "count_students" and params.get("school_name"):
-                suggestions.append("- ดูจำนวนครูเพื่อหาอัตราส่วน")
-                suggestions.append("- ดูข้อมูลที่ตั้งและรายละเอียดโรงเรียนเพิ่มเติม")
+                suggestions.append("ดูจำนวนครูเพื่อหาอัตราส่วน")
+                suggestions.append("ดูข้อมูลที่ตั้งและรายละเอียดโรงเรียนเพิ่มเติม")
 
             # Scenario 3: User asked for student count (Province level)
             elif name == "count_students" and params.get("province"):
                 prov = params.get("province")
-                suggestions.append(f"- จัดอันดับ 5 โรงเรียนที่มีนักเรียนมากที่สุดใน{prov}")
-                suggestions.append(f"- ดูจำนวนโรงเรียนทั้งหมดใน{prov}")
+                suggestions.append(f"จัดอันดับ 5 โรงเรียนที่มีนักเรียนมากที่สุดใน{prov}")
+                suggestions.append(f"ดูจำนวนโรงเรียนทั้งหมดใน{prov}")
             
             # Scenario 4: Ranking
             elif name == "ranking":
-                suggestions.append("- ดูรายละเอียดของโรงเรียนอันดับ 1")
-                suggestions.append("- เปรียบเทียบโรงเรียนอันดับ 1 กับอันดับ 2")
+                suggestions.append("ดูรายละเอียดของโรงเรียนอันดับ 1")
+                suggestions.append("เปรียบเทียบโรงเรียนอันดับ 1 กับอันดับ 2")
+
+            # Scenario 5: Province summary
+            elif name == "get_province_summary":
+                prov = params.get("province") or "จังหวัดนี้"
+                suggestions.append(f"จัดอันดับโรงเรียนที่มีนักเรียนมากที่สุดใน{prov}")
+                suggestions.append(f"อัตราส่วนครูต่อนักเรียนของ{prov}")
+                suggestions.append(f"แยกจำนวนนักเรียนตามอำเภอใน{prov}")
+
+            # Scenario 6: Teacher count
+            elif name == "count_teachers":
+                if params.get("school_name"):
+                    suggestions.append(f"ดูจำนวนนักเรียนของ {params['school_name']}")
+                    suggestions.append(f"ดูอัตราส่วนครูต่อนักเรียนของ {params['school_name']}")
+                elif params.get("province"):
+                    suggestions.append(f"แยกตามประเภทบุคลากรใน{params['province']}")
+                    suggestions.append(f"จัดอันดับโรงเรียนที่มีครูมากที่สุดใน{params['province']}")
+
+            # Scenario 7: Count schools
+            elif name == "count_schools":
+                prov = params.get("province")
+                if prov:
+                    suggestions.append(f"จัดอันดับโรงเรียนที่มีนักเรียนมากที่สุดใน{prov}")
+                    suggestions.append(f"อัตราส่วนครูต่อนักเรียนของ{prov}")
+                    suggestions.append(f"จำนวนครูทั้งหมดใน{prov}")
+
+            # Scenario 8: Search/List schools (multi-result)
+            elif name in ("search_schools", "list_schools", "advanced_school_search"):
+                prov = params.get("province")
+                if prov:
+                    suggestions.append(f"จัดอันดับโรงเรียนที่มีนักเรียนมากที่สุดใน{prov}")
+                    suggestions.append(f"จำนวนนักเรียนทั้งหมดใน{prov}")
+                    suggestions.append(f"อัตราส่วนครูต่อนักเรียนของ{prov}")
+                else:
+                    suggestions.append("ดูรายละเอียดเพิ่มเติมของโรงเรียนลำดับแรก")
+                    suggestions.append("จัดอันดับโรงเรียนที่มีนักเรียนมากที่สุด")
+
+            # Scenario 9: Get ratio
+            elif name == "get_ratio":
+                school_name = params.get("school_name")
+                prov = params.get("province")
+                if school_name:
+                    suggestions.append(f"ดูจำนวนนักเรียนแยกตามระดับชั้นของ {school_name}")
+                    suggestions.append(f"ดูรายละเอียดเพิ่มเติมของ {school_name}")
+                elif prov:
+                    suggestions.append(f"จัดอันดับโรงเรียนที่มีอัตราส่วนครูต่อนักเรียนดีที่สุดใน{prov}")
+                    suggestions.append(f"จำนวนครูทั้งหมดใน{prov}")
+
+            # Scenario 10: Grade distribution
+            elif name == "get_grade_distribution":
+                school_name = params.get("school_name")
+                if school_name:
+                    suggestions.append(f"ดูอัตราส่วนครูต่อนักเรียนของ {school_name}")
+                    suggestions.append(f"เปรียบเทียบ {school_name} กับโรงเรียนใกล้เคียง")
 
         if not suggestions:
-            return ""
+            return []
             
-        return "\n💡 **เรื่องน่ารู้เพิ่มเติม:**\n" + "\n".join(suggestions[:3])
+        return suggestions[:3]
 
     def _generate_response(self, question: str, results: List[Dict], suggestions_str: str = "") -> str:
         """Use LLM to generate natural language response from tool results"""
@@ -1741,6 +1853,76 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
         # Fallback: format data nicely
         fallback_text = self._format_fallback_response(results, question)
         return self._inject_widgets(fallback_text, results, question)
+
+    def _naturalize_response(self, template_text: str, question: str, results: list) -> str:
+        """
+        Post-process a template response with LLM to make it sound natural.
+        Preserves <chart>, <map>, and other UI tags.
+        Falls back to template if LLM fails.
+        """
+        import re as _re
+        import json as _json
+        
+        if not template_text or not template_text.strip():
+            return template_text
+        
+        # 1. Extract UI widget tags (<chart>...</chart>, <map>...</map>)
+        widget_tags = []
+        tag_pattern = _re.compile(r'(<(?:chart|map)>.*?</(?:chart|map)>)', _re.DOTALL)
+        for match in tag_pattern.finditer(template_text):
+            widget_tags.append(match.group(1))
+        
+        # Strip widget tags from text for LLM processing
+        text_only = tag_pattern.sub('', template_text).strip()
+        
+        if not text_only:
+            return template_text
+        
+        # 2. Build prompt for LLM rewriting
+        prompt = f"""คุณคือ "น้องดีโอ" (DO AI) ผู้ช่วยข้อมูลการศึกษาจากกระทรวงศึกษาธิการ
+
+**งานของคุณ:** เขียนคำตอบใหม่จากข้อมูลด้านล่าง ให้อ่านเป็นธรรมชาติ สุภาพ เป็นกันเอง
+
+**กฎเหล็ก:**
+- ตัวเลขทุกตัวต้องตรงกับข้อมูลที่ให้ 100% ห้ามแต่งเพิ่ม ห้ามปัดเศษ
+- ใช้ "ครับ" ลงท้าย พอดีๆ ไม่ย้ำบ่อย
+- ห้ามขึ้นต้นด้วย "จากข้อมูล..." "จากฐานข้อมูล..." "จากการตรวจสอบ..."
+- ห้ามพูดถึงปีการศึกษา เว้นแต่ผู้ใช้ถามเรื่องปี
+- ถ้ามีข้อมูลจัดอันดับ ให้ใช้ Markdown table แสดง
+- ถ้ามีข้อมูลเยอะ ให้สรุปภาพรวมสั้นๆ ก่อน แล้วค่อยแสดงรายละเอียด
+- ความยาว 3-6 ประโยค (ไม่นับตาราง)
+- อีโมจิ 0-1 ตัวต่อคำตอบ
+- ห้ามบอกว่าคุณกำลัง "เขียนใหม่" หรือ "ปรับปรุง"
+- ห้ามเพิ่มข้อเสนอแนะ/คำถามต่อยอด เช่น "เรื่องน่ารู้เพิ่มเติม" หรือ "💡" (ระบบจัดการแยกแล้ว)
+
+**คำถามผู้ใช้:** "{question}"
+
+**ข้อมูลที่ต้องใช้ (ตัวเลขทุกตัวต้องตรง):**
+{text_only}
+
+**เขียนคำตอบใหม่:**"""
+        
+        try:
+            logger.info("🎨 Naturalizing template response with LLM...")
+            response = self.llm.generate_content(prompt, timeout=20)
+            
+            if response and response.text and len(response.text.strip()) > 20:
+                natural = response.text.strip()
+                logger.info(f"✅ Naturalized response ({len(template_text)} → {len(natural)} chars)")
+                
+                # 3. Re-append widget tags
+                if widget_tags:
+                    natural += "\n\n" + "\n".join(widget_tags)
+                
+                return natural
+            else:
+                logger.warning("⚠️ LLM returned empty/short response, using template")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Naturalization failed ({e}), using template")
+        
+        # Fallback: return original template
+        return template_text
 
     def _question_mentions_year(self, question: str) -> bool:
         if not question:
@@ -1856,64 +2038,6 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                         text += f"\n\n<chart>{chart_json}</chart>"
                         logger.info("📊 Chart widget added as fallback (LLM didn't include)")
                         
-                # Count Schools Chart (Breakdown) - AUTO when relevant
-                elif tool == "count_schools":
-                    by_district = res.get("by_district", {})
-                    by_agency = res.get("by_agency", {})
-                    chart_data = []
-                    title = "จำนวนโรงเรียน"
-                    
-                    if by_district and len(by_district) > 1:
-                        title = "แยกตามอำเภอ"
-                        for k, v in list(by_district.items())[:10]:
-                            chart_data.append({"name": k, "value": v})
-                    elif by_agency and len(by_agency) > 1:
-                        title = "แยกตามสังกัด"
-                        for k, v in list(by_agency.items())[:10]:
-                            chart_data.append({"name": k, "value": v})
-                    
-                    if chart_data and "<chart>" not in text:
-                        chart_json = json.dumps({
-                            "type": "bar" if len(chart_data) > 4 else "pie",
-                            "data": chart_data,
-                            "title": title
-                        }, ensure_ascii=False)
-                        text += f"\n\n<chart>{chart_json}</chart>"
-
-                # Count Teachers Chart (Gender) - AUTO when relevant
-                elif tool == "count_teachers":
-                    by_gender = res.get("by_gender", {})
-                    male = by_gender.get('male', 0)
-                    female = by_gender.get('female', 0)
-                    if (male > 0 or female > 0) and "<chart>" not in text:
-                        chart_data = [
-                            {"name": "ชาย", "value": male},
-                            {"name": "หญิง", "value": female}
-                        ]
-                        chart_json = json.dumps({
-                            "type": "pie",
-                            "data": chart_data,
-                            "title": "สัดส่วนครูแยกตามเพศ"
-                        }, ensure_ascii=False)
-                        text += f"\n\n<chart>{chart_json}</chart>"
-
-                # Count Students Chart (Gender) - AUTO when relevant
-                elif tool == "count_students":
-                    by_gender = res.get("by_gender", {})
-                    male = by_gender.get('male', 0)
-                    female = by_gender.get('female', 0)
-                    if (male > 0 or female > 0) and "<chart>" not in text:
-                        chart_data = [
-                            {"name": "ชาย", "value": male},
-                            {"name": "หญิง", "value": female}
-                        ]
-                        chart_json = json.dumps({
-                            "type": "pie",
-                            "data": chart_data,
-                            "title": "สัดส่วนนักเรียนแยกตามเพศ"
-                        }, ensure_ascii=False)
-                        text += f"\n\n<chart>{chart_json}</chart>"
-
                 # Comparison Chart (Region/Province/School) - ALWAYS SHOW
                 elif tool == "compare":
                     e1 = res.get("entity1", {})
@@ -1946,53 +2070,23 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                         if "<chart>" not in text:
                             text += f"\n\n<chart>{chart_json}</chart>"
                             logger.info(f"📊 Comparison chart injected: {name1}={val1}, {name2}={val2}")
-
-                # Gender ratio overview (area)
-                elif tool == "analyze_gender_ratio":
-                    overview = res.get("overview") or {}
-                    male = overview.get("male", 0) or 0
-                    female = overview.get("female", 0) or 0
-                    if (male > 0 or female > 0) and "<chart>" not in text:
-                        chart_json = json.dumps({
-                            "type": "pie",
-                            "data": [{"name": "ชาย", "value": male}, {"name": "หญิง", "value": female}],
-                            "title": "สัดส่วนเพศนักเรียน"
-                        }, ensure_ascii=False)
-                        text += f"\n\n<chart>{chart_json}</chart>"
-
-                # Grade distribution chart
-                elif tool == "get_grade_distribution":
-                    dist = res.get("distribution") or []
-                    if dist and "<chart>" not in text:
-                        chart_data = []
-                        for item in dist[:12]:
-                            chart_data.append({"name": item.get("grade", ""), "value": item.get("count", 0)})
-                        chart_json = json.dumps({
-                            "type": "bar",
-                            "data": chart_data,
-                            "title": "จำนวนนักเรียนตามระดับชั้น"
-                        }, ensure_ascii=False)
-                        text += f"\n\n<chart>{chart_json}</chart>"
-
-                # Count Students Chart (Gender) - RESTRICTED
-                elif tool == "count_students":
-                     if is_explicit_chart_req:
-                         by_gender = res.get("by_gender", {})
-                         male = by_gender.get('male', 0)
-                         female = by_gender.get('female', 0)
-                         
-                         if male > 0 or female > 0:
-                             chart_data = [
-                                 {"name": "ชาย", "value": male},
-                                 {"name": "หญิง", "value": female}
-                             ]
-                             chart_json = json.dumps({
-                                "type": "pie",
-                                "data": chart_data,
-                                "title": "สัดส่วนนักเรียนแยกตามเพศ"
-                            }, ensure_ascii=False)
-                             if "<chart>" not in text:
-                                text += f"\n\n<chart>{chart_json}</chart>"
+                    if is_explicit_chart_req:
+                        by_gender = res.get("by_gender", {})
+                        male = by_gender.get('male', 0)
+                        female = by_gender.get('female', 0)
+                        
+                        if male > 0 or female > 0:
+                            chart_data = [
+                                {"name": "ชาย", "value": male},
+                                {"name": "หญิง", "value": female}
+                            ]
+                            chart_json = json.dumps({
+                               "type": "pie",
+                               "data": chart_data,
+                               "title": "สัดส่วนนักเรียนแยกตามเพศ"
+                           }, ensure_ascii=False)
+                            if "<chart>" not in text:
+                               text += f"\n\n<chart>{chart_json}</chart>"
                             
         except Exception as e:
             logger.error(f"❌ Failed to inject widgets: {e}")
@@ -2554,14 +2648,24 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                 order_text = "มากที่สุด" if result.get("order") == "most" else "น้อยที่สุด"
                 metric = result.get("metric")
                 scope = result.get("scope", "school")
+                if scope in ["province", "provinces"]:
+                    subject_text = "จังหวัด"
+                elif scope in ["district", "districts"]:
+                    subject_text = "อำเภอ"
+                elif scope in ["subdistrict", "subdistricts"]:
+                    subject_text = "ตำบล"
+                else:
+                    subject_text = "โรงเรียน"
+
                 if metric == "schools":
                     metric_text = "โรงเรียน"
                     unit_text = "แห่ง"
-                    subject_text = "จังหวัด" if scope in ["province", "provinces"] else "โรงเรียน"
+                elif metric == "ratio":
+                    metric_text = "อัตราส่วนครูต่อนักเรียน"
+                    unit_text = "อัตราส่วน"
                 else:
                     metric_text = "นักเรียน" if metric == "students" else "ครู"
                     unit_text = "คน"
-                    subject_text = "โรงเรียน"
                 
                 # Intro
                 text = f"จากการจัดอันดับข้อมูล พบว่า{subject_text}ที่มีจำนวน{metric_text}{order_text} มีดังนี้ครับ"
@@ -2569,18 +2673,32 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                 # List
                 top_school = ""
                 top_count = 0
+                top_ratio = None
                 for item in ranking:
                     rank = item['rank']
                     name = item['name']
                     count = item['count']
-                    text += f"\n{rank}. {name}: {count:,} {unit_text}"
+                    if metric == "ratio":
+                        if isinstance(count, (int, float)) and count > 0:
+                            ratio_display = f"1:{max(1, round(1 / count))}"
+                        else:
+                            ratio_display = "-"
+                        text += f"\n{rank}. {name}: {ratio_display}"
+                    else:
+                        text += f"\n{rank}. {name}: {count:,} {unit_text}"
                     if rank == 1:
                         top_school = name
                         top_count = count
+                        if metric == "ratio":
+                            top_ratio = count
                 
                 # Outro (Insight)
                 if top_school:
-                    text += f"\n\nจะเห็นว่า **{top_school}** ครองอันดับ 1 ด้วยจำนวน {top_count:,} {unit_text}ครับ"
+                    if metric == "ratio" and isinstance(top_ratio, (int, float)) and top_ratio > 0:
+                        ratio_display = f"1:{max(1, round(1 / top_ratio))}"
+                        text += f"\n\nจะเห็นว่า **{top_school}** ครองอันดับ 1 ด้วยอัตราส่วนประมาณ {ratio_display} ครับ"
+                    else:
+                        text += f"\n\nจะเห็นว่า **{top_school}** ครองอันดับ 1 ด้วยจำนวน {top_count:,} {unit_text}ครับ"
                     text += "\nหากต้องการทราบข้อมูลเจาะลึกเพิ่มเติม ถามได้เลยครับ"
                     
                 parts.append(text)

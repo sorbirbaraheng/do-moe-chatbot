@@ -941,14 +941,17 @@ class StatsHandlersMixin:
             if area_name:
                 conditions.append(FieldCondition(key="metadata.area_name", match=MatchText(text=area_name)))
             
-            response = self.qdrant_client.scroll(
-                collection_name="edu_areas_v5",
-                scroll_filter=Filter(must=conditions) if conditions else None,
-                limit=10,
-                with_payload=True
-            )
-            
-            results = response[0]
+            try:
+                response = self.qdrant_client.scroll(
+                    collection_name="edu_areas_v5",
+                    scroll_filter=Filter(must=conditions) if conditions else None,
+                    limit=10,
+                    with_payload=True
+                )
+                results = response[0]
+            except Exception as area_err:
+                logger.warning(f"⚠️ edu_areas_v5 collection not available: {area_err}")
+                results = []
             
             if results:
                 response_text = f"📌 **ข้อมูลเขตพื้นที่การศึกษา**\n\n"

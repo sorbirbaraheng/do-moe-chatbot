@@ -1000,9 +1000,9 @@ export const sendMessageStream = async (
   // FLASK API ROUTING (for school/student categories) - WITH AI LAYER
   // ============================================================================
   const flaskConfig = currentConfig.apiKeys?.[catKey];
-  const shouldUseFlaskApi = flaskConfig?.flaskApiEnabled &&
-    flaskConfig?.flaskApiUrl &&
-    (catKey === 'school' || catKey === 'student');
+  // 🌐 Always use Flask API for school/student — no admin config needed.
+  // Flask URL is auto-detected from window.location.hostname in getFlaskBaseUrl().
+  const shouldUseFlaskApi = (catKey === 'school' || catKey === 'student');
 
   if (shouldUseFlaskApi) {
     console.log(`[Flask API] Attempting for category: ${catKey}`);
@@ -1016,22 +1016,14 @@ export const sendMessageStream = async (
       const ChatbotAPI = ChatbotAPIModule.default;
       const getFlaskBaseUrl = ChatbotAPIModule.getFlaskBaseUrl;
 
-      // Use configured URL if available, otherwise fallback to dynamic
-      let dynamicFlaskUrl = flaskConfig.flaskApiUrl || getFlaskBaseUrl(5001);
+      // 🌐 ALWAYS auto-detect Flask URL from browser hostname.
+      // This ensures every client (localhost, LAN, mobile) gets the correct URL
+      // without needing to configure anything in Admin panel.
+      // Previous approach used Firestore-stored URL which broke LAN access
+      // because it saved "127.0.0.1" from the host machine.
+      const dynamicFlaskUrl = getFlaskBaseUrl(5001);
 
-      // 🛡️ SMART OVERRIDE: If config says localhost (saved by server) but we are on LAN, 
-      // ignore config and use the detected LAN IP. This prevents "Connection Refused" on mobile/remote devices.
-      const isConfigLocal = dynamicFlaskUrl.includes('localhost') || dynamicFlaskUrl.includes('127.0.0.1');
-      const isBrowserLan = typeof window !== 'undefined' &&
-        window.location.hostname !== 'localhost' &&
-        window.location.hostname !== '127.0.0.1';
-
-      if (isConfigLocal && isBrowserLan) {
-        console.log('[Flask API] 🛡️ Ignoring saved localhost URL in favor of detected LAN IP');
-        dynamicFlaskUrl = getFlaskBaseUrl(5001);
-      }
-
-      console.log(`[Flask API] Using URL: ${dynamicFlaskUrl}`);
+      console.log(`[Flask API] Using auto-detected URL: ${dynamicFlaskUrl}`);
       const api = new ChatbotAPI(dynamicFlaskUrl, flaskConfig.flaskApiKey);
 
       // ============================================
@@ -1067,13 +1059,13 @@ export const sendMessageStream = async (
           // Buffer chunks first, don't stream immediately
           let bufferedResponse = '';
 
-      const result = await api.sendStream(queryToSend, {
-        history: flaskHistory,
-        collection_name: catKey === 'school' ? 'education_schools' : 'education_students',
-        system_prompt: systemInstruction,
-        saveHistory: false,
-        session_id: sessionId || `session_${catKey}_${Date.now().toString(36).slice(-6)}`,
-        category: catKey,
+          const result = await api.sendStream(queryToSend, {
+            history: flaskHistory,
+            collection_name: catKey === 'school' ? 'education_schools' : 'education_students',
+            system_prompt: systemInstruction,
+            saveHistory: false,
+            session_id: sessionId || `session_${catKey}_${Date.now().toString(36).slice(-6)}`,
+            category: catKey,
             // Enhanced: Pass parsed query metadata for better backend routing
             intent: parsedQuery?.intent || null,
             school_name: parsedQuery?.school_name || null,

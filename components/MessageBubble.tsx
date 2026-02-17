@@ -56,9 +56,11 @@ interface MessageBubbleProps {
   onRegenerate?: () => void; // ✨ Regenerate Response callback
   onEdit?: (messageId: string, newContent: string) => void; // ✨ Edit Message callback
   isLastAssistantMessage?: boolean; // Only show regenerate for last message
+  isLatestMessage?: boolean; // ✨ For glow halo on the latest bubble
   lastUserMessage?: string; // ✨ For generating context-aware thinking status
   sessionId?: string; // For feedback tracking
   category?: 'general' | 'school' | 'student'; // For feedback tracking
+  onSuggestionClick?: (text: string) => void; // ✨ Suggestion chip click callback
 }
 
 // Generate thinking status based on user's question
@@ -115,9 +117,11 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
   onRegenerate,
   onEdit,
   isLastAssistantMessage = false,
+  isLatestMessage = false,
   lastUserMessage = '',
   sessionId = '',
-  category = 'general'
+  category = 'general',
+  onSuggestionClick
 }) => {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
@@ -140,6 +144,9 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
   const [feedback, setFeedback] = useState<'positive' | 'negative' | null>(null);
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [chartData, setChartData] = useState<any>(null);
+  const [suggestionsData, setSuggestionsData] = useState<string[] | null>(null);
+  const [showTable, setShowTable] = useState(false); // Toggle for table when chart is present
+  const [tableMarkdownState, setTableMarkdownState] = useState(''); // Extracted table markdown
 
   // ✨ Thinking Status Animation
   const [thinkingStatusIndex, setThinkingStatusIndex] = useState(0);
@@ -191,6 +198,19 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
       setMapData(null);
     }
 
+    // Extract Suggestions data
+    const sStart = contentToProcess.indexOf('<suggestions>');
+    const sEnd = contentToProcess.indexOf('</suggestions>');
+    if (sStart !== -1 && sEnd !== -1) {
+      try {
+        const jsonStr = contentToProcess.substring(sStart + 13, sEnd);
+        setSuggestionsData(JSON.parse(jsonStr));
+        contentToProcess = contentToProcess.substring(0, sStart).trim() + contentToProcess.substring(sEnd + 14).trim();
+      } catch (e) { console.error(e); }
+    } else {
+      setSuggestionsData(null);
+    }
+
     // Parse <thinking> block
     let rawThink = '';
     let rawMain = '';
@@ -214,32 +234,30 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
     rawMain = rawMain.replace(/([^\n])\n(-|\*|\d+\.)\s/g, '$1\n\n$2 ');
     rawMain = rawMain.replace(/([^\n])\n(#{1,6})\s/g, '$1\n\n$2 ');
 
-    // ✨ CLEANUP: If Chart exists, remove Markdown Tables to avoid redundancy
+    // ✨ SMART DISPLAY: Extract table markdown separately when chart exists
+    // Table will be rendered in a collapsible toggle section under the chart
+    let tableMarkdown = '';
     if (cStart !== -1) { // If chart was found
       const lines = rawMain.split('\n');
-      rawMain = lines.filter(line => {
+      const tableLines: string[] = [];
+      const nonTableLines: string[] = [];
+      for (const line of lines) {
         const trim = line.trim();
-        // 1. Remove standard pipe tables (Start with |)
-        if (trim.startsWith('|')) return false;
-        // 2. Remove separator lines (e.g. ---|---)
-        if (trim.match(/^-+\s*\|\s*-+$/) || trim.match(/^:?-+:?\s*\|\s*:?-+:?$/)) return false;
-        // 3. Remove rows that look like table data if they are adjacent to separators?
-        // Hard to do stateful filtering in single pass.
-        // Let's rely on standard practice: Most LLMs output | at start for clean tables.
-        // But just in case, catch common separator patterns.
-
-        // Heuristic: If line contains | and ---, it's likely a table part
-        if (trim.includes('|') && trim.includes('---')) return false;
-
-        return true;
-      }).join('\n');
-
-      // Remove empty lines left behind
-      rawMain = rawMain.replace(/\n{3,}/g, '\n\n');
+        const isTableLine = trim.startsWith('|') ||
+          (trim.includes('|') && trim.includes('---'));
+        if (isTableLine) {
+          tableLines.push(line);
+        } else {
+          nonTableLines.push(line);
+        }
+      }
+      tableMarkdown = tableLines.join('\n');
+      rawMain = nonTableLines.join('\n').replace(/\n{3,}/g, '\n\n');
     }
 
     setThinkingContent(rawThink);
     setDisplayedMainContent(rawMain);
+    setTableMarkdownState(tableMarkdown);
 
     // Show typing indicator when content is empty but loading
     setIsTyping(!rawMain && !isUser && !message.isError && !message.isHistory);
@@ -281,7 +299,7 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
 
   return (
     <div className={`flex w-full mb-4 md:mb-6 group ${isUser ? 'justify-end' : 'justify-start'} animate-message`}>
-      <div className={`flex gap-2.5 md:gap-3.5 ${(chartData || mapData) ? 'max-w-full w-full' : 'max-w-[90%] sm:max-w-lg md:max-w-2xl lg:max-w-3xl xl:max-w-4xl'} ${isUser ? 'flex-row-reverse' : 'flex-row'} min-w-0`}>
+      <div className={`message-bubble ${isLatestMessage ? 'message-bubble-latest' : ''} flex gap-2.5 md:gap-3.5 ${(chartData || mapData) ? 'max-w-full w-full' : 'max-w-[90%] sm:max-w-lg md:max-w-2xl lg:max-w-3xl xl:max-w-4xl'} ${isUser ? 'flex-row-reverse' : 'flex-row'} min-w-0`}>
         {/* Avatar */}
         <div
           className={`flex-shrink-0 w-12 h-12 md:w-14 md:h-14 rounded-2xl flex items-center justify-center text-[13px] font-black shadow-md mt-0.5 transition-all duration-300 group-hover:scale-110 group-hover:rotate-3 overflow-hidden
@@ -406,8 +424,8 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
             </div>
 
 
-            {/* Message Content - Side-by-Side when Chart exists */}
-            {chartData && !isUser && !isTyping ? (
+            {/* Message Content - Side-by-Side when Chart exists (including during typing) */}
+            {chartData && !isUser ? (
               /* Side-by-Side Layout: Text Left, Chart Right */
               <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
                 {/* Left Column - Text Content */}
@@ -466,6 +484,10 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                   >
                     {cleanupMarkdown(displayedMainContent || '')}
                   </ReactMarkdown>
+                  {/* Cursor Effect while typing (inside side-by-side) */}
+                  {isTyping && (
+                    <span className="inline-block w-1.5 h-4 ml-0.5 align-middle bg-indigo-500 animate-pulse rounded-full"></span>
+                  )}
                 </div>
 
                 {/* Right Column - Chart (Sticky) with Apple Card Style */}
@@ -473,6 +495,51 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                   <div className="bg-white/80 backdrop-blur-xl rounded-[24px] p-1.5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] border border-white/60">
                     <ChartWidget type={chartData.type} data={chartData.data} title={chartData.title} />
                   </div>
+                  {/* 📋 Collapsible Table Toggle */}
+                  {tableMarkdownState && (
+                    <div className="mt-3">
+                      <button
+                        onClick={() => setShowTable(!showTable)}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-[13px] font-medium transition-all duration-200 bg-white/60 hover:bg-white/90 text-gray-500 hover:text-gray-700 border border-gray-200/60 hover:border-gray-300/80 backdrop-blur-sm"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125M13.125 12h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125M20.625 12c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5M12 14.625v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 14.625c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m0 0v1.5c0 .621-.504 1.125-1.125 1.125" />
+                        </svg>
+                        {showTable ? 'ซ่อนตารางข้อมูล' : 'ดูตารางข้อมูล'}
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={`w-3.5 h-3.5 transition-transform duration-200 ${showTable ? 'rotate-180' : ''}`}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                        </svg>
+                      </button>
+                      {showTable && (
+                        <div className="mt-2 animate-fade-in-up">
+                          <div className="overflow-x-auto rounded-xl border border-gray-200/60 shadow-sm bg-white/80 backdrop-blur-sm">
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                table: ({ children }) => (
+                                  <table className="w-full text-[13px]">{children}</table>
+                                ),
+                                thead: ({ children }) => (
+                                  <thead className="bg-gray-50/80">{children}</thead>
+                                ),
+                                th: ({ children }) => (
+                                  <th className="px-3 py-2 text-left font-semibold text-gray-700 border-b-2 border-gray-200 text-[12px] uppercase tracking-wide">{children}</th>
+                                ),
+                                td: ({ children }) => (
+                                  <td className="px-3 py-2 border-b border-gray-100 text-gray-700">{children}</td>
+                                ),
+                                tr: ({ children }) => (
+                                  <tr className="hover:bg-blue-50/30 transition-colors">{children}</tr>
+                                ),
+                              }}
+                            >
+                              {tableMarkdownState}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -627,22 +694,20 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                         hr: () => (
                           <hr className="my-5 border-t border-gray-200/50" />
                         ),
-                        // Tables - HIDE when Chart is present to avoid redundancy/clutter
+                        // Tables - Show normally when NO chart, hidden when chart exists (table is in toggle)
                         table: ({ children }) => (
-                          chartData ? null : (
-                            <div className="my-4 overflow-x-auto rounded-xl border border-gray-200/60 shadow-sm w-full clear-both block">
-                              <table className="w-full text-[14px]">{children}</table>
-                            </div>
-                          )
+                          <div className="my-4 overflow-x-auto rounded-xl border border-gray-200/60 shadow-sm w-full clear-both block">
+                            <table className="w-full text-[14px]">{children}</table>
+                          </div>
                         ),
                         thead: ({ children }) => (
-                          chartData ? null : <thead className="bg-gray-50/60">{children}</thead>
+                          <thead className="bg-gray-50/60">{children}</thead>
                         ),
                         th: ({ children }) => (
-                          chartData ? null : <th className="px-4 py-2 text-left font-semibold text-gray-700 border-b-2 border-gray-200">{children}</th>
+                          <th className="px-4 py-2 text-left font-semibold text-gray-700 border-b-2 border-gray-200">{children}</th>
                         ),
                         td: ({ children }) => (
-                          chartData ? null : <td className="px-4 py-2 border-b border-gray-100 text-gray-700">{children}</td>
+                          <td className="px-4 py-2 border-b border-gray-100 text-gray-700">{children}</td>
                         ),
                       }}
                     >
@@ -657,12 +722,7 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
               </div>
             )}
 
-            {/* Chart Widget - Only for non-side-by-side layout (when no chart or still typing) */}
-            {!isUser && chartData && isTyping && (
-              <div className="animate-fade-in-up mt-4">
-                <ChartWidget type={chartData.type} data={chartData.data} title={chartData.title} />
-              </div>
-            )}
+            {/* Chart Widget removed from vertical layout — now always in side-by-side above */}
 
 
             {/* Map Widget */}
@@ -675,6 +735,37 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                   address={mapData.address}
                   markers={mapData.markers}
                 />
+              </div>
+            )}
+
+            {/* ✨ Suggestion Chips — Apple-Style Clickable Pills */}
+            {!isUser && suggestionsData && suggestionsData.length > 0 && !isTyping && (
+              <div className="mt-4 pt-3 border-t border-black/5 animate-fade-in-up">
+                <div className="flex flex-wrap gap-2">
+                  {suggestionsData.map((suggestion, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => onSuggestionClick?.(suggestion)}
+                      className="group/chip relative px-4 py-2.5 rounded-2xl text-[13px] font-medium
+                        bg-white/60 backdrop-blur-xl border border-white/80 shadow-sm
+                        text-[#1D1D1F]/70 hover:text-[#007AFF]
+                        hover:bg-[#007AFF]/[0.06] hover:border-[#007AFF]/25
+                        hover:shadow-[0_4px_16px_rgba(0,122,255,0.12)]
+                        active:scale-[0.96] active:shadow-none
+                        transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]
+                        cursor-pointer select-none"
+                      style={{ animationDelay: `${idx * 80}ms` }}
+                    >
+                      <span className="flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
+                          className="w-3.5 h-3.5 opacity-40 group-hover/chip:opacity-70 transition-opacity duration-300">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM6.75 9.25a.75.75 0 0 0 0 1.5h4.59l-2.1 1.95a.75.75 0 1 0 1.02 1.1l3.5-3.25a.75.75 0 0 0 0-1.1l-3.5-3.25a.75.75 0 1 0-1.02 1.1l2.1 1.95H6.75Z" clipRule="evenodd" />
+                        </svg>
+                        {suggestion}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 

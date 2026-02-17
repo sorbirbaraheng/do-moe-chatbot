@@ -113,7 +113,7 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
     }, []);
 
     // 🌐 Auto-detect Flask API URL from browser hostname when not set
-    // Priority: Admin-set production URL > Auto-detect for development
+    // Always auto-detect for LAN access — no admin config needed
     useEffect(() => {
         if (typeof window === 'undefined' || !isLoaded) return; // 🛡️ Wait for Firestore load
 
@@ -140,7 +140,7 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
             return;
         }
 
-        // Only auto-detect if URLs are empty or localhost when accessing from LAN
+        // Auto-detect if URLs are empty or localhost when accessing from LAN
         const currentHost = window.location.hostname;
         const isLan = currentHost !== 'localhost' && currentHost !== '127.0.0.1';
         const needsAutoDetect = (
@@ -149,14 +149,14 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
             (isLan && (schoolUrl?.includes('127.0.0.1') || schoolUrl?.includes('localhost')))
         );
 
-        if (needsAutoDetect && config.apiKeys.school?.flaskApiEnabled) {
+        if (needsAutoDetect) {
             const detectedUrl = isLan
                 ? `http://${currentHost}:5001`
                 : 'http://127.0.0.1:5001';
 
             console.log(`[Auto IP] Detected Flask API URL: ${detectedUrl} (LAN: ${isLan})`);
 
-            // Update both categories
+            // Update both categories (don't persist to Firestore — keep it dynamic)
             updateApiKeys('school', { flaskApiUrl: detectedUrl }, { persist: false });
             updateApiKeys('student', { flaskApiUrl: detectedUrl }, { persist: false });
         }

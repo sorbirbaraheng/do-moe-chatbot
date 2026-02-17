@@ -85,6 +85,8 @@ const AppContent: React.FC = () => {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem('talk_mode') === 'true';
   });
+  // Ref to avoid stale closure — async callbacks always read latest value
+  const isTalkModeRef = useRef(isTalkMode);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [autoListenSignal, setAutoListenSignal] = useState(0);
@@ -103,6 +105,8 @@ const AppContent: React.FC = () => {
   });
   const [micLevel, setMicLevel] = useState(0);
   const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const speakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Persist Chat State
   useEffect(() => {
@@ -110,6 +114,11 @@ const AppContent: React.FC = () => {
     localStorage.setItem('current_messages', JSON.stringify(messages));
     localStorage.setItem('current_chat_id', currentChatId);
   }, [category, messages, currentChatId]);
+
+  // Keep isTalkModeRef in sync with state
+  useEffect(() => {
+    isTalkModeRef.current = isTalkMode;
+  }, [isTalkMode]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -132,6 +141,13 @@ const AppContent: React.FC = () => {
     } else {
       setStopListeningSignal(s => s + 1);
       setIsListening(false);
+      // Ensure any active audio is stopped when leaving Talk Mode
+      if (ttsAudioRef.current) {
+        ttsAudioRef.current.pause();
+        ttsAudioRef.current.currentTime = 0;
+        ttsAudioRef.current = null;
+      }
+      try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
       // NOTE: Do NOT reset speechUnlocked here — keep it unlocked for the session
     }
   }, [isTalkMode]);
@@ -584,6 +600,7 @@ const AppContent: React.FC = () => {
     cleaned = cleaned.replace(/<thinking>[\s\S]*?<\/thinking>/g, '');
     cleaned = cleaned.replace(/<chart>[\s\S]*?<\/chart>/g, '');
     cleaned = cleaned.replace(/<map>[\s\S]*?<\/map>/g, '');
+    cleaned = cleaned.replace(/<suggestions>[\s\S]*?<\/suggestions>/g, '');
     cleaned = cleaned.replace(/`{3}[\s\S]*?`{3}/g, '');
     cleaned = cleaned.replace(/`([^`]+)`/g, '$1');
     cleaned = cleaned.replace(/!\[.*?\]\(.*?\)/g, '');
@@ -603,8 +620,15 @@ const AppContent: React.FC = () => {
       const chosen = voices.find(v => v.voiceURI === selectedVoiceUri);
       if (chosen) return chosen;
     }
-    const thai = voices.find(v => v.lang?.toLowerCase().startsWith('th'));
-    if (thai) return thai;
+    // น้องดีโอ = male persona → prefer Thai male voices
+    const thaiVoices = voices.filter(v => v.lang?.toLowerCase().startsWith('th'));
+    // Prefer male-sounding voices (lower ID/index typically = male on most platforms)
+    const thaiMale = thaiVoices.find(v =>
+      /male|niwat|prem/i.test(v.name) && !/female/i.test(v.name)
+    );
+    if (thaiMale) return thaiMale;
+    // Fallback: any Thai voice
+    if (thaiVoices.length > 0) return thaiVoices[0];
     return voices.find(v => v.lang?.toLowerCase().startsWith('en')) || null;
   };
 
@@ -615,8 +639,19 @@ const AppContent: React.FC = () => {
   };
 
   const stopSpeaking = () => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
+    // Stop backend TTS audio
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause();
+      ttsAudioRef.current.currentTime = 0;
+      ttsAudioRef.current = null;
+    }
+    // Also stop browser speech (fallback)
+    try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
+    // Clear pending speak timer
+    if (speakTimerRef.current) {
+      clearTimeout(speakTimerRef.current);
+      speakTimerRef.current = null;
+    }
     setIsSpeaking(false);
   };
 
@@ -645,17 +680,10 @@ const AppContent: React.FC = () => {
 
   const unlockSpeech = () => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    if (speechUnlocked) return;
     try {
-      // Cancel any stuck utterances first
+      // Just cancel and resume — don't play a silent utterance
+      // (playing '.' was getting canceled and conflicting with real speak calls)
       window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance('.');
-      u.volume = 0.01; // Near-zero but not 0 — some browsers ignore volume=0
-      u.lang = 'th-TH';
-      u.onend = () => {
-        console.log('[TTS] Speech unlocked successfully');
-      };
-      window.speechSynthesis.speak(u);
       window.speechSynthesis.resume();
       setSpeechUnlocked(true);
       setSpeechError('');
@@ -704,100 +732,94 @@ const AppContent: React.FC = () => {
   };
 
   const speakText = (text: string): boolean => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
     if (speechMuted) {
       setSpeechError('ปิดเสียงอยู่');
       return false;
-    }
-    if (!speechUnlocked) {
-      // Auto-attempt unlock on first speak
-      unlockSpeech();
-      if (!speechUnlocked) {
-        setSpeechError('แตะเพื่อเปิดเสียง');
-        return false;
-      }
     }
     const cleaned = stripForSpeech(text);
     if (!cleaned) {
       console.warn('[TTS] No text to speak after cleaning');
       return false;
     }
-    if (isSpeaking) stopSpeaking();
 
-    // Cancel any stuck utterances and force resume
-    window.speechSynthesis.cancel();
-    // Small delay after cancel to let browser reset
-    setTimeout(() => {
-      window.speechSynthesis.resume();
-    }, 50);
+    // Stop anything currently playing
+    stopSpeaking();
 
-    let triedFallback = false;
-    const speakWithVoice = (voiceOverride?: SpeechSynthesisVoice | null) => {
-      // Truncate to 800 chars for reliability (long text can cause TTS to fail silently)
-      const utterance = new SpeechSynthesisUtterance(cleaned.slice(0, 800));
-      const voice = voiceOverride ?? getPreferredVoice();
-      if (voice) {
-        utterance.voice = voice;
-        console.log(`[TTS] Using voice: ${voice.name} (${voice.lang})`);
-      } else {
-        console.warn('[TTS] No voice found, using default');
-      }
-      utterance.lang = voice?.lang || 'th-TH';
-      utterance.rate = 1.02;
-      utterance.pitch = 1.0;
-      utterance.volume = 1.0;
-      utterance.onstart = () => {
-        console.log('[TTS] Speaking started');
-        setSpeechError('');
-        startResumeWorkaround(); // Start Chrome pause workaround
-      };
-      utterance.onend = () => {
-        console.log('[TTS] Speaking ended');
-        stopResumeWorkaround();
-        setIsSpeaking(false);
-        if (isTalkMode) {
-          setTimeout(() => setAutoListenSignal(s => s + 1), 350);
+    // Determine Flask API URL (same pattern as geminiService)
+    const hostname = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
+    const flaskUrl = `http://${hostname}:5001`;
+
+    setIsSpeaking(true);
+    setSpeechError('');
+    console.log('[TTS] Calling backend Edge TTS...');
+
+    // Call backend TTS API
+    fetch(`${flaskUrl}/api/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: cleaned.slice(0, 1000),
+        voice: 'th-TH-NiwatNeural',
+        rate: '+5%',
+        pitch: '-20Hz',
+      }),
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (!data.success || !data.audio) {
+          throw new Error(data.error || 'TTS failed');
         }
-      };
-      utterance.onerror = (event: any) => {
-        const err = event?.error || event?.name || 'TTS error';
-        console.error('[TTS] Error:', err);
-        stopResumeWorkaround();
-        if (!triedFallback && err !== 'canceled') {
-          const fallback = getFallbackVoice();
-          if (fallback && fallback !== voice) {
-            console.log('[TTS] Retrying with fallback voice:', fallback.name);
-            triedFallback = true;
-            setTimeout(() => speakWithVoice(fallback), 200);
-            return;
+        console.log(`[TTS] Audio received: ${data.text_length} chars, voice=${data.voice}`);
+
+        const audio = new Audio(`data:audio/mp3;base64,${data.audio}`);
+        ttsAudioRef.current = audio;
+
+        audio.onplay = () => {
+          console.log('[TTS] ✅ Playing!');
+          setSpeechError('');
+          setSpeechUnlocked(true);
+        };
+        audio.onended = () => {
+          console.log('[TTS] Speaking ended, talkMode:', isTalkModeRef.current);
+          setIsSpeaking(false);
+          ttsAudioRef.current = null;
+          // Use REF for latest value — closure would be stale
+          if (isTalkModeRef.current) {
+            console.log('[TTS] Auto-listen: triggering next listen cycle');
+            setTimeout(() => setAutoListenSignal(s => s + 1), 350);
           }
-        }
-        if (err === 'canceled' && isTalkMode && !isListening) {
-          if (!triedFallback) {
-            triedFallback = true;
-            try {
-              window.speechSynthesis.cancel();
-            } catch {
-              // ignore
-            }
-            setTimeout(() => speakWithVoice(voiceOverride ?? getPreferredVoice()), 300);
-            return;
+        };
+        audio.onerror = (e) => {
+          console.error('[TTS] Audio playback error:', e);
+          setSpeechError('เล่นเสียงไม่ได้');
+          setIsSpeaking(false);
+          ttsAudioRef.current = null;
+          if (isTalkModeRef.current) {
+            setTimeout(() => setAutoListenSignal(s => s + 1), 350);
           }
-        }
-        setSpeechError(`เสียงมีปัญหา: ${err}`);
+        };
+
+        audio.play().catch(err => {
+          console.error('[TTS] Play failed:', err);
+          setSpeechError('เล่นเสียงไม่ได้');
+          setIsSpeaking(false);
+          ttsAudioRef.current = null;
+          // Even on failure, keep the talk loop going
+          if (isTalkModeRef.current) {
+            setTimeout(() => setAutoListenSignal(s => s + 1), 350);
+          }
+        });
+      })
+      .catch(err => {
+        console.error('[TTS] Backend TTS error:', err);
+        setSpeechError(`TTS error: ${err.message}`);
         playTestBeep();
         setIsSpeaking(false);
-        if (isTalkMode) {
+        if (isTalkModeRef.current) {
           setTimeout(() => setAutoListenSignal(s => s + 1), 350);
         }
-      };
-      speechUtteranceRef.current = utterance;
-      setIsSpeaking(true);
-      window.speechSynthesis.speak(utterance);
-    };
+      });
 
-    // Small delay to ensure cancel() has taken effect
-    setTimeout(() => speakWithVoice(), 100);
     return true;
   };
 
@@ -909,7 +931,7 @@ const AppContent: React.FC = () => {
       const ragDebugInfo = getLastRagDebugInfo();
       setMessages(prev => prev.map(m => m.id === modelMessageId ? { ...m, content: fullContent, ragDebugInfo } : m));
 
-      if (isTalkMode) {
+      if (isTalkModeRef.current) {
         const spoke = speakText(fullContent);
         if (!spoke) {
           setTimeout(() => setAutoListenSignal(s => s + 1), 350);
@@ -1115,7 +1137,7 @@ const AppContent: React.FC = () => {
             {/* Main Chat Area - Glass Container */}
             <main className="flex-1 flex flex-col relative overflow-hidden">
               {/* Header Bar - Frosted Glass */}
-              <header className="h-16 flex items-center justify-between px-4 md:px-8 bg-white/70 backdrop-blur-xl border-b border-white/50 shadow-sm z-20">
+              <header className="app-header h-16 flex items-center justify-between px-4 md:px-8 bg-white/70 backdrop-blur-xl border-b border-white/50 shadow-sm z-20">
                 <div className="flex items-center gap-3">
                   {/* ✨ Mobile Menu Button */}
                   <button
@@ -1157,7 +1179,7 @@ const AppContent: React.FC = () => {
 
               <div
                 ref={chatContainerRef}
-                className={`flex-1 overflow-y-auto no-scrollbar relative ${isTalkMode ? 'pointer-events-none' : 'pointer-events-auto'}`}
+                className={`chat-scroll flex-1 overflow-y-auto no-scrollbar relative ${isTalkMode ? 'pointer-events-none' : 'pointer-events-auto'}`}
               >
                 {/* Mobile category selector removed - unified single chatbot mode */}
 
@@ -1273,11 +1295,14 @@ const AppContent: React.FC = () => {
                         type="button"
                         onClick={() => {
                           if (speechMuted) setSpeechMuted(false);
-                          unlockSpeech();
-                          setTimeout(() => {
-                            const ok = speakText('ทดสอบเสียงน้องดีโอครับ');
-                            if (!ok) playTestBeep();
-                          }, 50);
+                          // Call speak DIRECTLY from click handler — no setTimeout!
+                          // This ensures it runs within the user gesture for Chrome autoplay policy
+                          window.speechSynthesis?.cancel();
+                          window.speechSynthesis?.resume();
+                          setSpeechUnlocked(true);
+                          setSpeechError('');
+                          const ok = speakText('ทดสอบเสียงน้องดีโอครับ');
+                          if (!ok) playTestBeep();
                         }}
                         className="talk-control-btn"
                       >
@@ -1321,14 +1346,14 @@ const AppContent: React.FC = () => {
                             </div>
                           </div>
 
-                          <h2 className="text-[30px] md:text-[40px] font-bold text-[#1D1D1F] tracking-[-0.035em] mb-3 leading-tight">
+                          <h2 className="hero-title text-[30px] md:text-[40px] font-bold text-[#1D1D1F] tracking-[-0.035em] mb-3 leading-tight">
                             สวัสดีครับ! ผมคือ <span className="hero-title-accent">น้องดีโอ</span>
                           </h2>
                           <p className="hero-sub">
-                            ผู้ช่วยข้อมูลการศึกษา MOE‑One ที่สรุปให้ไว เข้าใจง่าย และอ้างอิงจากฐานข้อมูลจริง
+                            ผู้ช่วยข้อมูลการศึกษา MOE‑One ของศูนย์เทคโนโลยีสารสนเทศเพื่อการศึกษา (ศทส.) สป.
                           </p>
                           <p className="hero-sub hero-sub-muted">
-                            ค้นหาโรงเรียน ครู นักเรียน และสถิติระดับจังหวัด/อำเภอ/โรงเรียนได้ทันที
+                            ถามได้ทั้งโรงเรียน ครู นักเรียน และสถิติระดับจังหวัด/อำเภอ/โรงเรียน พร้อมสรุปให้อ่านง่ายครับ
                           </p>
                           <button
                             type="button"
@@ -1397,8 +1422,10 @@ const AppContent: React.FC = () => {
                         onEdit={handleEditMessage}
                         isLastAssistantMessage={index === lastAssistantIndex}
                         lastUserMessage={lastUserMsg}
+                        isLatestMessage={index === messages.length - 1}
                         sessionId={currentChatId}
                         category={category.toLowerCase() as 'general' | 'school' | 'student'}
+                        onSuggestionClick={(text) => handleSendMessage(text, null)}
                       />
                     );
                   })}
@@ -1408,7 +1435,7 @@ const AppContent: React.FC = () => {
 
               {/* Input Area - Clean Floating */}
               <div
-                className={`absolute bottom-0 left-0 right-0 p-3 sm:p-6 z-20 transition-all duration-500 ease-out ${isTalkMode ? 'opacity-0 translate-y-4 pointer-events-none' : 'opacity-100 translate-y-0 pointer-events-auto'}`}
+                className={`chat-input-area absolute bottom-0 left-0 right-0 p-3 sm:p-6 z-20 transition-all duration-500 ease-out ${isTalkMode ? 'opacity-0 translate-y-4 pointer-events-none' : 'opacity-100 translate-y-0 pointer-events-auto'}`}
                 style={{ display: isTalkMode ? 'none' : 'block' }}
               >
                 <div className="pointer-events-auto max-w-4xl mx-auto">
@@ -1423,6 +1450,15 @@ const AppContent: React.FC = () => {
                     }}
                     talkMode={isTalkMode}
                     onToggleTalkMode={() => {
+                      // CRITICAL: Unlock audio autoplay from user gesture
+                      // Play a tiny silent audio to allow future Audio.play() from async contexts
+                      try {
+                        const silentAudio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAGAAGn9AAAIiWi7/ckAABNm/8+D58H/5cP/yhAGCYIAgSBAMf/8oQBgEAQB8H4Pg+XB8Hwf/6gAYJOD5//y4Pg+D8uEMf/lCH//5Qh///8uD7///y4f///+D7////5c////B9////y5////w==');
+                        silentAudio.volume = 0.01;
+                        silentAudio.play().catch(() => { });
+                      } catch { /* ignore */ }
+                      primeSpeech();
+                      unlockSpeech();
                       setIsTalkMode(prev => {
                         const next = !prev;
                         if (!next) {
@@ -1430,8 +1466,6 @@ const AppContent: React.FC = () => {
                           setStopListeningSignal(s => s + 1);
                         }
                         if (next) {
-                          primeSpeech();
-                          unlockSpeech();
                           setAutoListenSignal(s => s + 1);
                         }
                         return next;
