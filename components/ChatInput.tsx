@@ -276,7 +276,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
         <div className="absolute -inset-[2px] rounded-[26px] bg-gradient-to-b from-[#007AFF]/20 via-[#5856D6]/10 to-transparent opacity-0 group-focus-within/input:opacity-100 transition-opacity duration-500 blur-sm pointer-events-none"></div>
 
         {/* Main Glass Container - Enhanced for 2026 */}
-        <div className="relative bg-white/85 backdrop-blur-[50px] rounded-[26px] shadow-[0_8px_40px_rgba(0,0,0,0.06)] border border-white/70 overflow-hidden transition-all duration-500 ease-out group-focus-within/input:shadow-[0_20px_60px_-10px_rgba(0,0,0,0.15),0_0_40px_rgba(0,122,255,0.08)] group-focus-within/input:bg-white/95 group-focus-within/input:border-white/90" style={{ backdropFilter: 'blur(50px) saturate(180%)' }}>
+        <div className="chat-input-glass relative bg-white/85 backdrop-blur-[50px] rounded-[26px] shadow-[0_8px_40px_rgba(0,0,0,0.06)] border border-white/70 overflow-hidden transition-all duration-500 ease-out group-focus-within/input:shadow-[0_20px_60px_-10px_rgba(0,0,0,0.15),0_0_40px_rgba(0,122,255,0.08)] group-focus-within/input:bg-white/95 group-focus-within/input:border-white/90" style={{ backdropFilter: 'blur(50px) saturate(180%)' }}>
           {/* Input Area with Sparkle Icon */}
           <div className="px-4 pt-4 pb-2 md:px-6 md:pt-5 md:pb-2 flex items-start gap-3">
             {/* Sparkle Icon - Apple 2026 Color */}
@@ -335,10 +335,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={onToggleTalkMode}
-                className={`h-9 md:h-10 px-3 rounded-full flex items-center gap-2 transition-all active:scale-95 text-[12px] font-semibold
+                className={`talk-toggle-btn h-9 md:h-10 px-3 rounded-full flex items-center gap-2 transition-all active:scale-95 text-[12px] font-semibold
                   ${talkMode
-                    ? 'bg-gradient-to-r from-[#007AFF] to-[#5856D6] text-white shadow-[0_6px_16px_rgba(0,122,255,0.35)]'
-                    : 'bg-black/5 hover:bg-black/10 text-[#1D1D1F]/60'
+                    ? 'talk-toggle-active bg-gradient-to-r from-[#007AFF] to-[#5856D6] text-white shadow-[0_6px_16px_rgba(0,122,255,0.35)]'
+                    : 'talk-toggle-inactive bg-black/5 hover:bg-black/10 text-[#1D1D1F]/60'
                   }`}
                 title="Text & Talk Mode"
                 aria-pressed={talkMode}

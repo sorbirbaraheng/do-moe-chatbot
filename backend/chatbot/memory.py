@@ -30,6 +30,10 @@ class ConversationMemory:
         self.last_scope_type: Optional[str] = None
         self.last_scope_value: Optional[str] = None
         self.last_updated_at: Optional[float] = None
+        # Disambiguation state (for multi-turn school selection)
+        self.last_disambig_choices: Optional[List[Dict[str, str]]] = None  # [{"name": ..., "province": ...}]
+        self.last_disambig_query: Optional[str] = None  # Original query that triggered disambiguation
+        self.last_ai_response: Optional[str] = None  # Last assistant response text
     
     def update(self, parsed: ParsedQuery, original_query: str = None):
         """Update memory with new parsed query"""
@@ -58,12 +62,17 @@ class ConversationMemory:
                 self.last_district = None
 
         if parsed.province:
-            # Guard: sometimes region strings slip into province
-            if parsed.province in REGIONS and not parsed.region:
-                self.last_region = parsed.province
-                self.last_province = None
-            else:
-                self.last_province = parsed.province
+            # Guard: province might be a list (e.g. compare queries)
+            province_val = parsed.province
+            if isinstance(province_val, list):
+                province_val = province_val[0] if province_val else None
+            if province_val:
+                # Guard: sometimes region strings slip into province
+                if province_val in REGIONS and not parsed.region:
+                    self.last_region = province_val
+                    self.last_province = None
+                else:
+                    self.last_province = province_val
         if parsed.region:
             self.last_region = parsed.region
         if parsed.district:
@@ -219,9 +228,12 @@ class ConversationMemory:
                 logger.info(f"   ✅ Applied intent: {self.last_intent.value}")
         
         # NEW: Restore school name context
-        # If we have a stored school name, and the user hasn't specified a new one,
-        # and hasn't specified a new location (province/region), assume they're still talking about the same school.
-        if self.last_school_name and not parsed.school_name and not parsed.province and not parsed.region:
+        # If we have a stored school name, and the user hasn't specified a new one.
+        # We allow restoration if location is empty OR matches the memory (consistent context).
+        province_safe = not parsed.province or (self.last_province and parsed.province == self.last_province)
+        region_safe = not parsed.region or (self.last_region and parsed.region == self.last_region)
+        
+        if self.last_school_name and not parsed.school_name and province_safe and region_safe:
              if not is_global_ranking_query:
                  parsed.school_name = self.last_school_name
                  logger.info(f"   🏫 Applied school name from memory: {self.last_school_name}")
@@ -241,6 +253,9 @@ class ConversationMemory:
         self.last_scope_type = None
         self.last_scope_value = None
         self.last_updated_at = None
+        self.last_disambig_choices = None
+        self.last_disambig_query = None
+        self.last_ai_response = None
     
     def __repr__(self):
         return f"Memory(province={self.last_province}, region={self.last_region}, district={self.last_district}, agency={self.last_agency}, scope={self.last_scope_type}:{self.last_scope_value})"
@@ -258,7 +273,10 @@ class ConversationMemory:
             'last_school_name': self.last_school_name,
             'last_scope_type': self.last_scope_type,
             'last_scope_value': self.last_scope_value,
-            'last_updated_at': self.last_updated_at
+            'last_updated_at': self.last_updated_at,
+            'last_disambig_choices': self.last_disambig_choices,
+            'last_disambig_query': self.last_disambig_query,
+            'last_ai_response': self.last_ai_response,
         }
 
     @classmethod
@@ -274,6 +292,9 @@ class ConversationMemory:
         mem.last_scope_type = data.get('last_scope_type')
         mem.last_scope_value = data.get('last_scope_value')
         mem.last_updated_at = data.get('last_updated_at')
+        mem.last_disambig_choices = data.get('last_disambig_choices')
+        mem.last_disambig_query = data.get('last_disambig_query')
+        mem.last_ai_response = data.get('last_ai_response')
         
         if data.get('last_intent'):
             try: mem.last_intent = QueryIntent(data['last_intent'])

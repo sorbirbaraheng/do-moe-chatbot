@@ -615,6 +615,96 @@ def create_flask_api():
     def health():
         return jsonify({'status': 'healthy', 'version': '5.0.0'})
 
+    # ------------------------------------------------------------------
+    # TTS — Edge TTS (Microsoft Neural) for น้องดีโอ voice
+    # ------------------------------------------------------------------
+    @app.route('/api/tts', methods=['POST', 'OPTIONS'])
+    @limiter.limit("30 per minute")
+    def tts():
+        """Text-to-Speech using Edge TTS (Microsoft Neural voices)"""
+        if request.method == 'OPTIONS':
+            return '', 204
+
+        import asyncio
+        import base64
+        import tempfile
+
+        data = request.json or {}
+        text = (data.get('text') or '').strip()
+        if not text:
+            return jsonify({'success': False, 'error': 'No text provided'}), 400
+
+        # Truncate long text for performance
+        if len(text) > 1000:
+            text = text[:1000]
+
+        # Voice config — น้องดีโอ = Thai male
+        voice = data.get('voice', 'th-TH-NiwatNeural')
+        rate = data.get('rate', '+5%')   # slightly faster = กระฉับกระเฉง
+        pitch = data.get('pitch', '-20Hz')  # slightly deeper = ผู้ชาย (Hz format required)
+
+        try:
+            import edge_tts
+
+            async def _generate():
+                communicate = edge_tts.Communicate(
+                    text=text,
+                    voice=voice,
+                    rate=rate,
+                    pitch=pitch
+                )
+                tmp = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
+                tmp_path = tmp.name
+                tmp.close()
+                await communicate.save(tmp_path)
+                with open(tmp_path, 'rb') as f:
+                    audio_data = f.read()
+                import os
+                os.unlink(tmp_path)
+                return audio_data
+
+            # Run async edge-tts in sync Flask context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                audio_bytes = loop.run_until_complete(_generate())
+            finally:
+                loop.close()
+
+            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+            logger.info(f"🔊 TTS generated: {len(text)} chars, voice={voice}, {len(audio_bytes)} bytes")
+
+            return jsonify({
+                'success': True,
+                'audio': audio_b64,
+                'format': 'mp3',
+                'voice': voice,
+                'text_length': len(text)
+            })
+
+        except ImportError:
+            logger.error("❌ edge-tts not installed: pip install edge-tts")
+            return jsonify({'success': False, 'error': 'TTS not available — edge-tts not installed'}), 500
+        except Exception as e:
+            logger.error(f"❌ TTS error: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/cache/flush', methods=['POST', 'OPTIONS'])
+    @limiter.exempt
+    def cache_flush():
+        """Flush all caches (Redis L1 + Qdrant semantic cache)"""
+        if request.method == 'OPTIONS':
+            return '', 204
+        try:
+            result = {"redis_deleted": 0, "semantic_deleted": 0}
+            if hasattr(chatbot, 'cache') and chatbot.cache:
+                result = chatbot.cache.flush()
+            logger.info(f"🗑️ Cache flushed: {result}")
+            return jsonify({'success': True, **result})
+        except Exception as e:
+            logger.error(f"❌ Cache flush error: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
     @app.route('/api/debug/route', methods=['POST', 'OPTIONS'])
     @limiter.exempt
     def debug_route():
@@ -771,6 +861,29 @@ def create_flask_api():
             if hist:
                 response_text = hist[-1].get('content', '')
         
+        # 🆕 Store last AI response + detect disambiguation for next turn
+        memory.last_ai_response = response_text
+        memory.last_query = message
+        import re
+        disambig_markers = ["กรุณาเลือก", "พบโรงเรียน", "พบชื่อที่ตรงกัน", "ชื่อใกล้เคียง", "พบโรงเรียนที่ตรงกัน"]
+        if any(marker in response_text for marker in disambig_markers):
+            # Parse table to store structured choices (4 columns: idx, name, province, district)
+            table_rows = re.findall(r'\|\s*(\d+)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|', response_text)
+            choices = []
+            for idx_str, school_name, province, district in table_rows:
+                try:
+                    choices.append({"idx": int(idx_str), "name": school_name.strip(), "province": province.strip(), "district": district.strip()})
+                except ValueError:
+                    continue
+            if choices:
+                memory.last_disambig_choices = choices
+                memory.last_disambig_query = message
+                logger.info(f"📋 Stored {len(choices)} disambiguation choices for session {session_id}")
+        else:
+            # Clear disambiguation if response is not a table
+            memory.last_disambig_choices = None
+            memory.last_disambig_query = None
+
         logger.info(f"💾 Session {session_id} memory after chat: {memory}")
         session_db.save_session_data(session_id, memory.to_dict())
         

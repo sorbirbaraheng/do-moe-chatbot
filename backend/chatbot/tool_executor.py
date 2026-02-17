@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchText, MatchAny, Range
 from .school_search import SchoolSearchEngine
-from .constants import COLLECTION_NAMES, THAI_PROVINCES, REGIONS
+from .constants import COLLECTION_NAMES, THAI_PROVINCES, REGIONS, YEAR_COLLECTIONS, YEAR_ALIASES
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +27,37 @@ class ToolExecutor:
         # from .constants import COLLECTION_NAMES (Moved to top)
         self.collections = COLLECTION_NAMES.copy()
         
+        # Active year for collection routing (set per-request in execute())
+        self._active_year = None
+        
         # Initialize specialized search engine
         self.search_engine = SchoolSearchEngine(self.client, llm_provider=llm_provider)
+    
+    def _get_collection(self, key: str, year: str = None) -> str:
+        """Get collection name based on year. Uses _active_year if year not specified."""
+        y = year or self._active_year
+        if y and y in YEAR_COLLECTIONS:
+            return YEAR_COLLECTIONS[y].get(key, self.collections.get(key, ""))
+        return self.collections.get(key, "")
+    
+    def _normalize_year(self, year: str = None) -> str:
+        """Normalize year value (e.g. '67' -> '2567')"""
+        if not year:
+            return None
+        year = str(year).strip()
+        if year in YEAR_ALIASES:
+            return YEAR_ALIASES[year]
+        return year
     
     def execute(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a tool and return structured data"""
         logger.info(f"🔧 Executing tool: {tool_name} with params: {params}")
+        
+        # Extract and normalize year for collection routing
+        raw_year = params.get("year")
+        self._active_year = self._normalize_year(raw_year)
+        if self._active_year:
+            logger.info(f"📅 Year-based routing active: {self._active_year}")
         
         try:
             if tool_name == "search_schools":
@@ -87,6 +112,8 @@ class ToolExecutor:
                 return self._get_district_summary(**params)
             elif tool_name == "compare_provinces":
                 return self._compare_provinces(**params)
+            elif tool_name == "compare_years":
+                return self._compare_years(**params)
             elif tool_name == "find_nearby_schools":
                 return self._find_nearby_schools(**params)
             elif tool_name == "general_chat":
@@ -359,7 +386,7 @@ class ToolExecutor:
         
         if metric == "schools":
             # Count schools in region
-            total = self._count_filtered(self.collections["schools"], province_filter)
+            total = self._count_filtered(self._get_collection("schools"), province_filter)
             details = {"province_count": len(provinces)}
             
         elif metric == "students":
@@ -367,7 +394,7 @@ class ToolExecutor:
             # Optimization: Use SCHOOLS collection sum if possible, but for accuracy use STUDENTS collection
             # Using SCHOOLS collection is faster for big aggregations
             # OPTIMIZATION: Only fetch total_students field
-            schools_res = self._scroll_all(self.collections["schools"], province_filter, limit=50000, 
+            schools_res = self._scroll_all(self._get_collection("schools"), province_filter, limit=50000, 
                                           with_payload=["metadata.total_students"])
             total = sum(r.payload.get("metadata", {}).get("total_students", 0) for r in schools_res)
             details = {"source": "schools_aggregation"}
@@ -375,7 +402,7 @@ class ToolExecutor:
         elif metric == "teachers":
             # Count teachers in region
             # OPTIMIZATION: Only fetch total_teachers field
-            schools_res = self._scroll_all(self.collections["schools"], province_filter, limit=50000,
+            schools_res = self._scroll_all(self._get_collection("schools"), province_filter, limit=50000,
                                           with_payload=["metadata.total_teachers"])
             total = sum(r.payload.get("metadata", {}).get("total_teachers", 0) for r in schools_res)
             details = {"source": "schools_aggregation"}
@@ -383,9 +410,9 @@ class ToolExecutor:
         elif metric == "ratio":
              # Optimization: Fetch ONLY totals for calculation
              # We need sum of student and sum of teachers
-             students_res = self._scroll_all(self.collections["schools"], province_filter, limit=50000,
+             students_res = self._scroll_all(self._get_collection("schools"), province_filter, limit=50000,
                                             with_payload=["metadata.total_students"])
-             teachers_res = self._scroll_all(self.collections["schools"], province_filter, limit=50000,
+             teachers_res = self._scroll_all(self._get_collection("schools"), province_filter, limit=50000,
                                             with_payload=["metadata.total_teachers"])
              
              total_s = sum(r.payload.get("metadata", {}).get("total_students", 0) for r in students_res)
@@ -426,7 +453,7 @@ class ToolExecutor:
             
         return clean.strip()
         
-    def _resolve_school_ambiguity(self, school_name: str, province: str = None) -> Dict[str, Any]:
+    def _resolve_school_ambiguity(self, school_name: str, province: str = None, district: str = None) -> Dict[str, Any]:
         """
         Helper to check if a school name implies multiple matches.
         Returns: 
@@ -447,6 +474,15 @@ class ToolExecutor:
             
         # Filter strictly by name similarity to avoid loose fuzzy matches triggering disambiguation unnecessarily
         clean_input = self._clean_search_query(school_name).replace("โรงเรียน", "").strip()
+        
+        # If district is specified, filter matches by district first
+        if district:
+            district_clean = district.replace("เขต", "").replace("อำเภอ", "").strip()
+            filtered = [m for m in matches 
+                       if district_clean in (m.payload.get('metadata', {}).get('district', '') or '')]
+            if filtered:
+                matches = filtered
+                logger.info(f"📋 District filter '{district_clean}' narrowed to {len(matches)} matches")
         
         unique_names = {}
         for m in matches:
@@ -535,7 +571,7 @@ class ToolExecutor:
                 conditions.append(FieldCondition(key="metadata.province", match=MatchValue(value=p_norm)))
                 
             scroll_filter = self._build_filter(conditions)
-            batch = self._scroll_all(self.collections["schools"], scroll_filter, limit=limit)
+            batch = self._scroll_all(self._get_collection("schools"), scroll_filter, limit=limit)
             
             for res in batch:
                 sid = res.payload.get('metadata', {}).get('school_id')
@@ -572,7 +608,7 @@ class ToolExecutor:
                 # In _search_schools, we passed 'original_school_name' to this function.
                 semantic_results = engine._semantic_search(
                     query=school_name, 
-                    collection_name=self.collections["schools"],
+                    collection_name=self._get_collection("schools"),
                     top_k=limit - len(results),
                     filters=semantic_filter
                 )
@@ -626,7 +662,7 @@ class ToolExecutor:
             if len(suggestions) >= limit: break
             
             condition = FieldCondition(key="metadata.school_name", match=MatchText(text=term))
-            results = self._scroll_all(self.collections["schools"], self._build_filter([condition]), limit=20)
+            results = self._scroll_all(self._get_collection("schools"), self._build_filter([condition]), limit=20)
             
             for r in results:
                 meta = r.payload.get("metadata", {})
@@ -696,10 +732,10 @@ class ToolExecutor:
         # Get actual total count first (before limiting)
         if count_conditions:
             count_filter = self._build_filter(count_conditions)
-            actual_total_count = self._count_filtered(self.collections["schools"], count_filter)
+            actual_total_count = self._count_filtered(self._get_collection("schools"), count_filter)
         else:
             # No filters = count all schools
-            actual_total_count = self._count_filtered(self.collections["schools"], None)
+            actual_total_count = self._count_filtered(self._get_collection("schools"), None)
         
         if actual_total_count == 0:
              # Smart Fallback: If filtered by location but found nothing, try fuzzy suggestion
@@ -731,7 +767,7 @@ class ToolExecutor:
 
         else:
              # Use filters
-             results = self._scroll_all(self.collections["schools"], count_filter if count_conditions else None, limit=int(limit))
+             results = self._scroll_all(self._get_collection("schools"), count_filter if count_conditions else None, limit=int(limit))
              
         # Format results
         formatted = []
@@ -975,7 +1011,8 @@ class ToolExecutor:
             conditions.append(
                 FieldCondition(key="metadata.person_type", match=MatchValue(value=person_type))
             )
-        if year:
+        if year and not self._active_year:
+            # Only add metadata.year filter when NOT using year-based collection routing
             conditions.append(
                 FieldCondition(key="metadata.year", match=MatchValue(value=int(year)))
             )
@@ -1000,7 +1037,7 @@ class ToolExecutor:
         # Region-level totals are more accurate from teachers collection
         if not gender and not person_type and not school_name and not region:
             logger.info("⚡ Using Fast Ranking (Optimization) for Total Teachers")
-            all_schools = self._scroll_all(self.collections["schools"], scroll_filter, limit=50000)
+            all_schools = self._scroll_all(self._get_collection("schools"), scroll_filter, limit=50000)
             
             ranked = []
             total_all = 0
@@ -1032,7 +1069,7 @@ class ToolExecutor:
         scroll_filter = self._build_filter(conditions)
         # Increase limit for province-wide queries
         # OPTIMIZATION: Only fetch needed aggregation fields
-        results = self._scroll_all(self.collections["teachers"], scroll_filter, limit=50000,
+        results = self._scroll_all(self._get_collection("teachers"), scroll_filter, limit=50000,
                                   with_payload=["metadata.school_name", "metadata.count", "metadata.gender", "metadata.person_type", "metadata.province"])
         
         # Aggregate by school and person_type
@@ -1088,7 +1125,7 @@ class ToolExecutor:
                 
                 if fallback_conditions:
                     fb_filter = self._build_filter(fallback_conditions)
-                    fb_results = self._scroll_all(self.collections["schools"], fb_filter, limit=50) 
+                    fb_results = self._scroll_all(self._get_collection("schools"), fb_filter, limit=50) 
                     
                     for r in fb_results:
                         meta = r.payload.get("metadata", {})
@@ -1182,6 +1219,33 @@ class ToolExecutor:
                 ai_summary += "\n" + "\n".join(details)
              else:
                 ai_summary += f" (กระจายอยู่ใน {len(schools)} โรงเรียน)"
+
+        # FIX: If person_type filter is set but Qdrant didn't filter properly,
+        # correct total_count using the application-level by_person_type breakdown
+        if person_type and by_person_type:
+            filtered_total = by_person_type.get(person_type, 0)
+            if filtered_total > 0 and filtered_total != total_count:
+                logger.info(f"🔧 [CountTeachers] Correcting total from {total_count} → {filtered_total} (person_type={person_type})")
+                total_count = filtered_total
+                # Also recalculate gender from filtered records only
+                total_male = 0
+                total_female = 0
+                for r in results:
+                    meta = r.payload.get("metadata", {})
+                    pt = meta.get("person_type", "ไม่ระบุ")
+                    if pt == person_type:
+                        count = meta.get("count", 1)
+                        g = meta.get("gender", "-")
+                        if g == "ชาย":
+                            total_male += count
+                        elif g == "หญิง":
+                            total_female += count
+
+        logger.info(f"📊 [CountTeachers] total_count={total_count}, male={total_male}, female={total_female}, person_type={person_type}, by_person_type={by_person_type}")
+
+        # Also update ai_summary after person_type correction
+        if person_type:
+            ai_summary = f"พบข้อมูล{person_type}ทั้งหมด {total_count:,} คน"
 
         result = {
             "tool": "count_teachers",
@@ -1310,7 +1374,9 @@ class ToolExecutor:
             conditions.append(
                 FieldCondition(key="metadata.gender", match=MatchValue(value=gender))
             )
-        if year:
+        if year and not self._active_year:
+            # Only add metadata.year filter when NOT using year-based collection routing
+            # (year-based routing already selects the correct collection)
             conditions.append(
                 FieldCondition(key="metadata.year", match=MatchValue(value=int(year)))
             )
@@ -1321,11 +1387,11 @@ class ToolExecutor:
         
         scroll_filter = self._build_filter(conditions)
         
-        if not grade and not gender and not year and not school_name:
+        if not grade and not gender and not school_name and (not year or self._active_year):
             try:
                 logger.info("⚡ Using Fast Ranking (Optimization) for Total Students")
                 # Fetch all schools from SCHOOLS collection (has pre-aggregated totals)
-                all_schools = self._scroll_all(self.collections["schools"], scroll_filter, limit=50000)
+                all_schools = self._scroll_all(self._get_collection("schools"), scroll_filter, limit=50000)
                 
                 # Sort by total_students
                 ranked = []
@@ -1354,7 +1420,7 @@ class ToolExecutor:
                     # Fetch a sample of students data to get grade/gender breakdown
                     # We use a reasonable limit since we just need aggregation
                     # OPTIMIZATION: Only fetch needed aggregation fields
-                    student_results = self._scroll_all(self.collections["students"], scroll_filter, limit=50000,
+                    student_results = self._scroll_all(self._get_collection("students"), scroll_filter, limit=50000,
                                                       with_payload=["metadata.count", "metadata.gender", "metadata.grade"])
                     
                     for r in student_results:
@@ -1399,7 +1465,7 @@ class ToolExecutor:
                 logger.error(traceback.format_exc())
         # Increase limit for province-wide queries with grade/gender filters
         # OPTIMIZATION: Only fetch needed aggregation fields
-        results = self._scroll_all(self.collections["students"], scroll_filter, limit=50000,
+        results = self._scroll_all(self._get_collection("students"), scroll_filter, limit=50000,
                                   with_payload=["metadata.school_name", "metadata.count", "metadata.gender", "metadata.province"])
         
         # Aggregate
@@ -1514,7 +1580,7 @@ class ToolExecutor:
                 if fallback_conditions:
                     fb_filter = self._build_filter(fallback_conditions)
                     # Fetch from SCHOOLS collection
-                    fb_results = self._scroll_all(self.collections["schools"], fb_filter, limit=50) # Limit low for metadata check
+                    fb_results = self._scroll_all(self._get_collection("schools"), fb_filter, limit=50) # Limit low for metadata check
                     
                     for r in fb_results:
                         meta = r.payload.get("metadata", {})
@@ -1640,7 +1706,7 @@ class ToolExecutor:
         scroll_filter = self._build_filter(conditions)
         # Increase limit for province-wide school queries
         # OPTIMIZATION: Only fetch fields needed for grouping/counting
-        results = self._scroll_all(self.collections["schools"], scroll_filter, limit=20000,
+        results = self._scroll_all(self._get_collection("schools"), scroll_filter, limit=20000,
                                   with_payload=["metadata.school_id", "metadata.school_name", "metadata.province", "metadata.agency", "metadata.district", "metadata.total_students", "metadata.total_teachers"])
         
         # Group by agency (and deduplicate)
@@ -1708,7 +1774,7 @@ class ToolExecutor:
             )
         
         scroll_filter = self._build_filter(conditions)
-        results = self._scroll_all(self.collections["ratios"], scroll_filter, limit=50)
+        results = self._scroll_all(self._get_collection("ratios"), scroll_filter, limit=50)
         
         ratios = []
         for r in results:
@@ -1910,6 +1976,20 @@ class ToolExecutor:
         if not metric:
             metric = "students"  # default
         
+        # Auto-detect if 'province' is actually a region name
+        region = kwargs.get('region')
+        if province and not region:
+            if province.startswith("ภาค") or province in REGIONS:
+                logger.info(f"🗺️ [Ranking] Province '{province}' is actually a region -> promoting")
+                region = province
+                kwargs['region'] = region
+                province = None
+        
+        # Auto-downgrade scope when region is set but province is missing
+        if region and not province and scope in ["district", "districts"]:
+            logger.info(f"🔄 [Ranking] Downgrading scope from '{scope}' to 'school' (region query without province)")
+            scope = "school"
+        
         # Normalize Thai metric aliases (comprehensive)
         metric_aliases = {
             "จำนวนครู": "teachers",
@@ -1932,7 +2012,74 @@ class ToolExecutor:
         
         limit = int(limit)
         
-        if metric == "students":
+        # Aggregate ranking by area (province/district/subdistrict) for students/teachers/ratio
+        scope_norm = scope or "school"
+        if metric in ["students", "teachers", "ratio"] and scope_norm in ["province", "provinces", "district", "districts", "subdistrict", "subdistricts"]:
+            group_key_map = {
+                "province": "province",
+                "provinces": "province",
+                "district": "district",
+                "districts": "district",
+                "subdistrict": "subdistrict",
+                "subdistricts": "subdistrict",
+            }
+            group_key = group_key_map.get(scope_norm, "province")
+            if group_key in ["district", "subdistrict"] and not province:
+                return {"error": f"Ranking by {group_key} requires province"}
+
+            conditions = []
+            if kwargs.get("region"):
+                provinces = REGIONS.get(kwargs.get("region"), [])
+                if provinces:
+                    conditions.append(
+                        FieldCondition(key="metadata.province", match=MatchAny(any=provinces))
+                    )
+            if province:
+                conditions.append(FieldCondition(key="metadata.province", match=MatchValue(value=province)))
+            if group_key == "subdistrict" and kwargs.get("district"):
+                conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=kwargs.get("district"))))
+
+            scroll_filter = self._build_filter(conditions)
+            results = self._scroll_all(
+                self._get_collection("schools"),
+                scroll_filter,
+                limit=200000,
+                with_payload=[
+                    "metadata.province",
+                    "metadata.district",
+                    "metadata.subdistrict",
+                    "metadata.total_students",
+                    "metadata.total_teachers",
+                ],
+            )
+
+            aggregates: Dict[str, Dict[str, float]] = {}
+            for r in results:
+                meta = r.payload.get("metadata", {})
+                key = meta.get(group_key)
+                if not key:
+                    continue
+                students = meta.get("total_students") or 0
+                teachers = meta.get("total_teachers") or 0
+                entry = aggregates.setdefault(key, {"students": 0, "teachers": 0})
+                if isinstance(students, (int, float)):
+                    entry["students"] += students
+                if isinstance(teachers, (int, float)):
+                    entry["teachers"] += teachers
+
+            items = []
+            for name, totals in aggregates.items():
+                if metric == "students":
+                    count = totals["students"]
+                elif metric == "teachers":
+                    count = totals["teachers"]
+                else:
+                    if not totals["students"]:
+                        continue
+                    count = totals["teachers"] / totals["students"]
+                items.append((name, count))
+
+        elif metric == "students":
             if kwargs.get('region'):
                 # For region ranking: Get all provinces in region, count each, then flatten
                 provinces = REGIONS.get(kwargs.get('region'), [])
@@ -1956,7 +2103,50 @@ class ToolExecutor:
                 items = [(k, v["total"]) for k, v in data.get("by_school", {}).items()]
         elif metric == "schools":
             # Ranking provinces by number of schools
-            if scope in ["province", "provinces"] or (not province and scope == "school"):
+            if scope in ["district", "districts"]:
+                if not province:
+                    return {"error": "Ranking by district requires province"}
+                conditions = [FieldCondition(key="metadata.province", match=MatchValue(value=province))]
+                # Optional district filter for sub-scope
+                if kwargs.get("district"):
+                    conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=kwargs.get("district"))))
+                scroll_filter = self._build_filter(conditions)
+                results = self._scroll_all(
+                    self._get_collection("schools"),
+                    scroll_filter,
+                    limit=200000,
+                    with_payload=["metadata.district"]
+                )
+                counts = {}
+                for r in results:
+                    meta = r.payload.get("metadata", {})
+                    dist = meta.get("district")
+                    if not dist:
+                        continue
+                    counts[dist] = counts.get(dist, 0) + 1
+                items = list(counts.items())
+            elif scope in ["subdistrict", "subdistricts"]:
+                if not province:
+                    return {"error": "Ranking by subdistrict requires province"}
+                conditions = [FieldCondition(key="metadata.province", match=MatchValue(value=province))]
+                if kwargs.get("district"):
+                    conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=kwargs.get("district"))))
+                scroll_filter = self._build_filter(conditions)
+                results = self._scroll_all(
+                    self._get_collection("schools"),
+                    scroll_filter,
+                    limit=200000,
+                    with_payload=["metadata.subdistrict"]
+                )
+                counts = {}
+                for r in results:
+                    meta = r.payload.get("metadata", {})
+                    sub = meta.get("subdistrict")
+                    if not sub:
+                        continue
+                    counts[sub] = counts.get(sub, 0) + 1
+                items = list(counts.items())
+            elif scope in ["province", "provinces"] or (not province and scope == "school"):
                 scope = "province"
                 conditions = []
                 if kwargs.get('region'):
@@ -1967,7 +2157,7 @@ class ToolExecutor:
                         )
                 scroll_filter = self._build_filter(conditions)
                 results = self._scroll_all(
-                    self.collections["schools"],
+                    self._get_collection("schools"),
                     scroll_filter,
                     limit=200000,
                     with_payload=["metadata.province"]
@@ -2067,9 +2257,11 @@ class ToolExecutor:
         
         scroll_filter = self._build_filter(conditions) if conditions else None
         
-        # Fetch all schools from schools collection
-        all_schools = self._scroll_all(self.collections["schools"], scroll_filter, limit=50000)
-        logger.info(f"DEBUG: _filter_schools fetched {len(all_schools)} schools from DB")
+        # Fetch schools from schools collection (capped to prevent timeout)
+        SCROLL_CAP = 10000
+        all_schools = self._scroll_all(self._get_collection("schools"), scroll_filter, limit=SCROLL_CAP)
+        capped = len(all_schools) >= SCROLL_CAP
+        logger.info(f"DEBUG: _filter_schools fetched {len(all_schools)} schools from DB{' (CAPPED!)' if capped else ''}")
         
         # Determine which field to filter on
         if metric.lower() in ["students", "student", "นักเรียน"]:
@@ -2186,7 +2378,17 @@ class ToolExecutor:
         """Search for education areas (สพป./สพม.) with their covered districts"""
         
         # Fetch all education areas first (small dataset ~200 records)
-        results = self._scroll_all(self.collections["areas"], None, limit=500)
+        try:
+            results = self._scroll_all(self._get_collection("areas"), None, limit=500)
+        except Exception as e:
+            logger.warning(f"⚠️ Could not query education areas collection: {e}")
+            return {
+                "tool": "search_education_areas",
+                "query": {"area_name": area_name, "province": province, "district": district},
+                "total_found": 0,
+                "areas": [],
+                "note": "Education areas collection not available"
+            }
         
         areas = []
         for r in results:
@@ -2270,7 +2472,7 @@ class ToolExecutor:
         try:
             # Query schools with matching area_name (use contains/partial match)
             results = self.client.scroll(
-                collection_name=COLLECTION_NAMES["schools"],
+                collection_name=self._get_collection("schools"),
                 limit=2000,
                 with_payload=True,
                 scroll_filter=models.Filter(
@@ -2293,7 +2495,7 @@ class ToolExecutor:
                 # Try fuzzy match if exact match fails
                 logger.info(f"   No exact match, trying partial search...")
                 all_results = self.client.scroll(
-                    collection_name=COLLECTION_NAMES["schools"],
+                    collection_name=self._get_collection("schools"),
                     limit=5000,
                     with_payload=True
                 )
@@ -2343,13 +2545,13 @@ class ToolExecutor:
             logger.error(f"❌ Error getting education area info: {e}")
             return {"tool": "get_education_area_info", "error": str(e)}
     
-    def _get_school_full_details(self, school_name: str, province: str = None, **kwargs) -> Dict[str, Any]:
+    def _get_school_full_details(self, school_name: str, province: str = None, district: str = None, **kwargs) -> Dict[str, Any]:
         """Get full details including GPS, Address, Contact"""
         if not school_name:
             return {"error": "School name is required"}
             
         # 0. DISAMBIGUATION CHECK
-        ambiguity_check = self._resolve_school_ambiguity(school_name, province)
+        ambiguity_check = self._resolve_school_ambiguity(school_name, province, district=district)
         if ambiguity_check['type'] == 'ambiguous':
              logger.info(f"🤔 Ambiguous school name '{school_name}' -> Found {len(ambiguity_check['choices'])} matches")
              return {
@@ -2468,7 +2670,7 @@ class ToolExecutor:
             FieldCondition(key="metadata.province", match=MatchValue(value=province))
         ]
         ratio_filter = self._build_filter(ratio_conditions)
-        ratio_results = self._scroll_all(self.collections["ratios"], ratio_filter, limit=100)
+        ratio_results = self._scroll_all(self._get_collection("ratios"), ratio_filter, limit=100)
         
         # Calculate average ratio
         ratios = [r.payload.get("metadata", {}).get("ratio", 0) for r in ratio_results if r.payload.get("metadata", {}).get("ratio")]
@@ -2523,7 +2725,7 @@ class ToolExecutor:
              conditions.append(FieldCondition(key="metadata.system_type", match=MatchValue(value=system_type)))
              
         scroll_filter = self._build_filter(conditions)
-        results = self._scroll_all(self.collections["systems"], scroll_filter)
+        results = self._scroll_all(self._get_collection("systems"), scroll_filter)
         
         by_system = {}
         total_schools = 0
@@ -2604,7 +2806,7 @@ class ToolExecutor:
              conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=district)))
              
         scroll_filter = self._build_filter(conditions)
-        results = self._scroll_all(self.collections["gender"], scroll_filter)
+        results = self._scroll_all(self._get_collection("gender"), scroll_filter)
         
         total_students = 0
         total_male = 0
@@ -2732,7 +2934,7 @@ class ToolExecutor:
              grade = self._normalize_grade(grade)
              
         scroll_filter = self._build_filter(conditions)
-        results = self._scroll_all(self.collections["grades"], scroll_filter)
+        results = self._scroll_all(self._get_collection("grades"), scroll_filter)
         
         grade_counts = {}
         total_students = 0
@@ -2808,7 +3010,7 @@ class ToolExecutor:
         conditions.append(FieldCondition(key="metadata.ratio", range=None)) # Just existence check if possible, or handle in python
         
         scroll_filter = self._build_filter(conditions)
-        results = self._scroll_all(self.collections["ratios"], scroll_filter, limit=5000) # Need more records to sort properly
+        results = self._scroll_all(self._get_collection("ratios"), scroll_filter, limit=5000) # Need more records to sort properly
         
         schools = []
         for r in results:
@@ -2844,12 +3046,23 @@ class ToolExecutor:
     # ============================================================
     
     def _analyze_teacher_distribution(self, province: str = None, district: str = None,
-                                      region: str = None, person_type: str = None) -> Dict[str, Any]:
-        """Analyze teacher distribution by person type"""
+                                      region: str = None, person_type: str = None,
+                                      gender: str = None) -> Dict[str, Any]:
+        """Analyze teacher distribution by person type, optionally filtered by gender"""
         conditions = []
         
         if person_type:
             person_type = self._normalize_person_type(person_type)
+        
+        # Normalize gender
+        if gender:
+            gender_map = {
+                'ชาย': 'ชาย', 'male': 'ชาย', 'ผู้ชาย': 'ชาย', 'm': 'ชาย',
+                'หญิง': 'หญิง', 'female': 'หญิง', 'ผู้หญิง': 'หญิง', 'f': 'หญิง',
+            }
+            gender = gender_map.get(gender.strip().lower(), gender.strip())
+            if gender in ('ชาย', 'หญิง'):
+                conditions.append(FieldCondition(key="metadata.gender", match=MatchValue(value=gender)))
         
         if province:
             province = self._normalize_province(province)
@@ -2869,7 +3082,7 @@ class ToolExecutor:
                     conditions.append(Filter(should=province_conditions))
             
         scroll_filter = self._build_filter(conditions)
-        results = self._scroll_all(self.collections["teachers"], scroll_filter)
+        results = self._scroll_all(self._get_collection("teachers"), scroll_filter)
         
         type_counts = {}
         total = 0
@@ -2903,7 +3116,7 @@ class ToolExecutor:
         
         return {
             "tool": "analyze_teacher_distribution",
-            "query": {"province": province, "district": district, "region": region, "person_type": person_type},
+            "query": {"province": province, "district": district, "region": region, "person_type": person_type, "gender": gender},
             "total_teachers": total,
             "by_gender": {"male": male_total, "female": female_total},
             "by_type": [{"type": t, "total": v["total"], "male": v["male"], "female": v["female"]} 
@@ -2921,7 +3134,7 @@ class ToolExecutor:
             
         # Use schools collection for counting
         scroll_filter = self._build_filter(conditions)
-        results = self._scroll_all(self.collections["schools"], scroll_filter)
+        results = self._scroll_all(self._get_collection("schools"), scroll_filter)
         
         agency_counts = {}
         
@@ -2955,7 +3168,7 @@ class ToolExecutor:
             conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=district)))
             
         scroll_filter = self._build_filter(conditions)
-        results = self._scroll_all(self.collections["schools"], scroll_filter)
+        results = self._scroll_all(self._get_collection("schools"), scroll_filter)
         
         subdistrict_counts = {}
         
@@ -2987,7 +3200,7 @@ class ToolExecutor:
             FieldCondition(key="metadata.district", match=MatchText(text=district))
         ]
         school_filter = self._build_filter(school_conditions)
-        schools = self._scroll_all(self.collections["schools"], school_filter)
+        schools = self._scroll_all(self._get_collection("schools"), school_filter)
         
         # Count subdistricts and agencies
         subdistricts = set()
@@ -3003,12 +3216,12 @@ class ToolExecutor:
             
         # Count students
         student_filter = self._build_filter(school_conditions)
-        students = self._scroll_all(self.collections["students"], student_filter)
+        students = self._scroll_all(self._get_collection("students"), student_filter)
         total_students = sum(r.payload.get("metadata", {}).get("count", 0) for r in students)
         
         # Count teachers
         teacher_filter = self._build_filter(school_conditions)
-        teachers = self._scroll_all(self.collections["teachers"], teacher_filter)
+        teachers = self._scroll_all(self._get_collection("teachers"), teacher_filter)
         total_teachers = sum(r.payload.get("metadata", {}).get("count", 0) for r in teachers)
         
         return {
@@ -3036,16 +3249,16 @@ class ToolExecutor:
             school_filter = self._build_filter([
                 FieldCondition(key="metadata.province", match=MatchValue(value=prov))
             ])
-            schools = self._scroll_all(self.collections["schools"], school_filter)
+            schools = self._scroll_all(self._get_collection("schools"), school_filter)
             
             # Get student count
             student_filter = school_filter
-            students = self._scroll_all(self.collections["students"], student_filter)
+            students = self._scroll_all(self._get_collection("students"), student_filter)
             total_students = sum(r.payload.get("metadata", {}).get("count", 0) for r in students)
             
             # Get teacher count
             teacher_filter = school_filter
-            teachers = self._scroll_all(self.collections["teachers"], teacher_filter)
+            teachers = self._scroll_all(self._get_collection("teachers"), teacher_filter)
             total_teachers = sum(r.payload.get("metadata", {}).get("count", 0) for r in teachers)
             
             # Calculate ratio
@@ -3065,6 +3278,167 @@ class ToolExecutor:
             "comparison": results
         }
     
+    def _compare_years(self, year1: str, year2: str, province: str = None,
+                       school_name: str = None, metric: str = "all", **kwargs) -> Dict[str, Any]:
+        """Compare education data between 2 years"""
+        from .constants import YEAR_ALIASES, YEAR_COLLECTIONS, V5_YEAR, AVAILABLE_YEARS, COLLECTION_NAMES
+        
+        # Normalize years
+        y1 = str(year1).strip()
+        y2 = str(year2).strip()
+        y1 = YEAR_ALIASES.get(y1, y1)
+        y2 = YEAR_ALIASES.get(y2, y2)
+        
+        logger.info(f"📅 [CompareYears] Comparing year {y1} vs {y2}, province={province}, school={school_name}, metric={metric}")
+        
+        # Check availability
+        for y in [y1, y2]:
+            if y not in AVAILABLE_YEARS:
+                return {
+                    "tool": "compare_years",
+                    "error": f"ไม่มีข้อมูลปี {y} ในระบบ (มีเฉพาะปี {', '.join(AVAILABLE_YEARS)})",
+                    "available_years": AVAILABLE_YEARS,
+                }
+        
+        def get_collections_for_year(year: str) -> Dict[str, str]:
+            """Get collection names for a specific year"""
+            if year == V5_YEAR:
+                # v5 = 2568 = latest
+                return COLLECTION_NAMES.copy()
+            elif year in YEAR_COLLECTIONS:
+                return YEAR_COLLECTIONS[year]
+            else:
+                return {}
+        
+        def get_year_data(year: str) -> Dict[str, Any]:
+            """Fetch all metrics for a given year"""
+            colls = get_collections_for_year(year)
+            if not colls:
+                return {"error": f"ไม่มี collection สำหรับปี {year}"}
+            
+            conditions = []
+            
+            # Province filter
+            if province:
+                prov = self._normalize_province(province)
+                conditions.append(
+                    FieldCondition(key="metadata.province", match=MatchValue(value=prov))
+                )
+            
+            # School filter
+            resolved_school_id = None
+            if school_name:
+                ambiguity = self._resolve_school_ambiguity(school_name, province)
+                if ambiguity['type'] == 'single':
+                    resolved_school_id = ambiguity['data'].payload.get('metadata', {}).get('school_id')
+                elif ambiguity['type'] == 'ambiguous':
+                    exact = [c for c in ambiguity['choices'] if c.get('school_name') == school_name]
+                    if len(exact) == 1:
+                        resolved_school_id = exact[0].get('school_id')
+                    else:
+                        return {
+                            "ambiguous": True,
+                            "choices": ambiguity['choices'],
+                        }
+                
+                if resolved_school_id:
+                    conditions.append(
+                        FieldCondition(key="metadata.school_id", match=MatchValue(value=str(resolved_school_id)))
+                    )
+                elif school_name:
+                    sn, _ = self._normalize_school_name(school_name)
+                    conditions.append(
+                        FieldCondition(key="metadata.school_name", match=MatchText(text=sn))
+                    )
+            
+            scroll_filter = self._build_filter(conditions) if conditions else None
+            
+            data = {}
+            
+            # Schools count
+            if metric in ["all", "schools"]:
+                try:
+                    schools_coll = colls.get("schools", "")
+                    if schools_coll:
+                        schools = self._scroll_all(schools_coll, scroll_filter, limit=200000)
+                        data["schools"] = len(schools)
+                    else:
+                        data["schools"] = 0
+                except Exception as e:
+                    logger.warning(f"⚠️ [CompareYears] Error fetching schools for {year}: {e}")
+                    data["schools"] = 0
+            
+            # Students count
+            if metric in ["all", "students", "ratio"]:
+                try:
+                    students_coll = colls.get("students", "")
+                    if students_coll:
+                        students = self._scroll_all(students_coll, scroll_filter, limit=200000)
+                        total = sum(r.payload.get("metadata", {}).get("count", 0) for r in students)
+                        data["students"] = total
+                    else:
+                        data["students"] = 0
+                except Exception as e:
+                    logger.warning(f"⚠️ [CompareYears] Error fetching students for {year}: {e}")
+                    data["students"] = 0
+            
+            # Teachers count
+            if metric in ["all", "teachers", "ratio"]:
+                try:
+                    teachers_coll = colls.get("teachers", "")
+                    if teachers_coll:
+                        teachers = self._scroll_all(teachers_coll, scroll_filter, limit=200000)
+                        total = sum(r.payload.get("metadata", {}).get("count", 0) for r in teachers)
+                        data["teachers"] = total
+                    else:
+                        data["teachers"] = 0
+                except Exception as e:
+                    logger.warning(f"⚠️ [CompareYears] Error fetching teachers for {year}: {e}")
+                    data["teachers"] = 0
+            
+            # Ratio
+            if metric in ["all", "ratio"]:
+                if data.get("teachers", 0) > 0 and data.get("students", 0) > 0:
+                    data["ratio"] = round(data["students"] / data["teachers"], 1)
+                else:
+                    data["ratio"] = 0
+            
+            return data
+        
+        # Fetch data for both years
+        data1 = get_year_data(y1)
+        data2 = get_year_data(y2)
+        
+        # Calculate differences
+        diff = {}
+        for key in ["schools", "students", "teachers", "ratio"]:
+            if key in data1 and key in data2:
+                val1 = data1[key]
+                val2 = data2[key]
+                change = val2 - val1
+                pct = round((change / val1) * 100, 1) if val1 > 0 else 0
+                diff[key] = {
+                    "change": change,
+                    "percent_change": pct,
+                    "direction": "เพิ่มขึ้น" if change > 0 else "ลดลง" if change < 0 else "เท่าเดิม"
+                }
+        
+        scope = "ทั้งประเทศ"
+        if school_name:
+            scope = f"โรงเรียน{school_name}"
+        elif province:
+            scope = f"จังหวัด{province}"
+        
+        return {
+            "tool": "compare_years",
+            "scope": scope,
+            "year1": {"year": y1, "data": data1},
+            "year2": {"year": y2, "data": data2},
+            "difference": diff,
+            "metric": metric,
+            "guidance": f"REQUIRED: สรุปการเปรียบเทียบข้อมูลปี {y1} กับ {y2} อย่างชัดเจน ระบุตัวเลข จำนวนที่เปลี่ยนแปลง และ % ที่เปลี่ยนแปลง"
+        }
+    
     def _find_nearby_schools(self, latitude: float, longitude: float,
                             radius_km: float = 5, limit: int = 10) -> Dict[str, Any]:
         """Find schools near GPS coordinates using Haversine distance"""
@@ -3076,7 +3450,7 @@ class ToolExecutor:
         radius = float(radius_km)
         
         # Fetch all schools (we'll filter by distance in Python since Qdrant doesn't support geo queries on flat collections)
-        results = self._scroll_all(self.collections["schools"], None, limit=10000)
+        results = self._scroll_all(self._get_collection("schools"), None, limit=10000)
         
         def haversine(lat1, lon1, lat2, lon2):
             """Calculate distance between two points in km"""
@@ -3157,7 +3531,7 @@ class ToolExecutor:
             conditions.append(FieldCondition(key="metadata.subdistrict", match=MatchText(text=subdistrict)))
             
         scroll_filter = self._build_filter(conditions)
-        results = self._scroll_all(self.collections["schools"], scroll_filter, limit=limit)
+        results = self._scroll_all(self._get_collection("schools"), scroll_filter, limit=limit)
         
         return {
             "tool": "filter_schools",
@@ -3199,7 +3573,7 @@ class ToolExecutor:
                 scope_filter = self._build_filter(scope_conditions) if scope_conditions else None
                 
                 # Fetch raw schools with payload using _scroll_all
-                raw_candidates = self._scroll_all(self.collections["schools"], scope_filter, limit=200)
+                raw_candidates = self._scroll_all(self._get_collection("schools"), scope_filter, limit=200)
                 
                 for s in raw_candidates:
                     s_sub = s.payload.get("metadata", {}).get("subdistrict")

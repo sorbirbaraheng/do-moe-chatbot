@@ -5,10 +5,12 @@
 flask>=2.3.0
 flask-cors>=4.0.0
 flask-limiter>=3.0.0
+gunicorn>=20.1.0
 
 # LLM Providers
 rapidfuzz
 google-genai>=1.0.0
+google-generativeai>=0.3.0
 groq>=0.4.0
 
 # Vector Database
