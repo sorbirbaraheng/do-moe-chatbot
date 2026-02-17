@@ -106,7 +106,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
   // MOBILE VIEW - Premium Apple Design System (2026)
   // ===============================================
   const mobileView = useMemo(() => (
-    <div className="min-h-[100dvh] bg-[#eff1f5] flex flex-col relative overflow-hidden">
+    <div className="landing-mobile min-h-[100dvh] bg-[#eff1f5] flex flex-col relative overflow-hidden">
 
       {/* Dynamic Mesh Gradient Background - Subtle & Premium */}
       <div className="absolute inset-0 z-0 pointer-events-none">
@@ -115,7 +115,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
       </div>
 
       {/* Header - Ultra Glassmorphism */}
-      <header className="sticky top-0 z-50 flex items-center justify-between px-6 pt-14 pb-4 bg-[#eff1f5]/60 backdrop-blur-3xl border-b border-white/20 shadow-[0_4px_30px_rgba(0,0,0,0.03)] transition-all duration-500">
+      <header className="landing-header sticky top-0 z-50 flex items-center justify-between px-6 pt-14 pb-4 bg-[#eff1f5]/60 backdrop-blur-3xl border-b border-white/20 shadow-[0_4px_30px_rgba(0,0,0,0.03)] transition-all duration-500">
         <div className="flex items-center gap-3 active:opacity-70 transition-opacity duration-300" onClick={() => onStart(Category.Auto)}>
           <div className="relative group">
             <div className="absolute inset-0 bg-gradient-to-tr from-blue-500 to-purple-500 rounded-2xl blur-lg opacity-40 group-hover:opacity-60 transition-opacity duration-500"></div>
@@ -129,18 +129,18 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
 
         <button
           onClick={() => onStart()}
-          className="px-5 py-2 rounded-full bg-[#007AFF] hover:bg-[#0071eb] active:scale-95 transition-all duration-300 text-white text-[13px] font-semibold shadow-[0_4px_12px_rgba(0,122,255,0.3)] hover:shadow-[0_6px_20px_rgba(0,122,255,0.4)] border border-white/10"
+          className="landing-cta px-5 py-2 rounded-full bg-[#007AFF] hover:bg-[#0071eb] active:scale-95 transition-all duration-300 text-white text-[13px] font-semibold shadow-[0_4px_12px_rgba(0,122,255,0.3)] hover:shadow-[0_6px_20px_rgba(0,122,255,0.4)] border border-white/10"
         >
           เริ่มแชท
         </button>
       </header>
 
-      <main className="flex-1 relative z-10 px-6 pt-6 pb-24 overflow-y-auto scrollbar-hide">
+      <main className="landing-main flex-1 relative z-10 px-6 pt-6 pb-24 overflow-y-auto scrollbar-hide">
 
         {/* Large Title Greeting */}
         <div className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-          <p className="text-[13px] font-semibold text-[#86868b] uppercase tracking-wider mb-2">{greeting.sub}</p>
-          <h1 className="text-[34px] font-bold text-[#1d1d1f] leading-[1.1] tracking-tight">
+          <p className="landing-eyebrow text-[13px] font-semibold text-[#86868b] uppercase tracking-wider mb-2">{greeting.sub}</p>
+          <h1 className="landing-title text-[34px] font-bold text-[#1d1d1f] leading-[1.1] tracking-tight">
             {user?.name ? (
               <>สวัสดี, <br /><span className="text-transparent bg-clip-text bg-gradient-to-r from-[#007AFF] to-[#5856D6]">{user.name.split(' ')[0]}</span></>
             ) : (
@@ -150,12 +150,12 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
         </div>
 
         {/* Spotlight Search - Super Glass & Depth */}
-        <div className="relative mb-10 z-30" ref={dropdownRef}>
-          <form onSubmit={handleSubmit} className="relative group perspective-1000">
+        <div className="landing-search relative mb-10 z-30" ref={dropdownRef}>
+          <form onSubmit={handleSubmit} className="landing-search-form relative group perspective-1000">
             <div className={`
               absolute -inset-1 bg-gradient-to-r from-blue-400/40 via-purple-400/40 to-blue-400/40 rounded-[22px] blur-xl opacity-0 group-focus-within:opacity-100 transition duration-700 ease-out
             `}></div>
-            <div className="relative bg-white/60 backdrop-blur-2xl rounded-[20px] shadow-[0_8px_32px_rgba(0,0,0,0.04)] border border-white/60 p-1.5 flex items-center transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-focus-within:bg-white/80 group-focus-within:shadow-[0_16px_40px_rgba(0,0,0,0.08)] group-focus-within:scale-[1.02] group-focus-within:border-white/80 ring-1 ring-white/40">
+            <div className="landing-search-inner relative bg-white/60 backdrop-blur-2xl rounded-[20px] shadow-[0_8px_32px_rgba(0,0,0,0.04)] border border-white/60 p-1.5 flex items-center transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-focus-within:bg-white/80 group-focus-within:shadow-[0_16px_40px_rgba(0,0,0,0.08)] group-focus-within:scale-[1.02] group-focus-within:border-white/80 ring-1 ring-white/40">
               <div className="pl-3.5 pr-2 text-[#8e8e93]">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
               </div>
@@ -165,7 +165,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
                 value={searchValue}
                 onChange={(e) => { setSearchValue(e.target.value); setShowDropdown(true); }}
                 placeholder="ค้นหาข้อมูลโรงเรียน, ครู..."
-                className="flex-1 bg-transparent h-11 outline-none text-[17px] text-[#1d1d1f] placeholder:text-[#aeaeb2] font-medium"
+                className="landing-search-input flex-1 bg-transparent h-11 outline-none text-[17px] text-[#1d1d1f] placeholder:text-[#aeaeb2] font-medium"
               />
 
               <div className="flex items-center gap-1 pr-1.5">
@@ -207,13 +207,13 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
 
         {/* Quick Actions - iOS Widget Glass */}
         <div className="mb-10">
-          <h3 className="text-[13px] font-semibold text-[#86868b] uppercase tracking-wider mb-4 px-1 drop-shadow-sm">เมนูลัด</h3>
+          <h3 className="landing-section-title text-[13px] font-semibold text-[#86868b] uppercase tracking-wider mb-4 px-1 drop-shadow-sm">เมนูลัด</h3>
           <div className="grid grid-cols-1 gap-4">
             {['ค้นหาโรงเรียนใกล้ฉัน', 'สรุปสถิติครูทั่วประเทศ', 'แนวโน้มจำนวนนักเรียนปีนี้'].map((q, i) => (
               <button
                 key={i}
                 onClick={() => onStart(Category.General, q)}
-                className="w-full bg-white/60 backdrop-blur-2xl rounded-[22px] p-5 flex items-center justify-between shadow-[0_4px_24px_rgba(0,0,0,0.02)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] border border-white/50 active:scale-[0.98] transition-all duration-300 active:bg-white/80 group ring-1 ring-white/60"
+                className="landing-quick-card w-full bg-white/60 backdrop-blur-2xl rounded-[22px] p-5 flex items-center justify-between shadow-[0_4px_24px_rgba(0,0,0,0.02)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] border border-white/50 active:scale-[0.98] transition-all duration-300 active:bg-white/80 group ring-1 ring-white/60"
               >
                 <span className="text-[16px] font-medium text-[#1d1d1f] group-hover:text-[#007AFF] transition-colors">{q}</span>
                 <div className="w-8 h-8 rounded-full bg-white/50 flex items-center justify-center shadow-sm border border-white/80 group-hover:bg-[#007AFF] group-hover:text-white transition-all duration-300">
@@ -227,8 +227,8 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
         {/* Stats Cards - Horizontal Scroll with Snap */}
         <div className="mb-8 -mx-6">
           <div className="px-6 flex items-center justify-between mb-4">
-            <h3 className="text-[13px] font-semibold text-[#86868b] uppercase tracking-wider">ภาพรวมวันนี้</h3>
-            <span className="text-[11px] font-bold text-[#007AFF] bg-blue-50 px-2 py-0.5 rounded-full">Live</span>
+            <h3 className="landing-section-title text-[13px] font-semibold text-[#86868b] uppercase tracking-wider">ภาพรวมวันนี้</h3>
+            <span className="landing-live-pill text-[11px] font-bold text-[#007AFF] bg-blue-50 px-2 py-0.5 rounded-full">Live</span>
           </div>
 
           <div className="flex gap-4 overflow-x-auto px-6 pb-12 snap-x snap-mandatory scrollbar-hide pt-4">
@@ -236,7 +236,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
               <div
                 key={idx}
                 onClick={() => onStart(stat.category)}
-                className="snap-center flex-shrink-0 w-[260px] bg-white/70 backdrop-blur-3xl rounded-[28px] p-6 shadow-[0_15px_40px_-5px_rgba(0,0,0,0.05)] hover:shadow-[0_25px_50px_-10px_rgba(0,0,0,0.1)] border border-white/60 relative overflow-hidden group active:scale-[0.98] transition-all duration-500 ease-out ring-1 ring-white/50"
+                className="landing-stat-card snap-center flex-shrink-0 w-[260px] bg-white/70 backdrop-blur-3xl rounded-[28px] p-6 shadow-[0_15px_40px_-5px_rgba(0,0,0,0.05)] hover:shadow-[0_25px_50px_-10px_rgba(0,0,0,0.1)] border border-white/60 relative overflow-hidden group active:scale-[0.98] transition-all duration-500 ease-out ring-1 ring-white/50"
               >
                 <div className={`absolute -right-10 -top-10 w-40 h-40 bg-gradient-to-br ${stat.color} opacity-15 blur-[60px] group-hover:opacity-25 transition-opacity duration-700`}></div>
 

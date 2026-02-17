@@ -54,6 +54,7 @@ EDUCATION_TOOLS: List[Tool] = [
             ToolParameter("region", "ภาค (เช่น ภาคเหนือ, ภาคใต้)", required=False),
             ToolParameter("metric", "สิ่งที่ต้องการค้นหา (เพื่อกรองข้อมูล)", required=False, enum=["students", "teachers"]),
             ToolParameter("limit", "จำนวนผลลัพธ์ (default: 10)", required=False),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -95,6 +96,7 @@ EDUCATION_TOOLS: List[Tool] = [
             ToolParameter("subdistrict", "ตำบล/แขวง", required=False),
             ToolParameter("region", "ภาค (เช่น ภาคเหนือ, ภาคใต้)", required=False),
             ToolParameter("agency", "สังกัด", required=False),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -104,6 +106,7 @@ EDUCATION_TOOLS: List[Tool] = [
         parameters=[
             ToolParameter("school_name", "ชื่อโรงเรียน", required=False),
             ToolParameter("province", "จังหวัด", required=False),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -115,6 +118,7 @@ EDUCATION_TOOLS: List[Tool] = [
             ToolParameter("entity2", "โรงเรียนหรือจังหวัดที่สอง", required=True),
             ToolParameter("metric", "สิ่งที่ต้องการเปรียบเทียบ", required=True, 
                          enum=["students", "teachers", "schools", "ratio"]),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -130,6 +134,7 @@ EDUCATION_TOOLS: List[Tool] = [
             ToolParameter("province", "จังหวัด (ถ้าต้องการจัดอันดับในจังหวัดนั้น)", required=False),
             ToolParameter("region", "ภาค (ถ้าต้องการจำกัดเฉพาะภาค)", required=False),
             ToolParameter("limit", "จำนวนอันดับที่แสดง (default: 5)", required=False),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -142,6 +147,7 @@ EDUCATION_TOOLS: List[Tool] = [
             ToolParameter("district", "อำเภอ/เขต", required=False),
             ToolParameter("agency", "สังกัด", required=False),
             ToolParameter("limit", "จำนวนที่แสดง (default: 10)", required=False),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -159,6 +165,7 @@ EDUCATION_TOOLS: List[Tool] = [
             ToolParameter("district", "อำเภอ/เขต", required=False),
             ToolParameter("subdistrict", "ตำบล/แขวง", required=False),
             ToolParameter("limit", "จำนวนผลลัพธ์ (default: 20)", required=False),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -191,6 +198,7 @@ EDUCATION_TOOLS: List[Tool] = [
         parameters=[
             ToolParameter("school_name", "ชื่อโรงเรียน", required=True),
             ToolParameter("province", "จังหวัด", required=False),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -199,6 +207,7 @@ EDUCATION_TOOLS: List[Tool] = [
         description="สรุปภาพรวมข้อมูลการศึกษาของจังหวัด รวมจำนวนโรงเรียน นักเรียน ครู แยกตามสังกัด",
         parameters=[
             ToolParameter("province", "จังหวัดที่ต้องการดูสรุป", required=True),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -213,6 +222,7 @@ EDUCATION_TOOLS: List[Tool] = [
             ToolParameter("province", "จังหวัด", required=False),
             ToolParameter("district", "อำเภอ/เขต", required=False),
             ToolParameter("system_type", "ประเภทการศึกษา", required=False, enum=["ในระบบ", "นอกระบบ"]),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -222,6 +232,7 @@ EDUCATION_TOOLS: List[Tool] = [
         parameters=[
             ToolParameter("province", "จังหวัด", required=False),
             ToolParameter("district", "อำเภอ/เขต", required=False),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -232,6 +243,7 @@ EDUCATION_TOOLS: List[Tool] = [
             ToolParameter("province", "จังหวัด", required=False),
             ToolParameter("district", "อำเภอ/เขต", required=False),
             ToolParameter("grade", "ระดับชั้นที่สนใจ เช่น ป.1, ม.3", required=False),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -242,6 +254,7 @@ EDUCATION_TOOLS: List[Tool] = [
             ToolParameter("province", "จังหวัด", required=False),
             ToolParameter("order", "ลำดับ: best=ดีที่สุด, worst=แย่ที่สุด", required=True, enum=["best", "worst"]),
             ToolParameter("limit", "จำนวนที่แสดง (default: 10)", required=False),
+            ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
     
@@ -251,11 +264,13 @@ EDUCATION_TOOLS: List[Tool] = [
     
     Tool(
         name="analyze_teacher_distribution",
-        description="วิเคราะห์การกระจายตัวของครู/บุคลากรตามประเภท (ข้าราชการครู/พนักงานราชการ/ลูกจ้าง) ในจังหวัดหรือพื้นที่",
+        description="วิเคราะห์การกระจายตัวของครู/บุคลากรตามประเภท (ข้าราชการครู/พนักงานราชการ/ลูกจ้าง) ในจังหวัดหรือพื้นที่ สามารถกรองตามเพศได้",
         parameters=[
             ToolParameter("province", "จังหวัด", required=False),
             ToolParameter("district", "อำเภอ/เขต", required=False),
+            ToolParameter("region", "ภูมิภาค เช่น ภาคใต้ ภาคเหนือ", required=False),
             ToolParameter("person_type", "ประเภทบุคลากรที่สนใจ", required=False),
+            ToolParameter("gender", "เพศ: ชาย หรือ หญิง", required=False),
         ]
     ),
     
@@ -296,6 +311,18 @@ EDUCATION_TOOLS: List[Tool] = [
         parameters=[
             ToolParameter("provinces", "รายชื่อจังหวัดที่ต้องการเปรียบเทียบ (คั่นด้วย ,)", required=True),
             ToolParameter("metrics", "สิ่งที่เปรียบเทียบ", required=False, enum=["all", "schools", "students", "teachers", "ratio"]),
+        ]
+    ),
+    
+    Tool(
+        name="compare_years",
+        description="เปรียบเทียบข้อมูลการศึกษาระหว่าง 2 ปี เช่น เปรียบเทียบนักเรียนปี 67 กับ 68, ปีนี้กับปีที่แล้ว",
+        parameters=[
+            ToolParameter("year1", "ปีแรก เช่น 2567, 67", required=True),
+            ToolParameter("year2", "ปีที่สอง เช่น 2568, 68", required=True),
+            ToolParameter("province", "จังหวัด (ถ้าต้องการเจาะจง)", required=False),
+            ToolParameter("school_name", "ชื่อโรงเรียน (ถ้าต้องการเจาะจง)", required=False),
+            ToolParameter("metric", "ตัวชี้วัด", required=False, enum=["all", "students", "teachers", "schools", "ratio"]),
         ]
     ),
     
@@ -409,7 +436,7 @@ Your task is to:
 | Tool | Use When | Required/Optional Params |
 |------|----------|--------------------------|
 | `count_schools` | นับจำนวนโรงเรียน | province, district, agency, region |
-| `count_students` | นับจำนวนนักเรียน | province, district, school_name, gender, grade |
+| `count_students` | นับจำนวนนักเรียน | province, district, school_name, gender, grade, **region** |
 | `count_teachers` | นับจำนวนครู | province, district, school_name, gender, person_type, region |
 
 **🔍 SEARCH & LIST TOOLS:**
@@ -422,7 +449,7 @@ Your task is to:
 **📈 ANALYSIS TOOLS:**
 | Tool | Use When | Required/Optional Params |
 |------|----------|--------------------------|
-| `analyze_teacher_distribution` | วิเคราะห์โครงสร้างครู (แยกประเภท, เพศ) | province, district, region, person_type |
+| `analyze_teacher_distribution` | วิเคราะห์โครงสร้างครู (แยกประเภท, เพศ) | province, district, region, person_type, gender |
 | `get_grade_distribution` | วิเคราะห์นักเรียนแยกตามระดับชั้น | province, district, grade |
 | `analyze_gender_ratio` | วิเคราะห์สัดส่วนชาย/หญิง | province, district |
 | `get_ratio` | อัตราส่วนครู:นักเรียน | province, school_name |
@@ -430,7 +457,7 @@ Your task is to:
 **🏆 RANKING TOOLS:**
 | Tool | Use When | Required/Optional Params |
 |------|----------|--------------------------|
-| `ranking` | จัดอันดับ (มากที่สุด/น้อยที่สุด) | metric, order, scope, province, limit |
+| `ranking` | จัดอันดับ (มากที่สุด/น้อยที่สุด) | metric, order, scope, province, **region**, limit |
 | `ranking_by_agency` | จัดอันดับตามสังกัด | province, metric, limit |
 | `ranking_subdistricts` | จัดอันดับตำบล | province, district, metric, order, limit |
 
@@ -439,6 +466,7 @@ Your task is to:
 |------|----------|--------------------------|
 | `compare` | เปรียบเทียบ 2 จังหวัด/ภาค | entity1, entity2, metric |
 | `compare_provinces` | เปรียบเทียบหลายจังหวัด | provinces (comma-separated), metrics |
+| `compare_years` | เปรียบเทียบ 2 ปี (ปี 67 vs 68) | year1, year2, province, school_name, metric |
 
 **🔢 NUMERIC FILTER TOOLS (for > < = conditions):**
 | Tool | Use When | Required/Optional Params |
@@ -466,9 +494,16 @@ Your task is to:
 - ภาคเหนือ, ภาคใต้, ภาคอีสาน, ภาคกลาง, ภาคตะวันออก = REGION (use region parameter)
 - กรุงเทพ, เชียงใหม่, ปัตตานี, etc. = PROVINCE
 
-**school_name**: ONLY extract if it's a REAL school name!
-- ❌ "อะไร", "บ้าง", "ไหน", "ทั้งหมด" = NOT school names!
-- ✅ "สวนกุหลาบ", "อนุบาลปัตตานี", "พัฒนาวิทยา" = school names
+**CONCEPT GROUPS (must expand before calling tools):**
+- "3 จังหวัดชายแดนภาคใต้" or "สามจังหวัดชายแดน" → use compare_provinces with provinces="ปัตตานี,ยะลา,นราธิวาส"
+- "5 จังหวัดอีสานตอนบน" → use compare_provinces with individual provinces
+- "EEC" or "อีอีซี" → provinces in ชลบุรี, ระยอง, ฉะเชิงเทรา
+
+**school_name**: ⚠️ CRITICAL! ONLY extract if it is an ACTUAL, REAL school name!
+- ❌ STOP WORDS - These are NEVER school names: "อะไร", "บ้าง", "ไหน", "ทั้งหมด", "ที่", "แต่ละ", "ชายแดน", "ขนาดเล็ก", "ขนาดใหญ่", "ดีที่สุด", "มากที่สุด", "น้อยที่สุด", "กี่", "เท่าไหร่", "เท่าไร", "รวม", "รวมกัน", "ทุก", "หมด", "ใด"
+- ✅ Real school names: "สวนกุหลาบ", "อนุบาลปัตตานี", "เบญจมราชูทิศ", "พัฒนาวิทยา"
+- ⚠️ If the question asks "จังหวัดไหน", "โรงเรียนไหน", "ที่ไหน" → these are QUESTION WORDS, NOT school names!
+- ⚠️ If the question asks about "ชายแดน", "ขนาดเล็ก" → these are DESCRIPTORS, NOT school names!
 
 **person_type** (for teacher queries):
 - "ครูราชการ", "ข้าราชการ" → person_type: "ข้าราชการครู"
@@ -477,6 +512,25 @@ Your task is to:
 **Numeric conditions** (triggers advanced_school_search or filter_schools):
 - "น้อยกว่า 100 คน", "< 100" → max_students=100 OR operator="lt", value=100
 - "มากกว่า 500 คน", "> 500" → min_students=500 OR operator="gt", value=500
+- "ไม่ถึง 5 คน", "ไม่เกิน 5" → max_teachers=5
+
+### INTENT DETECTION PRIORITY:
+Before extracting entities, determine the INTENT first:
+0. ⚠️ **YEAR COMPARISON (HIGHEST PRIORITY):** If the question mentions 2 different years (e.g. "ปี 67 กับ 68", "ปี 2567 vs 2568", "เปรียบเทียบปีนี้กับปีที่แล้ว", "ต่างกันกี่คน ปี X ปี Y") → ALWAYS use `compare_years` with year1 and year2. DO NOT use `compare`, `count_students`, or `count_teachers` for year comparisons!
+1. "จังหวัดไหน/จังหวัดใด + มากที่สุด/ดีที่สุด" → `ranking` tool (NOT search_schools!)
+2. "โรงเรียนที่มี...มากที่สุด/น้อยที่สุด" → `ranking` tool with scope="school"
+3. "เปรียบเทียบ + school_A + กับ + school_B" → call `get_school_full_details` for EACH school
+4. "ใน แต่ละ จังหวัด" → `ranking` tool with appropriate scope
+5. "3 จังหวัดชายแดน" → `compare_provinces` with provinces="ปัตตานี,ยะลา,นราธิวาส"
+6. "อัตราส่วนครูต่อนักเรียนดีที่สุด" → `ranking` with metric="ratio"
+7. "จังหวัดไหน/อำเภอไหน/ตำบลไหน + ใน + [ภาค/จังหวัด] + มากที่สุด" → `ranking` with scope=province/district/subdistrict + region/province filter
+8. "ภาคไหนมี...มากที่สุด" → `ranking` with scope="province" (ranks all provinces nationwide)
+
+### ⚠️ YEAR COMPARISON RULES:
+- If user mentions TWO years (e.g. "67", "68", "2567", "2568") → MUST use `compare_years`
+- Keywords: "เปรียบเทียบ...ปี", "ต่างกัน", "เทียบปี", "ปี X กับ Y", "ปี X vs Y"
+- metric mapping: "นักเรียน" → "students", "ครู" → "teachers", "โรงเรียน" → "schools"
+- Available years: 2566 (66), 2567 (67) and 2568 (68)
 
 ### CONTEXT FROM PREVIOUS TURNS:
 {context}
@@ -490,12 +544,26 @@ Return ONLY a JSON array. No explanation.
 - "โรงเรียนในปัตตานีมีกี่แห่ง และมีครูเท่าไหร่" → [{{"name": "get_province_summary", "params": {{"province": "ปัตตานี"}}}}]
 - "ครูในภาคใต้มีเท่าไหร่" → [{{"name": "count_teachers", "params": {{"region": "ภาคใต้"}}}}]
 - "รายละเอียดครูภาคใต้" → [{{"name": "analyze_teacher_distribution", "params": {{"region": "ภาคใต้"}}}}]
+- "ครูผู้ชายในปัตตานีมีกี่คน" → [{{"name": "analyze_teacher_distribution", "params": {{"province": "ปัตตานี", "gender": "ชาย"}}}}]
+- "ปัตตานีมีครูผู้ชายหรือผู้หญิงมากกว่า" → [{{"name": "analyze_teacher_distribution", "params": {{"province": "ปัตตานี"}}}}]
 - "นักเรียนในเชียงใหม่แยกตามชั้น" → [{{"name": "get_grade_distribution", "params": {{"province": "เชียงใหม่"}}}}]
 - "โรงเรียนที่มีนักเรียนน้อยกว่า 100 คน" → [{{"name": "advanced_school_search", "params": {{"max_students": 100}}}}]
+- "โรงเรียนขนาดเล็กที่มีครูไม่ถึง 5 คน" → [{{"name": "advanced_school_search", "params": {{"max_teachers": 5}}}}]
 - "โรงเรียนในยะลาที่มีครูมากกว่า 50 คน" → [{{"name": "advanced_school_search", "params": {{"province": "ยะลา", "min_teachers": 50}}}}]
 - "รายละเอียดโรงเรียนอนุบาลปัตตานี" → [{{"name": "get_school_full_details", "params": {{"school_name": "อนุบาลปัตตานี"}}}}]
 - "เปรียบเทียบภาคเหนือกับภาคใต้" → [{{"name": "compare", "params": {{"entity1": "ภาคเหนือ", "entity2": "ภาคใต้"}}}}]
+- "เปรียบเทียบโรงเรียนอนุบาลปัตตานีกับเบญจมราชูทิศ" → [{{"name": "get_school_full_details", "params": {{"school_name": "อนุบาลปัตตานี"}}}}, {{"name": "get_school_full_details", "params": {{"school_name": "เบญจมราชูทิศ"}}}}]
 - "จังหวัดที่มีโรงเรียนมากที่สุด 5 อันดับ" → [{{"name": "ranking", "params": {{"metric": "schools", "order": "most", "scope": "province", "limit": 5}}}}]
+- "จังหวัดไหนมีอัตราส่วนครูต่อนักเรียนดีที่สุด" → [{{"name": "ranking", "params": {{"metric": "ratio", "order": "least", "scope": "province", "limit": 10}}}}]
+- "โรงเรียนที่มีนักเรียนมากที่สุดในแต่ละจังหวัด" → [{{"name": "ranking", "params": {{"metric": "students", "order": "most", "scope": "school", "limit": 10}}}}]
+- "จังหวัดไหนในภาคกลางมีนักเรียนมากที่สุด" → [{{"name": "ranking", "params": {{"metric": "students", "order": "most", "scope": "province", "region": "ภาคกลาง", "limit": 5}}}}]
+- "อำเภอไหนในเชียงใหม่มีโรงเรียนมากที่สุด" → [{{"name": "ranking", "params": {{"metric": "schools", "order": "most", "scope": "district", "province": "เชียงใหม่", "limit": 5}}}}]
+- "ตำบลไหนในเชียงใหม่มีนักเรียนเยอะสุด" → [{{"name": "ranking", "params": {{"metric": "students", "order": "most", "scope": "subdistrict", "province": "เชียงใหม่", "limit": 5}}}}]
+- "จังหวัดไหนในประเทศไทยมีครูมากที่สุด" → [{{"name": "ranking", "params": {{"metric": "teachers", "order": "most", "scope": "province", "limit": 10}}}}]
+- "3 จังหวัดชายแดนภาคใต้มีนักเรียนรวมกี่คน" → [{{"name": "compare_provinces", "params": {{"provinces": "ปัตตานี,ยะลา,นราธิวาส", "metrics": "students"}}}}]
+- "กรุงเทพมีนักเรียนปี 67 กับ 68 ต่างกันกี่คน" → [{{"name": "compare_years", "params": {{"year1": "67", "year2": "68", "province": "กรุงเทพมหานคร", "metric": "students"}}}}]
+- "เปรียบเทียบครูปี 2567 กับ 2568" → [{{"name": "compare_years", "params": {{"year1": "2567", "year2": "2568", "metric": "teachers"}}}}]
+- "โรงเรียนสวนกุหลาบ นักเรียนปี 67 vs 68" → [{{"name": "compare_years", "params": {{"year1": "67", "year2": "68", "school_name": "สวนกุหลาบวิทยาลัย", "metric": "students"}}}}]
 - "สพป.เชียงใหม่ เขต 1 ครอบคลุมอำเภออะไรบ้าง" → [{{"name": "get_education_area_info", "params": {{"area_name": "สพป.เชียงใหม่ เขต 1"}}}}]
 - "สวัสดีครับ" → [{{"name": "general_chat", "params": {{}}}}]
 
@@ -586,7 +654,7 @@ RESPONSE_GENERATION_PROMPT = '''คุณคือ "น้องดีโอ" (D
         > - **ถาม "จัดอันดับ" (Ranking):** ต้องแสดงคอลัมน์ตัวเลขที่ใช้อันดับ (เช่น นักเรียน, ครู)
         > - **ถาม "เปรียบเทียบ" (Compare):** แสดงคอลัมน์ที่ใช้เปรียบเทียบ
     -   **Analysis:** วิเคราะห์ความต่าง/สัดส่วน (เช่น "ทิ้งห่างที่ 2 ถึง xx%")
-    -   **Conclusion:** สรุปสั้นๆ และชวนต่อยอด 1 ประโยค (ถ้าเหมาะสม)
+    -   **Conclusion:** สรุปสั้นๆ (ห้ามเพิ่มข้อเสนอแนะ/คำถามต่อยอด — ระบบจัดการแยกเป็นปุ่มกดแล้ว)
 
 3.  **กรณีชื่อโรงเรียนคลุมเครือ (Ambiguous Results - ฟิลด์ `ambiguous: true`):**
     -   **ห้ามตอบว่า "ไม่พบข้อมูล"** เด็ดขาด! ถ้ามี `choices` แปลว่ามีข้อมูล

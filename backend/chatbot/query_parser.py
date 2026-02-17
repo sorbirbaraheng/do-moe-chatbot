@@ -594,11 +594,43 @@ class SmartQueryParser:
     def parse(self, query: str) -> ParsedQuery:
         """Parse query into structured format"""
         entities = self.extract_entities(query)
+        query_lower = query.lower()
+
+        # =====================================================================
+        # QUICK-PATH: Ranking detection (avoid LLM misrouting to school search)
+        # e.g., "จังหวัดไหนมีนักเรียนมากที่สุด"
+        # =====================================================================
+        least_keywords = INTENT_KEYWORDS.get(QueryIntent.RANKING_LEAST, [])
+        most_keywords = INTENT_KEYWORDS.get(QueryIntent.RANKING_MOST, [])
+        has_least = any(kw in query_lower for kw in least_keywords)
+        has_most = any(kw in query_lower for kw in most_keywords)
+        if has_least or has_most:
+            intent = QueryIntent.RANKING_LEAST if has_least else QueryIntent.RANKING_MOST
+            return ParsedQuery(
+                intent=intent,
+                original_query=query,
+                raw_query=query,
+                level=self.detect_level(query, entities),
+                province=entities.get('province'),
+                district=entities.get('district'),
+                subdistrict=entities.get('subdistrict'),
+                school_name=None,
+                agency=entities.get('agency'),
+                region=entities.get('region'),
+                min_students=entities.get('min_students'),
+                max_students=entities.get('max_students'),
+                min_teachers=entities.get('min_teachers'),
+                max_teachers=entities.get('max_teachers'),
+                area_name=entities.get('area_name'),
+                person_type=entities.get('person_type'),
+                coordinates_intent=entities.get('coordinates_intent', False),
+                details_intent=entities.get('details_intent', False),
+            )
         
         # SMART ROUTING: Use LLM for complex queries (more accurate), keywords for simple ones
         # LLM handles: COMPARE, RANKING, ambiguous multi-entity queries
         # Keywords handle: simple COUNT, LIST, DETAIL queries
-        is_complex = len(query) > 15 or any(kw in query.lower() for kw in ['เปรียบเทียบ', 'เทียบ', 'กับ', 'มากที่สุด', 'น้อยที่สุด', 'อันดับ'])
+        is_complex = len(query) > 15 or any(kw in query_lower for kw in ['เปรียบเทียบ', 'เทียบ', 'กับ', 'มากที่สุด', 'น้อยที่สุด', 'อันดับ'])
         
         llm_result = None
         if is_complex:

@@ -5,14 +5,15 @@ LLM-based Entity Extraction Module
 เช่น "ครูบรรจุ" → "ข้าราชการครู"
 """
 
-import logging
-import json
 import os
+import re
+import json
 import time
+import logging
 from typing import Optional, Dict, List, Any
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
-from .constants import COLLECTION_NAMES, THAI_PROVINCES, PROVINCE_ALIASES, REGIONS, AGENCY_ALIASES
+from .constants import COLLECTION_NAMES, THAI_PROVINCES, PROVINCE_ALIASES, REGIONS, AGENCY_ALIASES, YEAR_ALIASES
 
 logger = logging.getLogger(__name__)
 
@@ -414,44 +415,91 @@ Routing hints (อ้างอิงโครงสร้าง Qdrant v5):
 - สัดส่วนเพศภาพรวมในพื้นที่ -> analyze_gender_ratio (edu_gender_overview_v5)
 - เขตพื้นที่การศึกษา -> search_education_areas / get_education_area_info (edu_areas_v5)
 
-กฎพิเศษ:
-- ถ้าถาม "ครูและนักเรียน" พร้อมมีจังหวัด/ภาค และไม่ได้ระบุโรงเรียน -> ใช้ get_province_summary (หรือ multi_step)
-- ถ้าถามเฉพาะ "ครู" -> ใช้ count_teachers
-- ถ้าถามเฉพาะ "นักเรียน" -> ใช้ count_students
+⚡ RANKING — กฎสำคัญ (ถ้าถามเรื่อง มากที่สุด/น้อยที่สุด/สูงสุด/ต่ำสุด/อันดับ → ใช้ ranking):
+  - metric: "schools"|"students"|"teachers"|"ratio"
+  - order: "most" (มากที่สุด/สูงที่สุด/สูงสุด/เยอะที่สุด) | "least" (น้อยที่สุด/ต่ำที่สุด/ต่ำสุด)
+  - scope: "province" (จังหวัดไหน) | "district" (อำเภอไหน/เขตไหน) | "subdistrict" (ตำบลไหน/แขวงไหน) | "school" (โรงเรียนไหน)
+  - ⚠️ "อัตราส่วนครูต่อนักเรียน" → metric="ratio" (ไม่ใช่ "teachers" แม้มีคำว่า "ครู")
+  - ⚠️ "ครูต่อเด็ก"/"ครูต่อนักเรียน" → metric="ratio"
+  - ⚠️ ถ้าถามแบบ "จว.ไหนครูน้อยเมื่อเทียบกับเด็ก" → ใช้ ranking(metric=ratio, order=least, scope=province)
+  - ⚠️ ถ้าถามแบบ "ที่ไหนนักเรียนต่อครูสูง" → ใช้ ranking(metric=ratio, order=most, scope=province)
+  - ถ้ามี province ให้ใส่ province ด้วย (ranking ภายในจังหวัด)
+  - ⚠️ **DRILL-DOWN — ถ้าถามจังหวัดไหน/อำเภอไหน/ตำบลไหน "ใน" ภาค/จังหวัด:**
+    - "จังหวัดไหนในภาคกลางมีนักเรียนมากที่สุด" → ranking(metric=students, order=most, scope=province, region=ภาคกลาง)
+    - "จังหวัดไหนในภาคใต้มีครูน้อยที่สุด" → ranking(metric=teachers, order=least, scope=province, region=ภาคใต้)
+    - "อำเภอไหนในเชียงใหม่มีโรงเรียนมากที่สุด" → ranking(metric=schools, order=most, scope=district, province=เชียงใหม่)
+    - "ตำบลไหนในเชียงใหม่มีนักเรียนเยอะสุด" → ranking(metric=students, order=most, scope=subdistrict, province=เชียงใหม่)
+    - "จังหวัดไหนมีครูมากที่สุด" → ranking(metric=teachers, order=most, scope=province) (ทั้งประเทศ)
+    - ⚠️ ถ้ามีคำว่า "ภาค" (ภาคเหนือ/ภาคใต้/ภาคกลาง...) → ใส่ region=ชื่อภาค
+    - ⚠️ ถ้ามีคำว่า "จังหวัด" + "ใน" + "ภาค" → scope=province, region=ภาค
+
+⚡ SCHOOL NAME — กฎสำคัญ:
+  - ⚠️ ถ้ามีคำว่า "โรงเรียน[ชื่อ]" เช่น "โรงเรียนเมืองปัตตานี", "โรงเรียนสวนกุหลาบ" → ใช้ get_school_full_details(school_name="เมืองปัตตานี")
+  - ⚠️ "โรงเรียน" + ชื่อเฉพาะ ≠ "จังหวัด" → ต้องใช้ school_name ไม่ใช่ province
+  - ⚠️ "โรงเรียนเมืองX" คือชื่อโรงเรียน ไม่ใช่ province X
+  - ตัวอย่าง: "โรงเรียนเมืองปัตตานีมีครูกี่คน" → get_school_full_details(school_name="เมืองปัตตานี") ไม่ใช่ get_province_summary(province="ปัตตานี")
+
+⚡ MULTI-METRIC (ถ้าถามหลาย metric พร้อมกัน: ครู+นักเรียน+โรงเรียน):
+  - ⚠️ ถ้ามีชื่อโรงเรียน → ใช้ get_school_full_details (ไม่ใช่ province_summary)
+  - ถ้ามีจังหวัดแต่ไม่มีชื่อโรงเรียน → ใช้ get_province_summary
+  - ถ้าถามเฉพาะ "ครู" → count_teachers, "นักเรียน" → count_students, "โรงเรียน" → count_schools
+
+⚡ FILTER (ถ้ามีตัวเลขเงื่อนไข เช่น "มากกว่า 500 คน", "น้อยกว่า 100"):
+  - ใช้ filter_schools(metric, operator, value, province, ...)
+  - operator: "gt"|"gte"|"lt"|"lte"|"eq"
 
 Allowed tools (พร้อมพารามิเตอร์):
 - count_students (school_name, province, region, district, grade, gender, year)
 - count_teachers (school_name, province, region, district, gender, person_type, year)
-- count_schools (province, region, district, subdistrict, agency)
-- list_schools (province, region, district, agency, limit)
-- search_schools (school_name, province, region, district, agency, limit)
-- get_school_full_details (school_name, province)
-- get_ratio (school_name, province)
-- ranking (metric, order, scope, province, region, limit)
-- compare (entity1, entity2, metric)
+- count_schools (province, region, district, subdistrict, agency, year)
+- list_schools (province, region, district, agency, limit, year)
+- search_schools (school_name, province, region, district, agency, limit, year)
+- get_school_full_details (school_name, province, year)
+- get_ratio (school_name, province, year)
+- ranking (metric, order, scope, province, region, limit, year)
+- compare (entity1, entity2, metric, year)
 - search_education_areas (area_name, province, district)
-- get_province_summary (province)
-- count_by_system_type (province, district, system_type)
-- analyze_gender_ratio (province, district)
-- get_grade_distribution (province, district, school_name, grade)
-- find_best_ratio_schools (province, order, limit)
-- analyze_teacher_distribution (province, district, region, person_type)
-- ranking_by_agency (province, metric, limit)
-- ranking_subdistricts (province, district, metric, order, limit)
-- get_district_summary (province, district)
-- compare_provinces (provinces, metrics)
+- get_province_summary (province, year)
+- count_by_system_type (province, district, system_type, year)
+- analyze_gender_ratio (province, district, year)
+- get_grade_distribution (province, district, school_name, grade, year)
+- find_best_ratio_schools (province, order, limit, year)
+- analyze_teacher_distribution (province, district, region, person_type, year)
+- ranking_by_agency (province, metric, limit, year)
+- ranking_subdistricts (province, district, metric, order, limit, year)
+- get_district_summary (province, district, year)
+- compare_provinces (provinces, metrics, year)
 - find_nearby_schools (latitude, longitude, radius_km, limit)
 - advanced_school_search (province, district, agency, min_students, max_students, min_teachers, max_teachers, limit)
-- filter_schools (metric, operator, value, province, region, district, subdistrict, limit)
+- filter_schools (metric, operator, value, province, region, district, subdistrict, limit, year)
 - general_chat (ไม่มี params)
 
 หมายเหตุสำคัญ:
 - province ต้องเป็นชื่อจังหวัดมาตรฐานไทย (เช่น กรุงเทพมหานคร, เชียงใหม่)
 - region ต้องเป็นชื่อภาค (เช่น ภาคเหนือ, ภาคใต้, ภาคตะวันออกเฉียงเหนือ)
-- year เป็น **ตัวเลือก** ถ้าผู้ใช้ไม่ระบุ ให้ปล่อยว่าง (ไม่ต้องถามปี)
+- year เป็น **ตัวเลือก** — ถ้าผู้ใช้ระบุปี (เช่น "ปี 67", "ปี 2567", "พ.ศ. 2567") ให้ใส่ year=2567
+- ⚠️ "ปี 67" = "ปี 2567" (บวก 2500)
+- ⚠️ ถ้าผู้ใช้ไม่ระบุปี ไม่ต้องใส่ year (ระบบจะใช้ข้อมูลหลักอัตโนมัติ)
 - ตั้ง data_required=true ถ้าเป็นคำถามเชิงข้อมูลจริง (จำนวน, รายชื่อ, อัตราส่วน, รายละเอียดโรงเรียน, สถิติ)
 - ตั้ง data_required=false ถ้าเป็นคำถามทั่วไป/คำแนะนำ/นิยามที่ไม่ต้องใช้ฐานข้อมูล
 - ขอรายละเอียดเพิ่มเฉพาะกรณีที่ "ขอบเขตหลัก" ไม่ชัด (เช่น ไม่รู้โรงเรียน/จังหวัด/ภาคเลย)
+
+⚡ GRADE — การแปลงระดับชั้น (สำคัญมาก!):
+- "ม 1"/"ม.1"/"มัธยม 1"/"มัธยมศึกษาปีที่ 1" → grade="ม.1"
+- "ป 3"/"ป.3"/"ประถม 3"/"ประถมศึกษาปีที่ 3" → grade="ป.3"
+- "อนุบาล 1"/"อนุบาล1" → grade="อนุบาล 1"
+- "ปวช 1"/"ปวช.1" → grade="ปวช.1"
+- ⚠️ ถ้าถาม "ชั้น ม.1 โรงเรียน X มีนักเรียนกี่คน" → count_students(school_name="X", grade="ม.1")
+- ⚠️ ถ้าถาม "ชั้นไหนมีนักเรียนน้อยสุด ที่โรงเรียน X" → get_grade_distribution(school_name="X")
+
+⚡ PERSON_TYPE — ประเภทบุคลากร (สำคัญมาก!):
+- "ข้าราชการครู"/"ข้าราชการ" → person_type="ข้าราชการครู"
+- "ลูกจ้างชั่วคราว"/"ครูอัตราจ้าง"/"ครูจ้าง" → person_type="ลูกจ้างชั่วคราว"
+- "พนักงานราชการ"/"พนง.ราชการ" → person_type="พนักงานราชการ"
+- "ลูกจ้างประจำ" → person_type="ลูกจ้างประจำ"
+- ⚠️ ถ้าถาม "มีข้าราชการครูกี่คน" → count_teachers(person_type="ข้าราชการครู")
+- ⚠️ ถ้าถาม "โรงเรียน X มีครูอัตราจ้างกี่คน" → count_teachers(school_name="X", person_type="ลูกจ้างชั่วคราว")
+- ⚠️ ถ้าถามแค่ "ครูกี่คน" โดยไม่ระบุประเภท → count_teachers() ไม่ต้องใส่ person_type
 
 แนวทาง multi-step:
 - ถ้าคำถามต้อง "คำนวณเฉลี่ย" หรือ "ต่อโรงเรียน" ให้สร้าง multi_step
@@ -558,9 +606,26 @@ Allowed tools (พร้อมพารามิเตอร์):
             params["agency"] = _normalize_agency(params.get("agency"), valid_values.get("agency", []))
 
         # Coerce numeric fields
-        for key in ["year", "limit", "min_students", "max_students", "min_teachers", "max_teachers", "value", "radius_km"]:
+        for key in ["limit", "min_students", "max_students", "min_teachers", "max_teachers", "value", "radius_km"]:
             if key in params:
                 params[key] = _coerce_int(params.get(key))
+
+        # ✨ Year normalization (e.g. "67" -> "2567")
+        raw_year = params.get("year")
+        if raw_year:
+            year_str = str(raw_year).strip()
+            if year_str in YEAR_ALIASES:
+                params["year"] = YEAR_ALIASES[year_str]
+            elif len(year_str) == 2 and year_str.isdigit():
+                params["year"] = f"25{year_str}"
+        else:
+            # Safety net: Regex-based year detection from question text
+            year_match = re.search(r'(?:ปี|พ\.?ศ\.?)\s*(25)?(\d{2})(?!\d)', question)
+            if year_match:
+                short = year_match.group(2)
+                detected_year = f"25{short}"
+                params["year"] = detected_year
+                logger.info(f"📅 Auto-detected year from question: {detected_year}")
 
         # Validate/normalize district/area/person_type/grade against known values when possible
         if "district" in params:

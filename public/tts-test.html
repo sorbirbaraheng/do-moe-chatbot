@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+    <meta charset="UTF-8">
+    <title>TTS Diagnostic</title>
+    <style>
+        body {
+            font-family: system-ui;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+
+        h1 {
+            color: #a78bfa;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 8px;
+        }
+
+        .primary {
+            background: #7c3aed;
+            color: white;
+        }
+
+        .success {
+            background: #10b981;
+            color: white;
+        }
+
+        .danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        #log {
+            background: #0d0d1a;
+            padding: 16px;
+            border-radius: 12px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 16px;
+            font-size: 13px;
+        }
+
+        .ok {
+            color: #10b981;
+        }
+
+        .err {
+            color: #ef4444;
+        }
+
+        .info {
+            color: #60a5fa;
+        }
+
+        select {
+            padding: 8px;
+            border-radius: 8px;
+            font-size: 14px;
+            min-width: 300px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🔊 TTS Diagnostic — น้องดีโอ</h1>
+    <p>ทดสอบว่า Chrome + macOS รองรับเสียงอะไรบ้าง</p>
+
+    <div>
+        <button class="primary" onclick="testSimple()">ทดสอบ 1: พูดตรงๆ (ไม่เลือกเสียง)</button>
+        <button class="primary" onclick="testWithVoice()">ทดสอบ 2: พูดด้วยเสียงที่เลือก</button>
+        <button class="success" onclick="testAllThaiVoices()">ทดสอบ 3: ลองเสียงไทยทุกตัว</button>
+        <button class="danger" onclick="document.getElementById('log').textContent=''">ล้าง Log</button>
+    </div>
+
+    <div style="margin-top:16px">
+        <label>เลือกเสียง: </label>
+        <select id="voiceSelect"></select>
+    </div>
+
+    <div id="log"></div>
+
+    <script>
+        const logEl = document.getElementById('log');
+        const voiceSelect = document.getElementById('voiceSelect');
+
+        function log(msg, cls = '') {
+            const line = document.createElement('div');
+            line.className = cls;
+            line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logEl.appendChild(line);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function loadVoices() {
+            const voices = speechSynthesis.getVoices();
+            log(`พบ ${voices.length} เสียง`, 'info');
+            voiceSelect.innerHTML = '';
+
+            // Show Thai voices first
+            const thai = voices.filter(v => v.lang.startsWith('th'));
+            const google = voices.filter(v => v.name.toLowerCase().includes('google'));
+            const rest = voices.filter(v => !v.lang.startsWith('th'));
+
+            log(`เสียงไทย: ${thai.length} ตัว`, 'info');
+            log(`Google voices: ${google.length} ตัว`, 'info');
+
+            thai.forEach(v => {
+                const opt = document.createElement('option');
+                opt.value = v.voiceURI;
+                opt.textContent = `🇹🇭 ${v.name} (${v.lang}) ${v.localService ? '[local]' : '[network]'}`;
+                voiceSelect.appendChild(opt);
+                log(`  Thai: ${v.name} | lang=${v.lang} | local=${v.localService} | URI=${v.voiceURI}`, 'info');
+            });
+
+            // Add first 5 English for fallback test
+            rest.filter(v => v.lang.startsWith('en')).slice(0, 5).forEach(v => {
+                const opt = document.createElement('option');
+                opt.value = v.voiceURI;
+                opt.textContent = `🇺🇸 ${v.name} (${v.lang}) ${v.localService ? '[local]' : '[network]'}`;
+                voiceSelect.appendChild(opt);
+            });
+        }
+
+        speechSynthesis.onvoiceschanged = loadVoices;
+        setTimeout(loadVoices, 500);
+
+        function testSimple() {
+            log('--- ทดสอบ 1: พูดตรงๆ ไม่กำหนดเสียง ---', 'info');
+            speechSynthesis.cancel();
+
+            const u = new SpeechSynthesisUtterance('ทดสอบเสียงน้องดีโอครับ');
+            u.lang = 'th-TH';
+            u.onstart = () => log('✅ onstart: เริ่มพูดแล้ว!', 'ok');
+            u.onend = () => log('✅ onend: พูดจบ', 'ok');
+            u.onerror = (e) => log(`❌ onerror: ${e.error}`, 'err');
+
+            // Direct speak — no delay, no cancel, no voice selection
+            speechSynthesis.speak(u);
+            log('speak() called — รอ onstart...');
+        }
+
+        function testWithVoice() {
+            const uri = voiceSelect.value;
+            const voices = speechSynthesis.getVoices();
+            const voice = voices.find(v => v.voiceURI === uri);
+
+            log(`--- ทดสอบ 2: พูดด้วย "${voice?.name || 'unknown'}" ---`, 'info');
+            speechSynthesis.cancel();
+
+            // Add delay after cancel
+            setTimeout(() => {
+                const u = new SpeechSynthesisUtterance('ทดสอบเสียงน้องดีโอครับ');
+                if (voice) {
+                    u.voice = voice;
+                    u.lang = voice.lang;
+                } else {
+                    u.lang = 'th-TH';
+                }
+                u.rate = 1.05;
+                u.pitch = 0.92;
+                u.onstart = () => log(`✅ onstart: "${voice?.name}" เริ่มพูด!`, 'ok');
+                u.onend = () => log(`✅ onend: "${voice?.name}" พูดจบ`, 'ok');
+                u.onerror = (e) => log(`❌ onerror: "${voice?.name}" → ${e.error}`, 'err');
+
+                speechSynthesis.speak(u);
+                log(`speak() with "${voice?.name}" — delay 300ms after cancel`);
+            }, 300);
+        }
+
+        function testAllThaiVoices() {
+            const voices = speechSynthesis.getVoices().filter(v => v.lang.startsWith('th'));
+            log(`--- ทดสอบ 3: ลองเสียงไทยทั้ง ${voices.length} ตัว ---`, 'info');
+
+            if (voices.length === 0) {
+                log('❌ ไม่พบเสียงไทยเลย!', 'err');
+                return;
+            }
+
+            speechSynthesis.cancel();
+            let i = 0;
+
+            function tryNext() {
+                if (i >= voices.length) {
+                    log('--- จบการทดสอบทั้งหมด ---', 'info');
+                    return;
+                }
+                const v = voices[i];
+                log(`🔊 ลอง [${i + 1}/${voices.length}]: ${v.name} (local=${v.localService})...`);
+
+                const u = new SpeechSynthesisUtterance('สวัสดี');
+                u.voice = v;
+                u.lang = v.lang;
+                u.onstart = () => log(`  ✅ "${v.name}" ใช้ได้!`, 'ok');
+                u.onend = () => { i++; setTimeout(tryNext, 500); };
+                u.onerror = (e) => {
+                    log(`  ❌ "${v.name}" → ${e.error}`, 'err');
+                    i++;
+                    setTimeout(tryNext, 300);
+                };
+
+                speechSynthesis.speak(u);
+            }
+
+            setTimeout(tryNext, 300);
+        }
+    </script>
+</body>
+
+</html>

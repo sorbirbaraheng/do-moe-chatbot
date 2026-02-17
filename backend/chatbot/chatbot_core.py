@@ -1125,23 +1125,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     # Show top 3 for context
                     if len(sorted_data) >= 3:
                         response += f"\n📊 **ลำดับ{level_text}ที่มีโรงเรียน{'น้อยสุด' if operator == '<' else 'มากสุด'}:**\n"
-                        chart_data = []
-                        for i, (name, data) in enumerate(sorted_data[:5], 1):
-                            cnt = data.get('total', 0)
-                            dn = name
-                            if '|' in name:
-                                parts = name.split('|')
-                                if len(parts) >= 2:
-                                    dn = f"{parts[1]} ({parts[0]})"
-                            response += f"• {dn}: **{cnt}** แห่ง\n"
-                            chart_data.append({"name": dn, "value": cnt})
-                        
-                        chart_json = json.dumps({
-                            "type": "bar",
-                            "data": chart_data,
-                            "title": f"สถิติ{'น้อยที่สุด' if operator == '<' else 'มากที่สุด'}"
-                        }, ensure_ascii=False)
-                        response += f"\n\n<chart>{chart_json}</chart>"
+                        response += f"• {dn}: **{cnt}** แห่ง\n"
                     
                     new_threshold = closest_count + 10 if operator == "<" else max(1, closest_count - 10)
                     response += f"\n\n💡 **ลองถาม:** \"{level_text}ที่มีโรงเรียน{op_text} {new_threshold} แห่ง{province_text}\" หรือ \"{level_text}ไหนมีโรงเรียนน้อยที่สุด{province_text}\" ครับ 😊"

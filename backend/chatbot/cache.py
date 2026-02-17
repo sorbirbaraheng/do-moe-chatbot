@@ -179,3 +179,33 @@ class HybridCache:
         
         # Save to Semantic Cache (L2)
         self.semantic_cache.save(query, response)
+
+    def flush(self) -> dict:
+        """Flush all caches (Redis L1 + Qdrant semantic cache)"""
+        result = {"redis_deleted": 0, "semantic_deleted": 0}
+        
+        # Flush Redis L1
+        if self.redis_client:
+            try:
+                keys = self.redis_client.keys("domoe:cache:*")
+                if keys:
+                    result["redis_deleted"] = self.redis_client.delete(*keys)
+                logger.info(f"🗑️ Redis cache flushed: {result['redis_deleted']} keys")
+            except Exception as e:
+                logger.warning(f"Redis flush failed: {e}")
+        
+        # Flush Qdrant semantic cache
+        try:
+            from qdrant_client.models import FilterSelector, Filter
+            info = self.semantic_cache.client.get_collection(self.semantic_cache.collection_name)
+            result["semantic_deleted"] = info.points_count or 0
+            if result["semantic_deleted"] > 0:
+                self.semantic_cache.client.delete(
+                    self.semantic_cache.collection_name,
+                    points_selector=FilterSelector(filter=Filter())
+                )
+            logger.info(f"🗑️ Semantic cache flushed: {result['semantic_deleted']} points")
+        except Exception as e:
+            logger.warning(f"Semantic cache flush failed: {e}")
+        
+        return result
