@@ -795,11 +795,26 @@ def create_flask_api():
                 follow_kws = ["แล้ว", "ต่อ", "อีก", "เพิ่ม", "ขอรายละเอียด", "รายละเอียด", "พิกัด", "ที่ไหน", "เบอร์ติดต่อ", "ครูกี่", "นักเรียนกี่", "ข้อมูล"]
                 return len(msg) <= 24 and any(k in msg for k in follow_kws)
 
-            should_inject = (
-                _message_mentions_school(message, school_name)
-                or _history_mentions_school(history, school_name)
-                or _is_followup(message)
-            )
+            def _is_aggregate_query(msg: str) -> bool:
+                if not msg:
+                    return False
+                agg_kws = [
+                    "จังหวัด", "ภาค", "อำเภอ", "เขต", "ตำบล", "แขวง",
+                    "อันดับ", "มากที่สุด", "น้อยที่สุด", "สูงสุด", "ต่ำสุด",
+                    "สรุป", "รวม", "ทั้งหมด", "ทั่วประเทศ"
+                ]
+                return any(k in msg for k in agg_kws)
+
+            mentions_school = _message_mentions_school(message, school_name)
+            is_followup = _is_followup(message)
+            is_aggregate = _is_aggregate_query(message)
+
+            # Only inject school context when it is clearly a school-specific follow-up.
+            # Avoid injecting for aggregate/ranking/location queries.
+            if is_aggregate and not mentions_school:
+                should_inject = False
+            else:
+                should_inject = mentions_school or (is_followup and _history_mentions_school(history, school_name))
 
             if should_inject:
                 memory.last_school_name = school_name
