@@ -926,17 +926,33 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             
             # 🔧 CRITICAL: Merge memory data for follow-up context
             if self.memory:
+                def _should_ignore_school_context(msg: str, last_school: Optional[str]) -> bool:
+                    if not msg or not last_school:
+                        return False
+                    msg_norm = msg.replace(" ", "")
+                    school_norm = last_school.replace("โรงเรียน", "").replace(" ", "")
+                    if school_norm and school_norm in msg_norm:
+                        return False
+                    agg_kws = [
+                        "จังหวัด", "ภาค", "อำเภอ", "เขต", "ตำบล", "แขวง",
+                        "อันดับ", "มากที่สุด", "น้อยที่สุด", "สูงสุด", "ต่ำสุด",
+                        "สรุป", "รวม", "ทั้งหมด", "ทั่วประเทศ"
+                    ]
+                    return any(k in msg for k in agg_kws)
+
+                ignore_school_context = _should_ignore_school_context(message, self.memory.last_school_name)
+
                 if self.memory.last_province:
                     rich_context_dict['last_province'] = self.memory.last_province
                 if self.memory.last_region:
                     rich_context_dict['last_region'] = self.memory.last_region
-                if self.memory.last_school_name:
+                if self.memory.last_school_name and not ignore_school_context:
                     rich_context_dict['last_school_name'] = self.memory.last_school_name
                 if self.memory.last_district:
                     rich_context_dict['last_district'] = self.memory.last_district
                 if self.memory.last_agency:
                     rich_context_dict['last_agency'] = self.memory.last_agency
-                if self.memory.last_scope_type:
+                if self.memory.last_scope_type and not (ignore_school_context and self.memory.last_scope_type == "school"):
                     rich_context_dict['last_scope_type'] = self.memory.last_scope_type
                 if self.memory.last_scope_value:
                     rich_context_dict['last_scope_value'] = self.memory.last_scope_value

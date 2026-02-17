@@ -319,6 +319,56 @@ class LLMAgent:
         has_grade = any(k in q for k in ["ระดับชั้น", "ชั้นไหน", "ระดับชั้นไหน", "ป.", "ม.", "อนุบาล", "ปวช", "ปวส"])
         has_gender_ratio = any(k in q for k in ["สัดส่วนเพศ", "อัตราส่วนเพศ"])
 
+        # ── Ranking guard: force ranking tool when question clearly asks for top/bottom ──
+        rank_kws = ["มากที่สุด", "น้อยที่สุด", "เยอะที่สุด", "สูงสุด", "ต่ำสุด", "อันดับ", "top"]
+        if any(k in q for k in rank_kws):
+            least_kws = ["น้อยที่สุด", "ต่ำสุด", "ต่ำที่สุด", "รั้งท้าย"]
+            order = "least" if any(k in q for k in least_kws) else "most"
+            if any(k in q for k in ["อัตราส่วน", "ครูต่อ", "ครูต่อนักเรียน", "ครูต่อเด็ก", "นักเรียนต่อครู"]):
+                metric = "ratio"
+            elif has_teachers:
+                metric = "teachers"
+            elif has_students:
+                metric = "students"
+            else:
+                metric = "schools"
+
+            # limit from text (e.g., "5 อันดับ", "Top 10")
+            limit = params.get("limit")
+            if not limit:
+                m = re.search(r'(?:top\\s*(\\d+))|(\\d+)\\s*อันดับ', q_lower)
+                if m:
+                    limit = int(m.group(1) or m.group(2))
+
+            province = params.get("province") or self._extract_province(q)
+            region = params.get("region") or self._extract_region(q)
+
+            if any(k in q for k in ["ตำบล", "แขวง"]):
+                # Prefer ranking_subdistricts for explicit subdistrict questions
+                return "ranking_subdistricts", {
+                    "province": province,
+                    "district": params.get("district"),
+                    "metric": metric,
+                    "order": order,
+                    "limit": limit or 5
+                }
+
+            if any(k in q for k in ["อำเภอ", "เขต"]):
+                scope = "district"
+            elif "โรงเรียน" in q:
+                scope = "school"
+            else:
+                scope = "province"
+
+            return "ranking", {
+                "metric": metric,
+                "order": order,
+                "scope": scope,
+                "province": province,
+                "region": region,
+                "limit": limit or 5
+            }
+
         # If asking for both students + teachers at province scope (WITHOUT school name), use province summary
         if (has_students and has_teachers) and params.get("province") and not params.get("school_name"):
             return "get_province_summary", {"province": params.get("province")}
