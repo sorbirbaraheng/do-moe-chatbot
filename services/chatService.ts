@@ -12,7 +12,21 @@
  */
 
 import { db } from './firebase';
-import { collection, addDoc, serverTimestamp, doc, setDoc, getDocs, query, where, orderBy, limit, getDoc } from 'firebase/firestore';
+import {
+    collection,
+    addDoc,
+    serverTimestamp,
+    doc,
+    setDoc,
+    getDocs,
+    query,
+    where,
+    orderBy,
+    limit,
+    getDoc,
+    deleteDoc,
+    writeBatch
+} from 'firebase/firestore';
 import { Category, Message } from '../types';
 
 export interface ChatSession {
@@ -181,6 +195,58 @@ export const chatService = {
         } catch (error) {
             console.error("Error fetching session messages:", error);
             return [];
+        }
+    },
+
+    /**
+     * Deletes a chat session and all messages for the current user
+     */
+    deleteSession: async (sessionId: string, userId?: string): Promise<void> => {
+        if (!sessionId) return;
+
+        try {
+            if (userId) {
+                // Delete NEW structure messages: users/{userId}/sessions/{sessionId}/messages/*
+                const userMessagesCol = collection(db, 'users', userId, 'sessions', sessionId, 'messages');
+                const userMessagesSnapshot = await getDocs(userMessagesCol);
+                for (let i = 0; i < userMessagesSnapshot.docs.length; i += 400) {
+                    const batch = writeBatch(db);
+                    userMessagesSnapshot.docs.slice(i, i + 400).forEach((msgDoc) => {
+                        batch.delete(msgDoc.ref);
+                    });
+                    await batch.commit();
+                }
+
+                // Delete NEW session doc
+                await deleteDoc(doc(db, 'users', userId, 'sessions', sessionId));
+            }
+
+            // Delete LEGACY session doc (safe even if missing)
+            await deleteDoc(doc(db, SESSIONS_COL, sessionId));
+
+            // Delete LEGACY logs for this session (limit by userId when available)
+            const logsQuery = userId
+                ? query(
+                    collection(db, LOGS_COL),
+                    where('sessionId', '==', sessionId),
+                    where('userId', '==', userId)
+                )
+                : query(
+                    collection(db, LOGS_COL),
+                    where('sessionId', '==', sessionId)
+                );
+
+            const logsSnapshot = await getDocs(logsQuery);
+            for (let i = 0; i < logsSnapshot.docs.length; i += 400) {
+                const batch = writeBatch(db);
+                logsSnapshot.docs.slice(i, i + 400).forEach((logDoc) => {
+                    batch.delete(logDoc.ref);
+                });
+                await batch.commit();
+            }
+        } catch (error) {
+            console.error('Error deleting chat session:', error);
+            throw error;
         }
     }
 };
