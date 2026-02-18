@@ -672,6 +672,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         past_history = history[:-2] if len(history) > 2 else []  # Exclude current exchange
         session_key = str(session_id) if session_id else str(hash(str(history[:2])) if history else "default")
 
+        was_coreference_resolved = False
         if self.context_manager and self._should_use_llm_context(message, past_history):
             try:
                 context_result = self.context_manager.get_context_for_query(
@@ -682,9 +683,11 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
 
                 # Use resolved query (with coreferences replaced)
                 resolved_message = context_result.get("resolved_query", message)
+                was_coreference_resolved = False
                 if resolved_message != message:
                     logger.info(f"🔄 Query resolved: '{message}' → '{resolved_message}'")
                     message = resolved_message
+                    was_coreference_resolved = True
 
                 # Update legacy memory for backward compatibility
                 ctx = context_result.get("context")
@@ -757,9 +760,20 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         # Check Semantic Cache (disabled for testing)
         if DEBUG_DISABLE_CACHE:
             logger.info("🔧 Cache DISABLED by env (ENABLE_SEMANTIC_CACHE=0)")
-        elif not is_school_specific_query and self.cache:
+        elif not is_school_specific_query and self.cache and not was_coreference_resolved:
             cached_response = self.cache.check(message)
             if cached_response:
+                # CRITICAL: Still update memory on cache hit so follow-up queries retain context
+                try:
+                    cache_parsed = self.parser.parse(message)
+                    if cache_parsed:
+                        self.memory.update(cache_parsed, original_query=message)
+                        logger.info(f"🧠 Memory updated (cache hit): province={cache_parsed.province}, year={self.memory.last_year}")
+                    else:
+                        # Even if parser fails, extract year from the message
+                        self.memory.update(self.parser.parse("") or ParsedQuery(intent=QueryIntent.COUNT), original_query=message)
+                except Exception as e:
+                    logger.warning(f"⚠️ Memory update on cache hit failed: {e}")
                 history[-1]["content"] = cached_response
                 yield history, ""
                 return
