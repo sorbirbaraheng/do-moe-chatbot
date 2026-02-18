@@ -10,6 +10,7 @@ interface MobileMenuProps {
     pastChats: ChatSession[];
     onNewChat: () => void;
     onLoadChat: (session: ChatSession) => void;
+    onDeleteChat: (session: ChatSession) => void;
     onLogout: () => void;
     onNavigateHome: () => void;
 }
@@ -22,6 +23,7 @@ const MobileMenu: React.FC<MobileMenuProps> = ({
     pastChats,
     onNewChat,
     onLoadChat,
+    onDeleteChat,
     onLogout,
     onNavigateHome,
 }) => {
@@ -100,20 +102,33 @@ const MobileMenu: React.FC<MobileMenuProps> = ({
                         <div className="text-[12px] font-semibold text-[#86868b] uppercase tracking-wider mb-2 px-3">ประวัติการสนทนา</div>
                         <div className="bg-white/70 rounded-[18px] overflow-hidden backdrop-blur-md">
                             {pastChats.length > 0 ? pastChats.slice(0, 8).map((chat, idx) => (
-                                <button
+                                <div
                                     key={chat.sessionId}
-                                    onClick={() => { onLoadChat(chat); onClose(); }}
                                     className={`
-                                        w-full text-left px-4 py-3.5 text-[15px] truncate flex items-center gap-3 transition-colors
+                                        flex items-center gap-2 px-2 py-1.5
                                         ${idx !== pastChats.length - 1 && idx !== 7 ? 'border-b border-[#c6c6c8]/30' : ''}
-                                        active:bg-[#e5e5ea]
                                     `}
                                 >
-                                    <div className={`w-1.5 h-1.5 rounded-full ${currentChatId === chat.sessionId ? 'bg-[#007AFF]' : 'bg-[#c7c7cc]'}`} />
-                                    <span className={`${currentChatId === chat.sessionId ? 'text-[#007AFF] font-semibold' : 'text-[#1d1d1f]'}`}>
-                                        {chat.title}
-                                    </span>
-                                </button>
+                                    <button
+                                        onClick={() => { onLoadChat(chat); onClose(); }}
+                                        className="flex-1 text-left px-2 py-2.5 text-[15px] truncate flex items-center gap-3 rounded-xl active:bg-[#e5e5ea] transition-colors"
+                                    >
+                                        <div className={`w-1.5 h-1.5 rounded-full ${currentChatId === chat.sessionId ? 'bg-[#007AFF]' : 'bg-[#c7c7cc]'}`} />
+                                        <span className={`${currentChatId === chat.sessionId ? 'text-[#007AFF] font-semibold' : 'text-[#1d1d1f]'}`}>
+                                            {chat.title}
+                                        </span>
+                                    </button>
+                                    <button
+                                        onClick={() => onDeleteChat(chat)}
+                                        className="w-8 h-8 rounded-full flex items-center justify-center text-[#8e8e93] hover:bg-red-50 hover:text-[#FF3B30] active:scale-95 transition-all"
+                                        aria-label={`ลบ ${chat.title}`}
+                                        title="ลบประวัติ"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 7.5h12m-9 0v10.125c0 .621.504 1.125 1.125 1.125h3.75c.621 0 1.125-.504 1.125-1.125V7.5m-7.5 0V6.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V7.5" />
+                                        </svg>
+                                    </button>
+                                </div>
                             )) : (
                                 <div className="text-center text-[13px] text-[#8e8e93] py-8">ไม่มีประวัติการสนทนา</div>
                             )}

@@ -511,6 +511,25 @@ const AppContent: React.FC = () => {
     setMessages([]); // Start with empty - user initiates
   };
 
+  const handleDeleteChat = async (session: ChatSession) => {
+    if (!firebaseUser) return;
+
+    const confirmed = window.confirm(`ลบประวัติการสนทนา "${session.title}" ใช่หรือไม่?`);
+    if (!confirmed) return;
+
+    try {
+      await chatService.deleteSession(session.sessionId, firebaseUser.uid);
+      setPastChats(prev => prev.filter(chat => chat.sessionId !== session.sessionId));
+
+      if (currentChatId === session.sessionId) {
+        handleNewChat();
+      }
+    } catch (error) {
+      console.error('[chatService] Delete session failed:', error);
+      window.alert('ลบประวัติไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+    }
+  };
+
   const loadPastChat = async (session: ChatSession) => {
     setIsLoading(true);
     resetChatSession();
@@ -1043,6 +1062,7 @@ const AppContent: React.FC = () => {
             pastChats={pastChats}
             onNewChat={handleNewChat}
             onLoadChat={loadPastChat}
+            onDeleteChat={handleDeleteChat}
             onLogout={handleLogout}
             onNavigateHome={() => navigateTo('home')}
           />
@@ -1085,17 +1105,28 @@ const AppContent: React.FC = () => {
                     <div className="px-2 text-[10px] font-black uppercase tracking-[0.2em] mb-3 opacity-30">ประวัติการสนทนา</div>
                     <div className="space-y-1">
                       {pastChats.map(chat => (
-                        <div
-                          key={chat.sessionId}
-                          onClick={() => loadPastChat(chat)}
-                          className={`px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-300 ease-out cursor-pointer truncate flex items-center gap-3 group/item border transform
-                          ${currentChatId === chat.sessionId
-                              ? 'bg-white shadow-[0_6px_16px_rgba(0,0,0,0.08)] border-white/80 font-bold text-[#1D1D1F] scale-[1.02]'
-                              : 'hover:bg-white/60 hover:shadow-[0_2px_8px_rgba(0,0,0,0.04)] text-black/40 hover:text-black/70 border-transparent hover:border-white/50 active:scale-[0.98] active:bg-white/80'
-                            }`}
-                        >
-                          <div className={`w-1.5 h-1.5 rounded-full shrink-0 transition-all duration-500 ${currentChatId === chat.sessionId ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)] scale-100' : 'bg-transparent scale-0'}`}></div>
-                          <span className="truncate">{chat.title}</span>
+                        <div key={chat.sessionId} className="group/item flex items-center gap-1.5">
+                          <button
+                            onClick={() => loadPastChat(chat)}
+                            className={`flex-1 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-300 ease-out cursor-pointer truncate flex items-center gap-3 border transform text-left
+                            ${currentChatId === chat.sessionId
+                                ? 'bg-white shadow-[0_6px_16px_rgba(0,0,0,0.08)] border-white/80 font-bold text-[#1D1D1F] scale-[1.02]'
+                                : 'hover:bg-white/60 hover:shadow-[0_2px_8px_rgba(0,0,0,0.04)] text-black/40 hover:text-black/70 border-transparent hover:border-white/50 active:scale-[0.98] active:bg-white/80'
+                              }`}
+                          >
+                            <div className={`w-1.5 h-1.5 rounded-full shrink-0 transition-all duration-500 ${currentChatId === chat.sessionId ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)] scale-100' : 'bg-transparent scale-0'}`}></div>
+                            <span className="truncate">{chat.title}</span>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteChat(chat)}
+                            className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center text-black/30 hover:text-[#FF3B30] hover:bg-white/80 active:scale-95 transition-all duration-200 opacity-0 group-hover/item:opacity-100"
+                            title="ลบประวัติ"
+                            aria-label={`ลบ ${chat.title}`}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor" className="w-4 h-4">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 7.5h12m-9 0v10.125c0 .621.504 1.125 1.125 1.125h3.75c.621 0 1.125-.504 1.125-1.125V7.5m-7.5 0V6.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V7.5" />
+                            </svg>
+                          </button>
                         </div>
                       ))}
                     </div>
