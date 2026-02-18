@@ -295,6 +295,58 @@ class LLMAgent:
 
         return [{"name": tool, "params": params}]
 
+    def _enrich_scope_params(self, question: str, tool: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """เติม scope จากข้อความผู้ใช้เพื่อกันกรณี LLM ส่งพารามิเตอร์ไม่ครบ"""
+        enriched = dict(params or {})
+        q = question or ""
+
+        if not enriched.get("province"):
+            province = self._extract_province(q)
+            if province:
+                enriched["province"] = province
+        if not enriched.get("district"):
+            district = self._extract_district(q)
+            if district:
+                enriched["district"] = district
+        if not enriched.get("region"):
+            region = self._extract_region(q)
+            if region:
+                enriched["region"] = region
+
+        if tool == "ranking":
+            scope = enriched.get("scope")
+            if not scope:
+                if any(k in q for k in ["ตำบล", "แขวง"]):
+                    enriched["scope"] = "subdistrict"
+                elif any(k in q for k in ["อำเภอ", "เขต"]):
+                    enriched["scope"] = "district"
+                elif "จังหวัด" in q:
+                    enriched["scope"] = "province"
+            if enriched.get("scope") in ["district", "subdistrict"] and not enriched.get("province"):
+                province = self._extract_province(q)
+                if province:
+                    enriched["province"] = province
+
+        if tool == "filter_schools":
+            if not enriched.get("metric"):
+                enriched["metric"] = "teachers" if "ครู" in q else "students"
+            if not enriched.get("operator"):
+                if any(k in q for k in ["มากกว่า", "เกิน", "สูงกว่า"]):
+                    enriched["operator"] = "gt"
+                elif any(k in q for k in ["เท่ากับ", "พอดี"]):
+                    enriched["operator"] = "eq"
+                elif any(k in q for k in ["น้อยกว่า", "ต่ำกว่า", "ไม่เกิน"]):
+                    enriched["operator"] = "lt"
+            if enriched.get("value") is None:
+                m = re.search(r'(\d[\d,]*)', q)
+                if m:
+                    try:
+                        enriched["value"] = int(m.group(1).replace(",", ""))
+                    except Exception:
+                        pass
+
+        return enriched
+
     def _route_guard(self, question: str, tool: str, params: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
         """Lightweight guard to fix common tool mis-selections without overriding valid intents."""
         if not tool:
@@ -305,7 +357,7 @@ class LLMAgent:
                            "ranking_by_agency", "ranking_subdistricts", "compare",
                            "count_students", "count_teachers", "count_schools"}
         if tool in PROTECTED_TOOLS:
-            return tool, params
+            return tool, self._enrich_scope_params(question, tool, params)
 
         q = (question or "")
         q_lower = q.lower()
@@ -593,6 +645,7 @@ class LLMAgent:
         region = self._extract_region(text)
         province = self._extract_province(text)
         district = self._extract_district(text)
+        has_system_followup = any(k in text for k in ["ในระบบ", "นอกระบบ"])
         # Handle "ทั้งภาคใต้/ทั้งภาคเหนือ" style
         if not region and "ทั้งภาค" in text:
             region = self._extract_region(text.replace("ทั้ง", ""))
@@ -600,7 +653,16 @@ class LLMAgent:
         person_type = self._extract_person_type(text)
 
         # If nothing useful found
-        if year is None and not is_latest and not region and not province and not district and not threshold.get("value") and not person_type:
+        if (
+            year is None
+            and not is_latest
+            and not region
+            and not province
+            and not district
+            and not threshold.get("value")
+            and not person_type
+            and not has_system_followup
+        ):
             return None
 
         tool = active.get("name") or active.get("tool")
@@ -939,6 +1001,25 @@ class LLMAgent:
                     if tool['name'] in district_tools:
                         params['district'] = question_district
                         logger.info(f"💉 Injected district from question: {question_district}")
+
+            # Inject year from question or context memory when missing
+            if not params.get('year'):
+                import re
+                year_match = re.search(r'ปี(?:การศึกษา)?\s*(\d{2,4})', q_text)
+                if year_match:
+                    from .constants import YEAR_ALIASES, AVAILABLE_YEARS
+                    year_str = year_match.group(1)
+                    if year_str in YEAR_ALIASES:
+                        params['year'] = YEAR_ALIASES[year_str]
+                        logger.info(f"💉 Injected year from question: {params['year']}")
+                    elif len(year_str) == 4 and year_str in AVAILABLE_YEARS:
+                        params['year'] = year_str
+                        logger.info(f"💉 Injected year from question: {params['year']}")
+                elif context and is_followup:
+                    ctx_year = context.get('last_year')
+                    if ctx_year:
+                        params['year'] = ctx_year
+                        logger.info(f"💉 Injected year from context (follow-up): {ctx_year}")
 
             # Normalize ranking params when LLM is vague (e.g., "จังหวัดที่มีโรงเรียนมากที่สุด")
             if tool['name'] == "ranking":
@@ -1512,6 +1593,7 @@ class LLMAgent:
     
     def _extract_province(self, question: str) -> Optional[str]:
         """Extract province name from question using THAI_PROVINCES constant"""
+        placeholder_words = {"ไหน", "ใด", "อะไร", "ไหนบ้าง", "ทั้งหมด", "เท่าไหร่", "กี่แห่ง", "กี่โรง"}
         
         # 1. Check aliases first (e.g. กทม -> กรุงเทพมหานคร)
         for alias, full_name in PROVINCE_ALIASES.items():
@@ -1533,10 +1615,14 @@ class LLMAgent:
                 
         # 3. Fallback: Pattern "จังหวัด[ชื่อ]"
         import re
-        pattern = r'จังหวัด([ก-๙]+?)(?:มี|มีกี่|อยู่|$|\s)'
+        pattern = r'จังหวัด\s*([ก-๙]+?)(?=มี|มีกี่|อยู่|ที่|ใน|$|\s)'
         match = re.search(pattern, question)
         if match:
-            return match.group(1).strip()
+            province = match.group(1).strip()
+            if province in placeholder_words or province.startswith(("ไหน", "ใด", "อะไร")):
+                return None
+            if province in THAI_PROVINCES:
+                return province
         
         return None
 
@@ -1666,16 +1752,19 @@ class LLMAgent:
     def _extract_district(self, question: str) -> Optional[str]:
         """Extract district name from question (Bangkok + general 'อำเภอ/เขต')"""
         import re
+        placeholder_words = {"ไหน", "ใด", "อะไร", "ไหนบ้าง", "ทั้งหมด", "เท่าไหร่", "กี่แห่ง", "กี่โรง"}
 
         # General patterns: อำเภอ/เขต
         # e.g. "อำเภอกะพ้อ", "อำเภอเมืองสุราษฎร์ธานี", "เขตบางรัก"
-        match = re.search(r'อำเภอ\s*(เมือง[ก-๙]+)', question)
+        match = re.search(r'อำเภอ\s*(เมือง[ก-๙]+?)(?=มี|มีกี่|อยู่|ที่|ใน|$|\s)', question)
         if match:
             return match.group(1).strip()
 
-        match = re.search(r'อำเภอ\s*([ก-๙]+)', question)
+        match = re.search(r'อำเภอ\s*([ก-๙]+?)(?=มี|มีกี่|อยู่|ที่|ใน|$|\s)', question)
         if match:
             district = match.group(1).strip()
+            if district in placeholder_words or district.startswith(("ไหน", "ใด", "อะไร")):
+                return None
             if district == "เมือง":
                 # If province exists, return เมือง{จังหวัด}
                 prov = self._extract_province(question)
@@ -1683,9 +1772,12 @@ class LLMAgent:
                     return f"เมือง{prov}"
             return district
 
-        match = re.search(r'เขต\s*([ก-๙]+)', question)
+        match = re.search(r'เขต\s*([ก-๙]+?)(?=มี|มีกี่|อยู่|ที่|ใน|$|\s)', question)
         if match:
-            return match.group(1).strip()
+            district = match.group(1).strip()
+            if district in placeholder_words or district.startswith(("ไหน", "ใด", "อะไร")):
+                return None
+            return district
         
         # Bangkok districts list
         bangkok_districts = [

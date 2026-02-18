@@ -4,11 +4,12 @@ Handles context retention across chat turns
 """
 
 import logging
+import re
 import time
 from typing import Optional, Dict, List, Any
 
 from .types import ParsedQuery, QueryIntent, QueryLevel
-from .constants import THAI_PROVINCES, REGIONS
+from .constants import THAI_PROVINCES, REGIONS, YEAR_ALIASES, AVAILABLE_YEARS
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class ConversationMemory:
         self.last_agency: Optional[str] = None
         self.last_query: Optional[str] = None
         self.last_school_name: Optional[str] = None  # NEW: For school-specific queries
+        self.last_year: Optional[str] = None  # Year context (e.g., "2567")
         self.last_scope_type: Optional[str] = None
         self.last_scope_value: Optional[str] = None
         self.last_updated_at: Optional[float] = None
@@ -35,6 +37,21 @@ class ConversationMemory:
         self.last_disambig_query: Optional[str] = None  # Original query that triggered disambiguation
         self.last_ai_response: Optional[str] = None  # Last assistant response text
     
+    @staticmethod
+    def _extract_year_from_query(query: str) -> Optional[str]:
+        """Extract year from query text (e.g., 'ปี 67' -> '2567', 'ปี 2567' -> '2567')"""
+        if not query:
+            return None
+        # Match patterns like ปี 67, ปี67, ปี 2567, ปี2567, ปีการศึกษา 67
+        m = re.search(r'ปี(?:การศึกษา)?\s*(\d{2,4})', query)
+        if m:
+            year_str = m.group(1)
+            if year_str in YEAR_ALIASES:
+                return YEAR_ALIASES[year_str]
+            if len(year_str) == 4 and year_str in AVAILABLE_YEARS:
+                return year_str
+        return None
+
     def update(self, parsed: ParsedQuery, original_query: str = None):
         """Update memory with new parsed query"""
         # Decay old context if stale
@@ -87,6 +104,13 @@ class ConversationMemory:
              self.last_school_name = parsed.school_name
         if original_query:
             self.last_query = original_query
+
+        # Extract and store year from the original query
+        if original_query:
+            extracted_year = self._extract_year_from_query(original_query)
+            if extracted_year:
+                self.last_year = extracted_year
+                logger.info(f"📅 Stored year in memory: {extracted_year}")
 
         # Scope tracking (most specific wins)
         scope_type = None
@@ -250,6 +274,7 @@ class ConversationMemory:
         self.last_agency = None
         self.last_query = None
         self.last_school_name = None
+        self.last_year = None
         self.last_scope_type = None
         self.last_scope_value = None
         self.last_updated_at = None
@@ -258,7 +283,7 @@ class ConversationMemory:
         self.last_ai_response = None
     
     def __repr__(self):
-        return f"Memory(province={self.last_province}, region={self.last_region}, district={self.last_district}, agency={self.last_agency}, scope={self.last_scope_type}:{self.last_scope_value})"
+        return f"Memory(province={self.last_province}, region={self.last_region}, district={self.last_district}, agency={self.last_agency}, year={self.last_year}, scope={self.last_scope_type}:{self.last_scope_value})"
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize memory to dictionary"""
@@ -271,6 +296,7 @@ class ConversationMemory:
             'last_agency': self.last_agency,
             'last_query': self.last_query,
             'last_school_name': self.last_school_name,
+            'last_year': self.last_year,
             'last_scope_type': self.last_scope_type,
             'last_scope_value': self.last_scope_value,
             'last_updated_at': self.last_updated_at,
@@ -289,6 +315,7 @@ class ConversationMemory:
         mem.last_agency = data.get('last_agency')
         mem.last_query = data.get('last_query')
         mem.last_school_name = data.get('last_school_name')
+        mem.last_year = data.get('last_year')
         mem.last_scope_type = data.get('last_scope_type')
         mem.last_scope_value = data.get('last_scope_value')
         mem.last_updated_at = data.get('last_updated_at')
