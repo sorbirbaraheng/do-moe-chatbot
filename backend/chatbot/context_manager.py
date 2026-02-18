@@ -479,6 +479,25 @@ class ContextManager:
                 elif context.provinces:
                     province_str = context.provinces[-1]
                 
+                # Fallback: extract province from conversation history
+                if not province_str:
+                    from .constants import THAI_PROVINCES
+                    for msg in reversed(history):
+                        if msg.get("role") == "user":
+                            prev_text = msg.get("content", "")
+                            for prov in THAI_PROVINCES:
+                                if prov in prev_text:
+                                    province_str = prov
+                                    break
+                            # Also check for regions
+                            if not province_str:
+                                for region in REGIONS:
+                                    if region in prev_text:
+                                        province_str = region
+                                        break
+                            if province_str:
+                                break
+                
                 # Build resolved query based on topic
                 if topic == "schools":
                     subject, unit = "โรงเรียน", "กี่แห่ง"
