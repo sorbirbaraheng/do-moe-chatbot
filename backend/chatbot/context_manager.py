@@ -462,6 +462,41 @@ class ContextManager:
         REGIONS = ["ภาคเหนือ", "ภาคใต้", "ภาคตะวันออก", "ภาคตะวันตก", "ภาคกลาง", 
                    "ภาคตะวันออกเฉียงเหนือ", "ภาคอีสาน"]
         
+        # Pattern 0: "แล้วปี XX" or "ปี 67 ละ" — year-change follow-up
+        # Reconstructs previous query with new year, preserving province/topic context
+        year_change_match = re.search(r'(?:แล้ว)?ปี(?:การศึกษา)?\s*(\d{2,4})(?:\s*(?:ละ|ล่ะ|ล่ะครับ|ละครับ|หล่ะ))?', query)
+        if year_change_match:
+            year_str = year_change_match.group(1)
+            # Check if this is primarily a year-change query (short query with just year info)
+            query_without_year = re.sub(r'(?:แล้ว)?ปี(?:การศึกษา)?\s*\d{2,4}(?:\s*(?:ละ|ล่ะ|ล่ะครับ|ละครับ|หล่ะ))?', '', query).strip()
+            is_year_only_query = len(query_without_year) < 10  # Very little besides the year
+            
+            if is_year_only_query:
+                # This is a pure year-change follow-up → reconstruct from history + topic
+                province_str = ""
+                if context.current_province:
+                    province_str = context.current_province
+                elif context.provinces:
+                    province_str = context.provinces[-1]
+                
+                # Build resolved query based on topic
+                if topic == "schools":
+                    subject, unit = "โรงเรียน", "กี่แห่ง"
+                elif topic == "teachers":
+                    subject, unit = "ครู", "กี่คน"
+                elif topic == "students":
+                    subject, unit = "นักเรียน", "กี่คน"
+                else:
+                    subject, unit = "โรงเรียน", "กี่แห่ง"
+                
+                if province_str:
+                    resolved = f"{province_str}ปี {year_str} มี{subject}{unit}"
+                else:
+                    resolved = f"ปี {year_str} มี{subject}{unit}"
+                
+                logger.info(f"📅 Year-change coreference: '{query}' → '{resolved}' (topic={topic})")
+                return resolved
+        
         # Pattern 1: "แล้วXละ" or "แล้วXล่ะ" - follow-up with new entity
         followup_match = re.search(r'แล้ว(.+?)(?:ละ|ล่ะ|ล่ะครับ|ละครับ)?$', query)
         if followup_match:

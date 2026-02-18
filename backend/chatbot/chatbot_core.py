@@ -839,7 +839,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                 logger.info(f"📊 Frontend overrode level: {old_level} → {self.memory.frontend_level}")
             self.memory.frontend_level = None  # Clear after use
         
-        self.memory.update(parsed)
+        self.memory.update(parsed, original_query=message)
         
         logger.info(f"🎯 Intent: {parsed.intent.value}, Level: {parsed.level.value}")
         logger.info(f"   Region: {parsed.region}, Province: {parsed.province}, School: {getattr(parsed, 'school_name', None)}")
@@ -877,8 +877,16 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                 getattr(self.memory, "last_school_name", None),
                 getattr(self.memory, "last_agency", None),
             ])
+            rank_filter_kws = ["มากที่สุด", "น้อยที่สุด", "อันดับ", "มากกว่า", "น้อยกว่า", "เท่ากับ", "ไม่เกิน", "อย่างน้อย"]
+            has_rank_filter_intent = any(k in (message or "") for k in rank_filter_kws)
+            has_number = bool(re.search(r"\d", message or ""))
 
-            if parsed.intent in education_intents or (parsed.threshold is not None) or (is_followup and has_context):
+            if (
+                parsed.intent in education_intents
+                or (parsed.threshold is not None)
+                or (has_rank_filter_intent and (has_context or has_number))
+                or (is_followup and has_context)
+            ):
                 intent_type = "EDUCATION"
 
             logger.info(f"🧠 LLM Classified Intent: {intent_type}")
