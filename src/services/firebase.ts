@@ -4,13 +4,13 @@ import { getAnalytics } from "firebase/analytics";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 const firebaseConfig = {
-    apiKey: "AIzaSyDpwCBnCv7TKQVDCBJmm-NnNwg5pJ1Ct4w",
-    authDomain: "chatbot-97475.firebaseapp.com",
-    projectId: "chatbot-97475",
-    storageBucket: "chatbot-97475.firebasestorage.app",
-    messagingSenderId: "696348777998",
-    appId: "1:696348777998:web:b0e11ea27b7239fe8ea65f",
-    measurementId: "G-HQPY4JREDZ"
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+    appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
+    measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "",
 };
 
 const app = initializeApp(firebaseConfig);

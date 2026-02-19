@@ -212,7 +212,13 @@ def create_flask_api():
     if allowed_origins_env:
         allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
     else:
-        allowed_origins = "*"
+        # Default: restrict to common dev/local origins instead of wildcard
+        allowed_origins = [
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:3000",
+        ]
 
     CORS(app, resources={r"/*": {"origins": allowed_origins}}, supports_credentials=True)
 
@@ -258,7 +264,11 @@ def create_flask_api():
     OPERATOR_PASSWORD_HASH = os.getenv("OPERATOR_PASSWORD_HASH")
     VIEWER_PASSWORD = os.getenv("VIEWER_PASSWORD")
     VIEWER_PASSWORD_HASH = os.getenv("VIEWER_PASSWORD_HASH")
-    ADMIN_TOKEN_SECRET = os.getenv("ADMIN_TOKEN_SECRET") or os.getenv("FLASK_SECRET_KEY") or "dev-insecure-secret"
+    ADMIN_TOKEN_SECRET = os.getenv("ADMIN_TOKEN_SECRET") or os.getenv("FLASK_SECRET_KEY")
+    if not ADMIN_TOKEN_SECRET:
+        logger.warning("⚠️ ADMIN_TOKEN_SECRET not set! Generating random secret (will change on restart)")
+        import secrets
+        ADMIN_TOKEN_SECRET = secrets.token_hex(32)
     ADMIN_TOKEN_TTL_SECONDS = int(os.getenv("ADMIN_TOKEN_TTL_SECONDS", "43200"))
     DISABLE_FIRESTORE = os.getenv("DISABLE_FIRESTORE", "0") == "1"
 
