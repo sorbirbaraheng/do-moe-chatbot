@@ -1,12 +1,19 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Helper function: check if user has admin/operator role
+    function isAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'operator'];
+    }
+
     // Settings collection: 
-    // - Everyone needs to READ the config (to get prompts/models).
-    // - Only Authenticated users can WRITE/UPDATE.
+    // - Everyone can READ (to get prompts/models).
+    // - Only admin/operator can WRITE.
     match /settings/{document=**} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow write: if isAdmin();
     }
     
     // Users collection & Subcollections:
