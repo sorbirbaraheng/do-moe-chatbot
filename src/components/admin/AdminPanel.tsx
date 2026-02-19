@@ -6,12 +6,7 @@ import { canEditAdmin, getAdminRole, clearAdminSession } from '../../services/ad
 import {
     ApiSettingsTab,
     PromptsTab,
-    ModelConfigTab,
-    RagConfigTab,
-
-    UxPolicyTab,
     SessionMonitorTab,
-    AnalyticsTab,
     UserManagementTab,
     AdminAuditTab,
 } from './tabs';
@@ -21,7 +16,7 @@ interface AdminPanelProps {
     onLogout: () => void;
 }
 
-type TabId = 'api' | 'prompts' | 'monitor' | 'analytics' | 'users' | 'audit';
+type TabId = 'api' | 'prompts' | 'monitor' | 'users' | 'audit';
 
 // SIMPLIFIED: Only keep functional tabs
 const tabs: { id: TabId; label: string; icon: React.ReactNode; minRole: 'viewer' | 'operator' | 'admin' }[] = [
@@ -51,16 +46,6 @@ const tabs: { id: TabId; label: string; icon: React.ReactNode; minRole: 'viewer'
         icon: (
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 0 1-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0 1 15 18.257V17.25m6-12V15a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 15V5.25m18 0A2.25 2.25 0 0 0 18.75 3H5.25A2.25 2.25 0 0 0 3 5.25m18 0V12a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 12V5.25" />
-            </svg>
-        ),
-        minRole: 'viewer',
-    },
-    {
-        id: 'analytics',
-        label: '📊 Analytics',
-        icon: (
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
             </svg>
         ),
         minRole: 'viewer',
@@ -521,8 +506,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
             case 'monitor':
                 return <SessionMonitorTab config={config} />;
 
-            case 'analytics':
-                return <AnalyticsTab />;
+
 
             case 'users':
                 return <UserManagementTab />;
