@@ -6,8 +6,12 @@ services:
     env_file:
       - deploy/.env.backend
     restart: unless-stopped
+    depends_on:
+      - redis
     ports:
       - "5001:5001"
+    volumes:
+      - ./backend/serviceAccountKey.json:/app/serviceAccountKey.json:ro
     networks:
       - moe-net
 
@@ -33,6 +37,18 @@ services:
     networks:
       - moe-net
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - moe-net
+
 networks:
   moe-net:
     driver: bridge
+
+volumes:
+  redis_data:
