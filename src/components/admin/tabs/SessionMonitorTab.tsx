@@ -28,7 +28,10 @@ export const SessionMonitorTab: React.FC<SessionMonitorTabProps> = ({ config }) 
             const baseUrl = rawUrl ? rawUrl.replace(/\/$/, '') : 'http://127.0.0.1:7860';
 
             console.log('[SessionMonitor] Fetching from:', baseUrl);
-            const res = await fetch(`${baseUrl}/api/sessions?limit=50`);
+            const token = localStorage.getItem('admin_token') || '';
+            const res = await fetch(`${baseUrl}/api/sessions?limit=50`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             const data = await res.json();
 
             if (data.success) {
