@@ -17,11 +17,11 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { Message } from '../types';
-import { MOE_COLORS } from '../constants';
+import { Message } from '../../types';
+import { MOE_COLORS } from '../../constants';
 import ChartWidget from './ChartWidget';
 import MapWidget from './MapWidget';
-import { saveFeedback } from '../services/feedbackService';
+import { saveFeedback } from '../../services/feedbackService';
 
 /**
  * Clean up markdown formatting issues from LLM output

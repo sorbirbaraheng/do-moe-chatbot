@@ -9,8 +9,8 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { MOE_COLORS, COMMON_QUERIES, MOCK_STATS } from '../constants';
-import { Category, User } from '../types';
+import { MOE_COLORS, COMMON_QUERIES, MOCK_STATS } from '../../constants';
+import { Category, User } from '../../types';
 
 interface LandingPageProps {
   onStart: (category?: Category, initialMessage?: string) => void;

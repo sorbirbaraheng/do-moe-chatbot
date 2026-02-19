@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { User } from '../types';
-import { ChatSession } from '../services/chatService';
+import { User } from '../../types';
+import { ChatSession } from '../../services/chatService';
 
 interface MobileMenuProps {
     isOpen: boolean;
