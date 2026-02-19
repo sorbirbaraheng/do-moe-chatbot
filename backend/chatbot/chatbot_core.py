@@ -628,6 +628,16 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
 
         return False
 
+    def _get_cache_context(self):
+        """Build cache context dict from memory (province + year) for context-aware caching."""
+        ctx = {}
+        if self.memory:
+            if self.memory.last_province:
+                ctx["province"] = self.memory.last_province
+            if self.memory.last_year:
+                ctx["year"] = self.memory.last_year
+        return ctx or None
+
     # =========================================================================
     # MAIN CHAT INTERFACE: Entry point for all conversations
     # =========================================================================
@@ -757,11 +767,14 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         if is_school_specific_query:
             logger.info(f"🏫 School-specific query detected (school_name: {self.memory.last_school_name}) - skipping cache")
         
+        # Cache context = function reading fresh province/year from memory
+        _cache_ctx = self._get_cache_context
+        
         # Check Semantic Cache (disabled for testing)
         if DEBUG_DISABLE_CACHE:
             logger.info("🔧 Cache DISABLED by env (ENABLE_SEMANTIC_CACHE=0)")
-        elif not is_school_specific_query and self.cache and not was_coreference_resolved:
-            cached_response = self.cache.check(message)
+        elif not is_school_specific_query and self.cache:
+            cached_response = self.cache.check(message, context=_cache_ctx())
             if cached_response:
                 # CRITICAL: Still update memory on cache hit so follow-up queries retain context
                 try:
@@ -915,7 +928,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     general_response = self._generate_general_response(message)
                     if general_response:
                         history[-1]["content"] = general_response
-                        self.cache.save(message, general_response)
+                        self.cache.save(message, general_response, context=_cache_ctx())
                         yield history, ""
                         return
                 except Exception as e:
@@ -926,7 +939,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         year_compare_result = self._try_year_comparison_intercept(message)
         if year_compare_result:
             history[-1]["content"] = year_compare_result
-            self.cache.save(message, year_compare_result)
+            self.cache.save(message, year_compare_result, context=_cache_ctx())
             yield history, ""
             return
 
@@ -989,7 +1002,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             
             if agent_response:
                 history[-1]["content"] = agent_response
-                self.cache.save(message, agent_response)
+                self.cache.save(message, agent_response, context=_cache_ctx())
                 yield history, ""
                 return
             else:
@@ -1003,7 +1016,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         ratio_result = self._handle_ratio_query(parsed, message)
         if ratio_result:
             history[-1]["content"] = ratio_result
-            self.cache.save(message, ratio_result)
+            self.cache.save(message, ratio_result, context=_cache_ctx())
             yield history, ""
             return
 
@@ -1011,7 +1024,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         teacher_result = self._handle_teacher_count_query(parsed, message)
         if teacher_result:
             history[-1]["content"] = teacher_result
-            self.cache.save(message, teacher_result)
+            self.cache.save(message, teacher_result, context=_cache_ctx())
             yield history, ""
             return
 
@@ -1028,7 +1041,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             response_text = self._handle_school_query(parsed, message, history)
             if response_text:
                 history[-1]["content"] = response_text
-                self.cache.save(message, response_text)
+                self.cache.save(message, response_text, context=_cache_ctx())
                 yield history, ""
                 return
         
@@ -1099,7 +1112,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     llm_response += f"\n\n<chart>{chart_json}</chart>"
                 
                 history[-1]["content"] = llm_response
-                self.cache.save(message, llm_response)
+                self.cache.save(message, llm_response, context=_cache_ctx())
                 yield history, ""
                 return
         
@@ -1169,7 +1182,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     response += f"\n\n💡 **ลองถาม:** \"{level_text}ที่มีโรงเรียน{op_text} {new_threshold} แห่ง{province_text}\" หรือ \"{level_text}ไหนมีโรงเรียนน้อยที่สุด{province_text}\" ครับ 😊"
                     
                     history[-1]["content"] = response
-                    self.cache.save(message, response)
+                    self.cache.save(message, response, context=_cache_ctx())
                     yield history, ""
                     return
                 else:
@@ -1215,7 +1228,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                 response += f"\n\n<chart>{chart_json}</chart>"
             
             history[-1]["content"] = response
-            self.cache.save(message, response)
+            self.cache.save(message, response, context=_cache_ctx())
             yield history, ""
             return
         
@@ -1234,7 +1247,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             history[-1]["content"] += source_info
             full_response += source_info
             
-        self.cache.save(message, full_response)
+        self.cache.save(message, full_response, context=_cache_ctx())
         yield history, ""
 
     # =========================================================================
@@ -2111,7 +2124,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     
                     history[-1]["content"] = response_text
                 
-                self.cache.save(message, history[-1]["content"])
+                self.cache.save(message, history[-1]["content"], context=self._get_cache_context())
                 return None  # Already handled
             else:
                 collection_name = self.collections.get(parsed.level.value)
@@ -2127,7 +2140,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             if not collection_name or parsed.intent == QueryIntent.UNKNOWN:
                 fallback_resp = self._rag_fallback(message)
                 history[-1]["content"] = fallback_resp
-                self.cache.save(message, fallback_resp)
+                self.cache.save(message, fallback_resp, context=self._get_cache_context())
                 return None
             
             # Each region query
@@ -2142,7 +2155,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             if not results:
                 fallback_resp = self._rag_fallback(message)
                 history[-1]["content"] = fallback_resp
-                self.cache.save(message, fallback_resp)
+                self.cache.save(message, fallback_resp, context=self._get_cache_context())
                 return None
             
             return results
