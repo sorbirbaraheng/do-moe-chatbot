@@ -9,6 +9,17 @@ export interface CategoryApiKeys {
     geminiConnected: boolean;
     groqKeys: string[];
     groqConnected: boolean;
+    // Multi-provider support (OpenAI-compatible)
+    openaiKeys: string[];
+    openaiConnected: boolean;
+    deepseekKeys: string[];
+    deepseekConnected: boolean;
+    mistralKeys: string[];
+    mistralConnected: boolean;
+    togetherKeys: string[];
+    togetherConnected: boolean;
+    openrouterKeys: string[];
+    openrouterConnected: boolean;
     // Legacy RAG (n8n/proxy)
     ragEndpoint: string;
     ragApiKey: string;
@@ -97,9 +108,10 @@ export interface RagTestResult {
     message: string;
 }
 
-/** Groq connection test result */
-export interface GroqTestResult {
+/** Provider connection test result (generic for all OpenAI-compatible providers) */
+export interface ProviderTestResult {
     success: boolean;
     message: string;
+    provider?: string;
     errorType?: string;
 }
