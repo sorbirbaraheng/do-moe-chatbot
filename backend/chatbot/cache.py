@@ -44,15 +44,14 @@ class SemanticCache:
         except Exception as e:
             logger.error(f"Error initializing semantic cache: {e}")
 
-    def check(self, query: str) -> Optional[str]:
-        """Check cache for similar queries"""
+    def check(self, query: str, context: dict = None) -> Optional[str]:
+        """Check cache for similar queries within the same context"""
         try:
             vector = []
             if self.llm_provider:
                 vector = self.llm_provider.embed_content(query)
             else:
                  import google.generativeai as genai
-                 # Generate embedding for the query
                  result = genai.embed_content(
                      model="models/text-embedding-004",
                      content=query,
@@ -63,24 +62,36 @@ class SemanticCache:
             if not vector:
                 return None
             
+            # Build context filter for Qdrant
+            query_filter = None
+            if context:
+                from qdrant_client.models import Filter, FieldCondition, MatchValue
+                conditions = []
+                ctx_province = context.get("province") or "__none__"
+                ctx_year = context.get("year") or "__none__"
+                conditions.append(FieldCondition(key="ctx_province", match=MatchValue(value=ctx_province)))
+                conditions.append(FieldCondition(key="ctx_year", match=MatchValue(value=ctx_year)))
+                query_filter = Filter(must=conditions)
+            
             # Use new query_points API (qdrant-client >= 1.7.0)
             response = self.client.query_points(
                 collection_name=self.collection_name,
                 query=vector,
+                query_filter=query_filter,
                 limit=1
             )
             hits = response.points
             
             if hits and hits[0].score >= self.threshold:
-                logger.info(f"⚡ Cache Hit! Score: {hits[0].score:.4f}")
+                logger.info(f"⚡ Cache Hit! Score: {hits[0].score:.4f} (ctx: {context})")
                 return hits[0].payload.get("response")
                 
         except Exception as e:
             logger.warning(f"Cache check failed: {e}")
         return None
 
-    def save(self, query: str, response: str):
-        """Save response to cache"""
+    def save(self, query: str, response: str, context: dict = None):
+        """Save response to cache with context metadata"""
         try:
             import uuid
             
@@ -99,13 +110,22 @@ class SemanticCache:
             if not vector:
                 return
 
+            payload = {"query": query, "response": response, "timestamp": time.time()}
+            # Store context in payload for filtering
+            if context:
+                payload["ctx_province"] = context.get("province") or "__none__"
+                payload["ctx_year"] = context.get("year") or "__none__"
+            else:
+                payload["ctx_province"] = "__none__"
+                payload["ctx_year"] = "__none__"
+
             self.client.upsert(
                 collection_name=self.collection_name,
                 points=[
                     self.PointStruct(
                         id=str(uuid.uuid4()),
                         vector=vector,
-                        payload={"query": query, "response": response, "timestamp": time.time()}
+                        payload=payload
                     )
                 ]
             )
@@ -145,40 +165,45 @@ class HybridCache:
         """Normalize query for consistent hashing"""
         return query.lower().strip()
     
-    def _get_cache_key(self, query: str) -> str:
-        """Generate Redis key from query"""
+    def _get_cache_key(self, query: str, context: dict = None) -> str:
+        """Generate context-aware Redis key from query + province/year"""
         normalized = self._normalize_query(query)
-        hash_val = hashlib.md5(normalized.encode()).hexdigest()[:16]
+        ctx_suffix = ""
+        if context:
+            p = context.get("province") or "none"
+            y = context.get("year") or "none"
+            ctx_suffix = f":{p}:{y}"
+        hash_val = hashlib.md5((normalized + ctx_suffix).encode()).hexdigest()[:16]
         return f"domoe:cache:{hash_val}"
     
-    def check(self, query: str) -> Optional[str]:
-        """Check cache: Redis first, then Semantic"""
-        # L1: Try Redis (fast exact match)
+    def check(self, query: str, context: dict = None) -> Optional[str]:
+        """Check cache: Redis first, then Semantic (context-aware)"""
+        # L1: Try Redis (fast exact match, scoped by context)
         if self.redis_client:
             try:
-                cache_key = self._get_cache_key(query)
+                cache_key = self._get_cache_key(query, context)
                 cached = self.redis_client.get(cache_key)
                 if cached:
-                    logger.info("⚡ Redis L1 Cache Hit!")
+                    logger.info(f"⚡ Redis L1 Cache Hit! (ctx: {context})")
                     return cached
             except Exception as e:
                 logger.warning(f"Redis check failed: {e}")
         
-        # L2: Try Semantic Cache
-        return self.semantic_cache.check(query)
+        # L2: Try Semantic Cache (filtered by context)
+        return self.semantic_cache.check(query, context)
     
-    def save(self, query: str, response: str):
-        """Save to both caches"""
-        # Save to Redis (L1)
+    def save(self, query: str, response: str, context: dict = None):
+        """Save to both caches (context-aware)"""
+        # Save to Redis (L1) with context-scoped key
         if self.redis_client:
             try:
-                cache_key = self._get_cache_key(query)
+                cache_key = self._get_cache_key(query, context)
                 self.redis_client.setex(cache_key, self.ttl, response)
             except Exception as e:
                 logger.warning(f"Redis save failed: {e}")
         
-        # Save to Semantic Cache (L2)
-        self.semantic_cache.save(query, response)
+        # Save to Semantic Cache (L2) with context metadata
+        self.semantic_cache.save(query, response, context)
 
     def flush(self) -> dict:
         """Flush all caches (Redis L1 + Qdrant semantic cache)"""
