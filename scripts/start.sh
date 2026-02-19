@@ -31,6 +31,13 @@ for arg in "$@"; do
   esac
 done
 
+# Load frontend env vars for Docker build args
+if [ -f deploy/.env.frontend ]; then
+  set -a
+  source deploy/.env.frontend
+  set +a
+fi
+
 # Start Docker Compose
 echo -e "${Y}⏳ Starting Docker containers...${NC}"
 docker compose -f docker-compose.prod.yml up -d $BUILD_FLAG $SERVICE
