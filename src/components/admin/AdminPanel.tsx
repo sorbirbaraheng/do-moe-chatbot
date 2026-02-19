@@ -8,7 +8,7 @@ import {
     PromptsTab,
     ModelConfigTab,
     RagConfigTab,
-    DataManagementTab,
+
     UxPolicyTab,
     SessionMonitorTab,
     AnalyticsTab,
