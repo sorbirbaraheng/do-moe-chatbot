@@ -1,0 +1,142 @@
+[
+  {
+    "id": "route-ranking-district-with-province",
+    "kind": "route_guard",
+    "question": "ในจังหวัดสงขลา อำเภอไหนมีโรงเรียนมากที่สุด",
+    "tool": "ranking",
+    "params": {"metric": "schools", "order": "most", "scope": "district"},
+    "expect": {"tool": "ranking", "params": {"metric": "schools", "order": "most", "scope": "district", "province": "สงขลา"}},
+    "forbid": {"params": {"district": "ไหน"}}
+  },
+  {
+    "id": "route-ranking-subdistrict-with-province",
+    "kind": "route_guard",
+    "question": "ตำบลไหนในจังหวัดเชียงใหม่มีนักเรียนเยอะสุด",
+    "tool": "ranking",
+    "params": {"metric": "students", "order": "most", "scope": "subdistrict"},
+    "expect": {"tool": "ranking", "params": {"metric": "students", "order": "most", "scope": "subdistrict", "province": "เชียงใหม่"}}
+  },
+  {
+    "id": "route-ranking-region-without-province",
+    "kind": "route_guard",
+    "question": "จังหวัดไหนในภาคกลางมีครูมากที่สุด",
+    "tool": "ranking",
+    "params": {"metric": "teachers", "order": "most", "scope": "province"},
+    "expect": {"tool": "ranking", "params": {"metric": "teachers", "order": "most", "scope": "province", "region": "ภาคกลาง"}}
+  },
+  {
+    "id": "route-filter-fill-operator-value",
+    "kind": "route_guard",
+    "question": "โรงเรียนในอำเภอกะพ้อ จังหวัดปัตตานี นักเรียนน้อยกว่า 120 คน",
+    "tool": "filter_schools",
+    "params": {"metric": "students", "province": "ปัตตานี"},
+    "expect": {"tool": "filter_schools", "params": {"metric": "students", "operator": "lt", "value": 120, "province": "ปัตตานี", "district": "กะพ้อ"}}
+  },
+  {
+    "id": "route-filter-teacher-metric",
+    "kind": "route_guard",
+    "question": "โรงเรียนในจังหวัดชลบุรีที่มีครูมากกว่า 50 คน",
+    "tool": "filter_schools",
+    "params": {"operator": "gt", "value": 50, "province": "ชลบุรี"},
+    "expect": {"tool": "filter_schools", "params": {"metric": "teachers", "operator": "gt", "value": 50, "province": "ชลบุรี"}}
+  },
+  {
+    "id": "route-count-schools-enrich-scope",
+    "kind": "route_guard",
+    "question": "อำเภอเมืองสงขลามีโรงเรียนสพฐกี่แห่ง",
+    "tool": "count_schools",
+    "params": {"agency": "สพฐ"},
+    "expect": {"tool": "count_schools", "params": {"agency": "สพฐ", "province": "สงขลา", "district": "เมืองสงขลา"}}
+  },
+  {
+    "id": "extract-district-placeholder-none",
+    "kind": "extract_district",
+    "question": "ในจังหวัดสงขลา อำเภอไหนมีโรงเรียนมากที่สุด",
+    "expect": {"district": null}
+  },
+  {
+    "id": "extract-district-city",
+    "kind": "extract_district",
+    "question": "อำเภอเมืองสุราษฎร์ธานีมีโรงเรียนสพฐกี่แห่ง",
+    "expect": {"district": "เมืองสุราษฎร์ธานี"}
+  },
+  {
+    "id": "extract-district-explicit",
+    "kind": "extract_district",
+    "question": "อำเภอกะพ้อ จังหวัดปัตตานีมีโรงเรียนกี่แห่ง",
+    "expect": {"district": "กะพ้อ"}
+  },
+  {
+    "id": "followup-filter-threshold-switch",
+    "kind": "followup_active_query",
+    "question": "มากกว่า 800 คนล่ะ",
+    "context": {
+      "last_active_query": {
+        "name": "filter_schools",
+        "params": {"metric": "students", "operator": "lt", "value": 120, "province": "ปัตตานี", "district": "กะพ้อ"}
+      }
+    },
+    "expect": {"tool": "filter_schools", "params": {"metric": "students", "operator": "gt", "value": 800, "province": "ปัตตานี", "district": "กะพ้อ"}}
+  },
+  {
+    "id": "followup-system-type-switch",
+    "kind": "followup_active_query",
+    "question": "นอกระบบล่ะ",
+    "context": {
+      "last_active_query": {
+        "name": "count_by_system_type",
+        "params": {"province": "นราธิวาส", "system_type": "ในระบบ"}
+      }
+    },
+    "expect": {"tool": "count_by_system_type", "params": {"province": "นราธิวาส", "system_type": "นอกระบบ"}}
+  },
+  {
+    "id": "followup-teacher-person-type",
+    "kind": "followup_active_query",
+    "question": "แล้วลูกจ้างประจำกี่คน",
+    "context": {
+      "last_active_query": {
+        "name": "count_teachers",
+        "params": {"province": "ชลบุรี", "person_type": "ลูกจ้างชั่วคราว"}
+      }
+    },
+    "expect": {"tool": "count_teachers", "params": {"province": "ชลบุรี", "person_type": "ลูกจ้างประจำ"}}
+  },
+  {
+    "id": "followup-latest-year-clears-year-filter",
+    "kind": "followup_active_query",
+    "question": "ปีล่าสุดล่ะ",
+    "context": {
+      "last_active_query": {
+        "name": "count_students",
+        "params": {"province": "เชียงใหม่", "year": 2567}
+      }
+    },
+    "expect": {"tool": "count_students", "params": {"province": "เชียงใหม่"}},
+    "forbid": {"params_keys": ["year"]}
+  },
+  {
+    "id": "followup-inject-province-short-answer",
+    "kind": "followup_active_query",
+    "question": "เชียงใหม่",
+    "context": {
+      "last_active_query": {
+        "name": "count_students",
+        "params": {"metric": "students"}
+      }
+    },
+    "expect": {"tool": "count_students", "params": {"province": "เชียงใหม่"}}
+  },
+  {
+    "id": "followup-no-useful-signal",
+    "kind": "followup_active_query",
+    "question": "โอเคครับ",
+    "context": {
+      "last_active_query": {
+        "name": "count_students",
+        "params": {"province": "เชียงใหม่"}
+      }
+    },
+    "expect": {"tool": null}
+  }
+]

@@ -78,6 +78,30 @@ const ChatInput: React.FC<ChatInputProps> = ({
     onMicLevel?.(0);
   };
 
+  const forceStopListening = async () => {
+    shouldAutoSendRef.current = false;
+    pendingVoiceSendRef.current = null;
+
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+
+    if (recognition) {
+      try {
+        recognition.abort?.();
+      } catch {
+        try {
+          recognition.stop?.();
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    setIsListening(false);
+    onListeningChange?.(false);
+    await stopAudioMeter();
+  };
+
   const startAudioMeter = async () => {
     if (!navigator.mediaDevices?.getUserMedia) return;
     try {
@@ -160,7 +184,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
     }
 
     if (isListening) {
-      setIsListening(false);
+      void forceStopListening();
       return;
     }
 
@@ -186,7 +210,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       setIsListening(false);
       onListeningChange?.(false);
       recognitionRef.current = null;
-      stopAudioMeter();
+      void stopAudioMeter();
       if (shouldAutoSendRef.current && pendingVoiceSendRef.current && !disabled) {
         const voiceText = pendingVoiceSendRef.current;
         pendingVoiceSendRef.current = null;
@@ -195,6 +219,14 @@ const ChatInput: React.FC<ChatInputProps> = ({
         setText('');
         if (textareaRef.current) textareaRef.current.style.height = 'auto';
       }
+    };
+    recognition.onerror = () => {
+      setIsListening(false);
+      onListeningChange?.(false);
+      recognitionRef.current = null;
+      shouldAutoSendRef.current = false;
+      pendingVoiceSendRef.current = null;
+      void stopAudioMeter();
     };
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
@@ -211,31 +243,13 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   useEffect(() => {
     if (!talkMode && recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {
-        // ignore
-      }
-      recognitionRef.current = null;
-      setIsListening(false);
-      onListeningChange?.(false);
-      stopAudioMeter();
+      void forceStopListening();
     }
   }, [talkMode, onListeningChange]);
 
   useEffect(() => {
     if (stopListeningSignal === 0) return;
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {
-        // ignore
-      }
-      recognitionRef.current = null;
-    }
-    setIsListening(false);
-    onListeningChange?.(false);
-    stopAudioMeter();
+    void forceStopListening();
   }, [stopListeningSignal, onListeningChange]);
 
   useEffect(() => {
@@ -246,6 +260,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
     if (autoListenSignal === 0) return;
     toggleListening();
   }, [autoListenSignal, talkMode, disabled, isListening, isSpeaking]);
+
+  useEffect(() => {
+    return () => {
+      void forceStopListening();
+    };
+  }, []);
 
   return (
     <div className="flex flex-col gap-3 w-full max-w-4xl mx-auto px-2 md:px-4">
