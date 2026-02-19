@@ -9,7 +9,14 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchText, MatchAny, Range
 from .school_search import SchoolSearchEngine
-from .constants import COLLECTION_NAMES, THAI_PROVINCES, REGIONS, YEAR_COLLECTIONS, YEAR_ALIASES
+from .constants import (
+    COLLECTION_NAMES,
+    THAI_PROVINCES,
+    REGIONS,
+    YEAR_COLLECTIONS,
+    YEAR_ALIASES,
+    AVAILABLE_YEARS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +63,12 @@ class ToolExecutor:
         # Extract and normalize year for collection routing
         raw_year = params.get("year")
         self._active_year = self._normalize_year(raw_year)
+        if raw_year and self._active_year not in AVAILABLE_YEARS:
+            return {
+                "tool": tool_name,
+                "error": f"ไม่มีข้อมูลปี {self._active_year} ในระบบ",
+                "available_years": AVAILABLE_YEARS,
+            }
         if self._active_year:
             logger.info(f"📅 Year-based routing active: {self._active_year}")
         

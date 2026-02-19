@@ -13,18 +13,12 @@
  *    4. UI Layout: จัดวางโครงสร้างหลักของหน้าเว็บ
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import CategorySelector from './components/CategorySelector';
-import MessageBubble from './components/MessageBubble';
 import ChatInput from './components/ChatInput';
-import LandingPage from './components/LandingPage';
-import LoginPage from './components/LoginPage';
-import AdminPanel from './components/admin/AdminPanel';
-import AdminLogin from './components/admin/AdminLogin';
 import { getAdminToken, clearAdminSession } from './services/adminAuth';
 import MobileMenu from './components/MobileMenu';
 import { Category, Message, User } from './types';
-import { sendMessageStream, startChat, updateGeminiConfig, resetChatSession, getLastRagDebugInfo, abortCurrentStream } from './services/geminiService';
 import { chatService, ChatSession } from './services/chatService';
 import { MOE_COLORS, COMMON_QUERIES } from './constants';
 import { AdminConfigProvider, useAdminConfig } from './contexts/AdminConfigContext';
@@ -33,6 +27,22 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 type View = 'home' | 'login' | 'chat';
+
+type GeminiServiceModule = typeof import('./services/geminiService');
+
+const MessageBubble = lazy(() => import('./components/MessageBubble'));
+const LandingPage = lazy(() => import('./components/LandingPage'));
+const LoginPage = lazy(() => import('./components/LoginPage'));
+const AdminPanel = lazy(() => import('./components/admin/AdminPanel'));
+const AdminLogin = lazy(() => import('./components/admin/AdminLogin'));
+
+let geminiServicePromise: Promise<GeminiServiceModule> | null = null;
+const loadGeminiService = async (): Promise<GeminiServiceModule> => {
+  if (!geminiServicePromise) {
+    geminiServicePromise = import('./services/geminiService');
+  }
+  return geminiServicePromise;
+};
 
 
 
@@ -188,6 +198,8 @@ const AppContent: React.FC = () => {
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [uiToast, setUiToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Admin Config Context
   const { config, getSystemInstruction, updateConfig } = useAdminConfig();
@@ -197,6 +209,30 @@ const AppContent: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info', duration = 2200) => {
+    setUiToast({ message, type });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setUiToast(null), duration);
+  };
+
+  const resetChatSessionSafe = () => {
+    void loadGeminiService()
+      .then((gemini) => gemini.resetChatSession())
+      .catch((error) => console.error('[Gemini] resetChatSession failed:', error));
+  };
+
+  const abortCurrentStreamSafe = () => {
+    void loadGeminiService()
+      .then((gemini) => gemini.abortCurrentStream())
+      .catch((error) => console.error('[Gemini] abortCurrentStream failed:', error));
+  };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
 
   // Sync Firebase User with App State
   useEffect(() => {
@@ -274,7 +310,17 @@ const AppContent: React.FC = () => {
 
   // Sync Admin Config with Gemini Service
   useEffect(() => {
-    updateGeminiConfig(config);
+    let cancelled = false;
+    void loadGeminiService()
+      .then((gemini) => {
+        if (!cancelled) {
+          gemini.updateGeminiConfig(config);
+        }
+      })
+      .catch((error) => console.error('[Gemini] updateGeminiConfig failed:', error));
+    return () => {
+      cancelled = true;
+    };
   }, [config]);
 
   // Ref to track if pending message has been sent - use a dedicated ref that persists
@@ -289,7 +335,9 @@ const AppContent: React.FC = () => {
         ? messages.filter(m => !m.isError && m.content).map(m => ({ role: m.role, parts: [{ text: m.content }] }))
         : [];
 
-      startChat(systemInstruction, category, initialHistory);
+      void loadGeminiService()
+        .then((gemini) => gemini.startChat(systemInstruction, category, initialHistory))
+        .catch((error) => console.error('[Gemini] startChat failed:', error));
 
       // Check for pending message from landing page FIRST (priority over history)
       // Use sessionStorage key check to prevent duplicate sends across re-renders
@@ -422,7 +470,7 @@ const AppContent: React.FC = () => {
         // Important: Reset backend session if needed, or rely on distinct session IDs
       } else {
         console.log(`[App] No saved state for ${newCategory}, starting new`);
-        resetChatSession();
+        resetChatSessionSafe();
         setCurrentChatId(generateId());
         pendingMessageSentRef.current = false;
 
@@ -467,7 +515,7 @@ const AppContent: React.FC = () => {
     if (initialMessage) {
       setMessages([]);
       setCurrentChatId(generateId());
-      resetChatSession();
+      resetChatSessionSafe();
       setShowHeaderMenu(false);
 
       // Store the message to be sent when entering chat view
@@ -479,7 +527,7 @@ const AppContent: React.FC = () => {
       // If we are already in chat/workspace view but changing category, it should clear
       if (view === 'chat' && initialCategory && initialCategory !== category) {
         setMessages([]);
-        resetChatSession();
+        resetChatSessionSafe();
       }
 
       // If user clicks start/search on landing page, go to chat directly
@@ -505,7 +553,7 @@ const AppContent: React.FC = () => {
 
 
   const handleNewChat = () => {
-    resetChatSession();
+    resetChatSessionSafe();
     setCurrentChatId(generateId());
     setCategory(Category.General); // FIX: Always reset to General category
     setMessages([]); // Start with empty - user initiates
@@ -532,7 +580,7 @@ const AppContent: React.FC = () => {
 
   const loadPastChat = async (session: ChatSession) => {
     setIsLoading(true);
-    resetChatSession();
+    resetChatSessionSafe();
     setCurrentChatId(session.sessionId);
     setCategory(session.category);
 
@@ -551,26 +599,33 @@ const AppContent: React.FC = () => {
 
   const handleLogout = async (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    showToast('กำลังออกจากระบบ...', 'info', 1200);
 
-    // Clear persistent storage (Security)
-    localStorage.removeItem('current_chat_id');
-    localStorage.removeItem('current_messages');
-    localStorage.removeItem('current_category');
+    try {
+      // Clear persistent storage (Security)
+      localStorage.removeItem('current_chat_id');
+      localStorage.removeItem('current_messages');
+      localStorage.removeItem('current_category');
 
-    // Clear Admin Session
-    setIsAdminAuthenticated(false);
-    clearAdminSession();
+      // Clear Admin Session
+      setIsAdminAuthenticated(false);
+      clearAdminSession();
 
-    // Reset RAG Debug Mode for safety
-    await updateConfig({ uxPolicy: { ...config.uxPolicy, showRagDebug: false } });
+      // Reset RAG Debug Mode for safety
+      await updateConfig({ uxPolicy: { ...config.uxPolicy, showRagDebug: false } });
 
-    await firebaseLogout();
-    navigateTo('home');
-    setUser(null);
-    setMessages([]);
-    setPastChats([]);
-    setShowHeaderMenu(false);
-    setIsLoading(false);
+      await firebaseLogout();
+      navigateTo('home');
+      setUser(null);
+      setMessages([]);
+      setPastChats([]);
+      setShowHeaderMenu(false);
+      setIsLoading(false);
+      showToast('ออกจากระบบเรียบร้อยแล้ว', 'success');
+    } catch (error) {
+      console.error('[Auth] Logout failed:', error);
+      showToast('ออกจากระบบไม่สำเร็จ กรุณาลองใหม่', 'error', 3200);
+    }
   };
 
   // Format history for Gemini - limit to last 10 messages for optimal context
@@ -924,7 +979,9 @@ const AppContent: React.FC = () => {
         ? `${firebaseUser.uid}_${currentChatId}`
         : `guest_${currentChatId}`;
 
-      await sendMessageStream(
+      const gemini = await loadGeminiService();
+
+      await gemini.sendMessageStream(
         text,
         category,
         imageData,
@@ -947,7 +1004,7 @@ const AppContent: React.FC = () => {
       }
 
       // Attach RAG debug info to the message (for admin mode display)
-      const ragDebugInfo = getLastRagDebugInfo();
+      const ragDebugInfo = gemini.getLastRagDebugInfo();
       setMessages(prev => prev.map(m => m.id === modelMessageId ? { ...m, content: fullContent, ragDebugInfo } : m));
 
       if (isTalkModeRef.current) {
@@ -1010,7 +1067,9 @@ const AppContent: React.FC = () => {
     if (viewName === 'home') {
       return (
         <div key="view-home" className={commonClasses}>
-          <LandingPage onStart={handleStart} onAdminLogin={() => setShowAdminLogin(true)} onLogout={handleLogout} user={user} />
+          <Suspense fallback={<div className="w-full h-full bg-transparent" />}>
+            <LandingPage onStart={handleStart} onAdminLogin={() => setShowAdminLogin(true)} onLogout={handleLogout} user={user} />
+          </Suspense>
         </div>
       );
     }
@@ -1018,7 +1077,9 @@ const AppContent: React.FC = () => {
     if (viewName === 'login') {
       return (
         <div key="view-login" className={`${commonClasses} flex items-center justify-center`}>
-          <LoginPage onLogin={handleLoginSuccess} onBack={() => navigateTo('home')} />
+          <Suspense fallback={<div className="w-full h-full" />}>
+            <LoginPage onLogin={handleLoginSuccess} onBack={() => navigateTo('home')} />
+          </Suspense>
         </div>
       );
     }
@@ -1431,35 +1492,37 @@ const AppContent: React.FC = () => {
                     </div>
                   )}
 
-                  {messages.map((msg, index) => {
-                    // Find last assistant message index
-                    const lastAssistantIndex = messages.map((m, i) => ({ role: m.role, idx: i }))
-                      .filter(m => m.role === 'model')
-                      .pop()?.idx;
+                  <Suspense fallback={<div className="h-14" />}>
+                    {messages.map((msg, index) => {
+                      // Find last assistant message index
+                      const lastAssistantIndex = messages.map((m, i) => ({ role: m.role, idx: i }))
+                        .filter(m => m.role === 'model')
+                        .pop()?.idx;
 
-                    // Find last user message for thinking context
-                    const lastUserMsg = messages.slice(0, index + 1)
-                      .filter(m => m.role === 'user')
-                      .pop()?.content || '';
+                      // Find last user message for thinking context
+                      const lastUserMsg = messages.slice(0, index + 1)
+                        .filter(m => m.role === 'user')
+                        .pop()?.content || '';
 
-                    return (
-                      <MessageBubble
-                        key={msg.id}
-                        message={msg}
-                        isAdminMode={isAdminAuthenticated && config.uxPolicy.showRagDebug}
-                        userAvatar={user?.avatar}
-                        userInitials={user?.initials}
-                        onRegenerate={handleRegenerate}
-                        onEdit={handleEditMessage}
-                        isLastAssistantMessage={index === lastAssistantIndex}
-                        lastUserMessage={lastUserMsg}
-                        isLatestMessage={index === messages.length - 1}
-                        sessionId={currentChatId}
-                        category={category.toLowerCase() as 'general' | 'school' | 'student'}
-                        onSuggestionClick={(text) => handleSendMessage(text, null)}
-                      />
-                    );
-                  })}
+                      return (
+                        <MessageBubble
+                          key={msg.id}
+                          message={msg}
+                          isAdminMode={isAdminAuthenticated && config.uxPolicy.showRagDebug}
+                          userAvatar={user?.avatar}
+                          userInitials={user?.initials}
+                          onRegenerate={handleRegenerate}
+                          onEdit={handleEditMessage}
+                          isLastAssistantMessage={index === lastAssistantIndex}
+                          lastUserMessage={lastUserMsg}
+                          isLatestMessage={index === messages.length - 1}
+                          sessionId={currentChatId}
+                          category={category.toLowerCase() as 'general' | 'school' | 'student'}
+                          onSuggestionClick={(text) => handleSendMessage(text, null)}
+                        />
+                      );
+                    })}
+                  </Suspense>
                   <div ref={messagesEndRef} className="h-4" />
                 </div>
               </div>
@@ -1476,7 +1539,7 @@ const AppContent: React.FC = () => {
                     isLoading={isLoading}
                     isSpeaking={isSpeaking}
                     onStop={() => {
-                      abortCurrentStream();
+                      abortCurrentStreamSafe();
                       setIsLoading(false);
                     }}
                     talkMode={isTalkMode}
@@ -1530,29 +1593,48 @@ const AppContent: React.FC = () => {
   return (
     <>
       {renderContainer()}
+      {uiToast && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[120] pointer-events-none px-4">
+          <div
+            className={`rounded-2xl px-4 py-2.5 text-sm font-medium text-white shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl border border-white/20 transition-all duration-300 ${
+              uiToast.type === 'success'
+                ? 'bg-emerald-600/92'
+                : uiToast.type === 'error'
+                  ? 'bg-rose-600/92'
+                  : 'bg-[#1f2937]/88'
+            }`}
+          >
+            {uiToast.message}
+          </div>
+        </div>
+      )}
       {showAdminLogin && (
-        <AdminLogin
-          onSuccess={() => {
-            setShowAdminLogin(false);
-            setIsAdminAuthenticated(true);
-            setShowAdminPanel(true);
-          }}
-          onCancel={() => setShowAdminLogin(false)}
-        />
+        <Suspense fallback={null}>
+          <AdminLogin
+            onSuccess={() => {
+              setShowAdminLogin(false);
+              setIsAdminAuthenticated(true);
+              setShowAdminPanel(true);
+            }}
+            onCancel={() => setShowAdminLogin(false)}
+          />
+        </Suspense>
       )}
       {showAdminPanel && isAdminAuthenticated && (
-        <AdminPanel
-          onClose={() => {
-            setShowAdminPanel(false);
-            // NOTE: We do NOT reset isAdminAuthenticated here
-            // so the admin can continue to see RAG debug info in the chat.
-          }}
-          onLogout={() => {
-            clearAdminSession();
-            setIsAdminAuthenticated(false);
-            setShowAdminPanel(false);
-          }}
-        />
+        <Suspense fallback={null}>
+          <AdminPanel
+            onClose={() => {
+              setShowAdminPanel(false);
+              // NOTE: We do NOT reset isAdminAuthenticated here
+              // so the admin can continue to see RAG debug info in the chat.
+            }}
+            onLogout={() => {
+              clearAdminSession();
+              setIsAdminAuthenticated(false);
+              setShowAdminPanel(false);
+            }}
+          />
+        </Suspense>
       )}
     </>
   );
