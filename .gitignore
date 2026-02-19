@@ -71,3 +71,15 @@ archive/
 # Debug outputs
 debug_*.txt
 test_results*.txt
+
+# Backup files
+*.backup
+*.bak
+*.old
+
+# Audit logs
+*.jsonl
+
+# Deploy secrets (templates are OK)
+deploy/.env.backend
+deploy/.env.frontend
