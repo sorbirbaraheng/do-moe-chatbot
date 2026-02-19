@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { AdminConfig } from '../../../contexts/AdminConfigContext';
+import { getAdminToken } from '../../../services/adminAuth';
 
 interface SessionMonitorTabProps {
     config: AdminConfig;
@@ -28,7 +29,7 @@ export const SessionMonitorTab: React.FC<SessionMonitorTabProps> = ({ config }) 
             const baseUrl = rawUrl ? rawUrl.replace(/\/$/, '') : 'http://127.0.0.1:7860';
 
             console.log('[SessionMonitor] Fetching from:', baseUrl);
-            const token = localStorage.getItem('admin_token') || '';
+            const token = getAdminToken() || '';
             const res = await fetch(`${baseUrl}/api/sessions?limit=50`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
