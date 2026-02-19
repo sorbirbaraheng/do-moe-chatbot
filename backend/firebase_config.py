@@ -21,12 +21,25 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# All supported provider key fields
+PROVIDER_KEY_FIELDS = {
+    "groq": "groqKeys",
+    "openai": "openaiKeys",
+    "deepseek": "deepseekKeys",
+    "mistral": "mistralKeys",
+    "together": "togetherKeys",
+    "openrouter": "openrouterKeys",
+}
+
 # Default config if Firestore is not available
+_default_provider_keys = {field: [] for field in PROVIDER_KEY_FIELDS.values()}
+_default_provider_keys["geminiKeys"] = []
+
 DEFAULT_CONFIG = {
     "apiKeys": {
-        "general": {"groqKeys": [], "geminiKeys": []},
-        "school": {"groqKeys": [], "geminiKeys": []},
-        "student": {"groqKeys": [], "geminiKeys": []}
+        "general": {**_default_provider_keys},
+        "school": {**_default_provider_keys},
+        "student": {**_default_provider_keys},
     }
 }
 
@@ -284,4 +297,59 @@ def get_unified_gemini_keys() -> List[str]:
     if all_keys:
         logger.info(f"🔑 Unified mode: {len(all_keys)} Gemini keys from all categories")
     return all_keys
+
+
+def get_provider_keys(provider: str, category: str = "school") -> List[str]:
+    """Get API keys for any provider by name (groq, openai, deepseek, mistral, together, openrouter)"""
+    key_field = PROVIDER_KEY_FIELDS.get(provider)
+    if not key_field:
+        return []
+    
+    loader = get_config_loader()
+    config = loader.get_config()
+    
+    # 1. Try requested category
+    api_keys = config.get("apiKeys", {}).get(category, {})
+    keys = [k for k in api_keys.get(key_field, []) if k and k.strip()]
+    
+    # 2. If empty, try other categories
+    if not keys:
+        for cat in ['general', 'school', 'student']:
+            if cat == category:
+                continue
+            api_keys = config.get("apiKeys", {}).get(cat, {})
+            found = [k for k in api_keys.get(key_field, []) if k and k.strip()]
+            if found:
+                keys.extend(found)
+    
+    return list(set(keys))
+
+
+def get_unified_provider_keys(provider: str) -> List[str]:
+    """Get all keys for a provider from ALL categories (deduplicated)"""
+    # For groq, use existing optimized path
+    if provider == "groq":
+        return get_unified_groq_keys()
+    
+    key_field = PROVIDER_KEY_FIELDS.get(provider)
+    if not key_field:
+        return []
+    
+    loader = get_config_loader()
+    all_keys = []
+    seen = set()
+    
+    for category in ["general", "school", "student"]:
+        config = loader.get_config()
+        api_keys = config.get("apiKeys", {}).get(category, {})
+        keys = api_keys.get(key_field, [])
+        for key in keys:
+            if key and key.strip() and key not in seen:
+                all_keys.append(key)
+                seen.add(key)
+    
+    if all_keys:
+        logger.info(f"🔑 Unified mode: {len(all_keys)} {provider} keys from all categories")
+    return all_keys
+
 

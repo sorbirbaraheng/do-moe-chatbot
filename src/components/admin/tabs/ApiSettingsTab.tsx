@@ -146,6 +146,96 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
                 </div>
             </div>
 
+            {/* === Additional Providers (OpenAI-Compatible) === */}
+            {[
+                { id: 'openai' as const, label: 'OpenAI', model: 'GPT-4o-mini', color: 'emerald', icon: '🤖', keyPrefix: 'sk-' },
+                { id: 'deepseek' as const, label: 'DeepSeek', model: 'DeepSeek-V3', color: 'cyan', icon: '🔮', keyPrefix: 'sk-' },
+                { id: 'mistral' as const, label: 'Mistral', model: 'Mistral-Small', color: 'amber', icon: '🌪️', keyPrefix: '' },
+                { id: 'together' as const, label: 'Together AI', model: 'Llama-3.3-70B', color: 'violet', icon: '🤝', keyPrefix: '' },
+                { id: 'openrouter' as const, label: 'OpenRouter', model: 'Multi-Model', color: 'rose', icon: '🔄', keyPrefix: 'sk-or-' },
+            ].map(provider => {
+                const keysField = `${provider.id}Keys` as keyof typeof draftApiKeys[typeof activeApiCategory];
+                const connectedField = `${provider.id}Connected` as keyof typeof draftApiKeys[typeof activeApiCategory];
+                const keys = (draftApiKeys[activeApiCategory]?.[keysField] as string[] | undefined) || [];
+                const isConnected = draftApiKeys[activeApiCategory]?.[connectedField] as boolean | undefined;
+                const colorMap: Record<string, string> = {
+                    emerald: 'bg-emerald-500', cyan: 'bg-cyan-500', amber: 'bg-amber-500',
+                    violet: 'bg-violet-500', rose: 'bg-rose-500'
+                };
+                return (
+                    <div key={provider.id} className="bg-white p-5 rounded-2xl border border-black/5">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className={`w-9 h-9 rounded-xl ${colorMap[provider.color]} flex items-center justify-center text-white text-base`}>
+                                    {provider.icon}
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-[#1D1D1F] text-[15px]">{provider.label}</h3>
+                                    <p className="text-[11px] text-black/40">{provider.model}</p>
+                                </div>
+                            </div>
+                            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${keys.length > 0 && isConnected ? 'bg-green-100 text-green-700' :
+                                keys.length > 0 ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-400'
+                                }`}>
+                                <div className={`w-1.5 h-1.5 rounded-full ${keys.length > 0 && isConnected ? 'bg-green-500' :
+                                    keys.length > 0 ? 'bg-yellow-500' : 'bg-gray-300'
+                                    }`} />
+                                {keys.length > 0 && isConnected ? 'Connected' : keys.length > 0 ? `${keys.length} key${keys.length > 1 ? 's' : ''}` : 'No Key'}
+                            </div>
+                        </div>
+
+                        <div className="mt-3 space-y-2">
+                            {keys.map((key: string, index: number) => (
+                                <div key={`${provider.id}-${index}`} className="flex gap-2">
+                                    <input
+                                        type="password"
+                                        autoComplete="new-password"
+                                        value={key}
+                                        onChange={(e) => {
+                                            const newKeys = [...keys];
+                                            newKeys[index] = e.target.value;
+                                            setDraftApiKeys(prev => ({
+                                                ...prev,
+                                                [activeApiCategory]: { ...prev[activeApiCategory], [keysField]: newKeys }
+                                            }));
+                                        }}
+                                        placeholder={provider.keyPrefix ? `${provider.keyPrefix}...` : 'API Key...'}
+                                        className="flex-1 px-3 py-2.5 bg-[#F5F5F7] border-none rounded-xl text-[13px] font-mono focus:ring-2 focus:ring-blue-500/20"
+                                    />
+                                    <button
+                                        onClick={() => {
+                                            const newKeys = keys.filter((_: string, i: number) => i !== index);
+                                            setDraftApiKeys(prev => ({
+                                                ...prev,
+                                                [activeApiCategory]: { ...prev[activeApiCategory], [keysField]: newKeys }
+                                            }));
+                                        }}
+                                        className="w-9 h-[42px] flex items-center justify-center bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors text-sm"
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+
+                        <button
+                            onClick={() => {
+                                setDraftApiKeys(prev => ({
+                                    ...prev,
+                                    [activeApiCategory]: {
+                                        ...prev[activeApiCategory],
+                                        [keysField]: [...keys, '']
+                                    }
+                                }));
+                            }}
+                            className="w-full mt-3 py-2 border border-dashed border-black/15 rounded-xl text-black/35 text-xs font-bold hover:bg-black/5 transition-all flex items-center justify-center gap-1.5"
+                        >
+                            + Add {provider.label} Key
+                        </button>
+                    </div>
+                );
+            })}
+
             {/* Gemini API Keys (Backup) */}
             <div className="bg-white p-6 rounded-2xl border border-black/5">
                 <div className="flex items-center justify-between mb-4">
@@ -287,7 +377,7 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
                 </div>
 
                 <p className="text-xs text-black/40 mt-3">
-                    ℹ️ ระบบจะสลับไปใช้ Key ถัดไปอัตโนมัติเมื่อโควต้าเต็ม (429 Error) API ของ Groq ใช้นโยบายแบบ Priority-1, Gemini ใช้ Priority-2
+                    ℹ️ ระบบจะลอง Provider ตามลำดับ: Groq → OpenAI → DeepSeek → Mistral → Together → OpenRouter → Gemini (backup สุดท้าย)
                 </p>
             </div>
 
@@ -588,12 +678,17 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
 
             {/* Info Card */}
             <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-6 rounded-2xl border border-blue-100">
-                <h4 className="font-bold text-[#1D1D1F] mb-2">💡 วิธีใช้งาน</h4>
-                <ul className="text-sm text-black/60 space-y-2">
-                    <li>• <strong>Groq API (Primary):</strong> แรงเร็ว แต่มี Limit แนะนำให้ใส่ 2-3 Keys</li>
-                    <li>• <strong>Gemini API (Backup):</strong> ใช้เป็นตัวสำรองอัตโนมัติเมื่อ Groq ล่ม</li>
-
+                <h4 className="font-bold text-[#1D1D1F] mb-2">💡 วิธีใช้งาน — Multi-Provider</h4>
+                <ul className="text-sm text-black/60 space-y-1.5">
+                    <li>• <strong>Groq (ฟรี):</strong> เร็วมาก ⚡ แนะนำเป็น Primary</li>
+                    <li>• <strong>OpenAI:</strong> GPT-4o-mini คุณภาพสูง (เสียเงิน)</li>
+                    <li>• <strong>DeepSeek (ถูก):</strong> ราคาประหยัด คุณภาพดี 🇨🇳</li>
+                    <li>• <strong>Mistral:</strong> เร็วดี รองรับหลายภาษา 🇫🇷</li>
+                    <li>• <strong>Together AI (ฟรีมี):</strong> Llama 3.3 70B โอเพ่นซอร์ส</li>
+                    <li>• <strong>OpenRouter:</strong> Gateway ใช้ได้ทุกโมเดล 🔄</li>
+                    <li>• <strong>Gemini (ฟรี):</strong> Backup ตัวสุดท้ายเมื่อทุกค่ายล่ม</li>
                 </ul>
+                <p className="text-xs text-black/40 mt-2">ระบบจะลองค่ายตามลำดับ Priority อัตโนมัติ ถ้าค่ายแรกล่มจะสลับไปค่ายถัดไปทันที</p>
             </div>
         </div >
     );

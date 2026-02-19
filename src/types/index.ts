@@ -17,5 +17,8 @@ export type {
     AdminConfig,
     GeminiTestResult,
     RagTestResult,
-    GroqTestResult,
+    ProviderTestResult,
 } from './admin.types';
+
+// Backward compatibility alias
+export type { ProviderTestResult as GroqTestResult } from './admin.types';
