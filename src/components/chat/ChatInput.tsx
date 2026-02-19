@@ -12,7 +12,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { MOE_COLORS } from '../constants';
+import { MOE_COLORS } from '../../constants';
 
 interface ChatInputProps {
   onSend: (message: string, imageData: string | null) => void;

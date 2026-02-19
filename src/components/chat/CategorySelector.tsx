@@ -1,6 +1,6 @@
 import React from 'react';
-import { Category } from '../types';
-import { MOE_COLORS } from '../constants';
+import { Category } from '../../types';
+import { MOE_COLORS } from '../../constants';
 
 interface CategorySelectorProps {
   selected: Category;

@@ -14,10 +14,10 @@
  */
 
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import CategorySelector from './components/CategorySelector';
-import ChatInput from './components/ChatInput';
+import CategorySelector from './components/chat/CategorySelector';
+import ChatInput from './components/chat/ChatInput';
 import { getAdminToken, clearAdminSession } from './services/adminAuth';
-import MobileMenu from './components/MobileMenu';
+import MobileMenu from './components/layout/MobileMenu';
 import { Category, Message, User } from './types';
 import { chatService, ChatSession } from './services/chatService';
 import { MOE_COLORS, COMMON_QUERIES } from './constants';
@@ -30,9 +30,9 @@ type View = 'home' | 'login' | 'chat';
 
 type GeminiServiceModule = typeof import('./services/geminiService');
 
-const MessageBubble = lazy(() => import('./components/MessageBubble'));
-const LandingPage = lazy(() => import('./components/LandingPage'));
-const LoginPage = lazy(() => import('./components/LoginPage'));
+const MessageBubble = lazy(() => import('./components/chat/MessageBubble'));
+const LandingPage = lazy(() => import('./components/pages/LandingPage'));
+const LoginPage = lazy(() => import('./components/pages/LoginPage'));
 const AdminPanel = lazy(() => import('./components/admin/AdminPanel'));
 const AdminLogin = lazy(() => import('./components/admin/AdminLogin'));
 

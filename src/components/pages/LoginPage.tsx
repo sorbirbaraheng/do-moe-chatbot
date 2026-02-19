@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { MOE_COLORS } from '../constants';
-import { User } from '../types';
-import { useAuth } from '../contexts/AuthContext';
+import { MOE_COLORS } from '../../constants';
+import { User } from '../../types';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface LoginPageProps {
   onLogin: (user: User) => void;
