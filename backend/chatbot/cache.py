@@ -67,10 +67,13 @@ class SemanticCache:
             if context:
                 from qdrant_client.models import Filter, FieldCondition, MatchValue
                 conditions = []
-                ctx_province = context.get("province") or "__none__"
-                ctx_year = context.get("year") or "__none__"
-                conditions.append(FieldCondition(key="ctx_province", match=MatchValue(value=ctx_province)))
-                conditions.append(FieldCondition(key="ctx_year", match=MatchValue(value=ctx_year)))
+                ctx = self._normalize_context(context)
+                conditions.append(FieldCondition(key="ctx_province", match=MatchValue(value=ctx["province"])))
+                conditions.append(FieldCondition(key="ctx_year", match=MatchValue(value=ctx["year"])))
+                conditions.append(FieldCondition(key="ctx_region", match=MatchValue(value=ctx["region"])))
+                conditions.append(FieldCondition(key="ctx_district", match=MatchValue(value=ctx["district"])))
+                conditions.append(FieldCondition(key="ctx_scope", match=MatchValue(value=ctx["scope"])))
+                conditions.append(FieldCondition(key="ctx_school_name", match=MatchValue(value=ctx["school_name"])))
                 query_filter = Filter(must=conditions)
             
             # Use new query_points API (qdrant-client >= 1.7.0)
@@ -112,12 +115,13 @@ class SemanticCache:
 
             payload = {"query": query, "response": response, "timestamp": time.time()}
             # Store context in payload for filtering
-            if context:
-                payload["ctx_province"] = context.get("province") or "__none__"
-                payload["ctx_year"] = context.get("year") or "__none__"
-            else:
-                payload["ctx_province"] = "__none__"
-                payload["ctx_year"] = "__none__"
+            ctx = self._normalize_context(context)
+            payload["ctx_province"] = ctx["province"]
+            payload["ctx_year"] = ctx["year"]
+            payload["ctx_region"] = ctx["region"]
+            payload["ctx_district"] = ctx["district"]
+            payload["ctx_scope"] = ctx["scope"]
+            payload["ctx_school_name"] = ctx["school_name"]
 
             self.client.upsert(
                 collection_name=self.collection_name,
@@ -131,6 +135,18 @@ class SemanticCache:
             )
         except Exception as e:
             logger.warning(f"Cache save failed: {e}")
+
+    def _normalize_context(self, context: Optional[dict]) -> dict:
+        """Normalize context fields for stable cache filtering."""
+        context = context or {}
+        return {
+            "province": str(context.get("province") or "__none__"),
+            "year": str(context.get("year") or "__none__"),
+            "region": str(context.get("region") or "__none__"),
+            "district": str(context.get("district") or "__none__"),
+            "scope": str(context.get("scope") or "__none__"),
+            "school_name": str(context.get("school_name") or "__none__"),
+        }
 
 
 class HybridCache:
@@ -172,7 +188,11 @@ class HybridCache:
         if context:
             p = context.get("province") or "none"
             y = context.get("year") or "none"
-            ctx_suffix = f":{p}:{y}"
+            r = context.get("region") or "none"
+            d = context.get("district") or "none"
+            s = context.get("scope") or "none"
+            sch = context.get("school_name") or "none"
+            ctx_suffix = f":{p}:{y}:{r}:{d}:{s}:{sch}"
         hash_val = hashlib.md5((normalized + ctx_suffix).encode()).hexdigest()[:16]
         return f"domoe:cache:{hash_val}"
     
