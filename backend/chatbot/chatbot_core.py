@@ -39,7 +39,7 @@ from .types import (
     QueryIntent, QueryLevel, ParsedQuery, SearchResult
 )
 from .constants import COLLECTION_NAMES
-from .constants import COLLECTIONS, REGIONS, THAI_PROVINCES
+from .constants import COLLECTIONS, REGIONS, THAI_PROVINCES, PROVINCE_ALIASES
 from .security import input_sanitizer
 from .llm import MultiProviderLLM
 from .cache import HybridCache
@@ -628,14 +628,84 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
 
         return False
 
-    def _get_cache_context(self):
-        """Build cache context dict from memory (province + year) for context-aware caching."""
-        ctx = {}
+    def _get_cache_context(self, message: str = ""):
+        """Build cache context dict for safe multi-user caching.
+
+        Priority: explicit scope in current message > memory fallback.
+        """
+        ctx: Dict[str, str] = {}
+        msg = (message or "").strip()
+
+        # Normalize Thai numerals for year extraction
+        thai_to_arabic = str.maketrans("๐๑๒๓๔๕๖๗๘๙", "0123456789")
+        msg_norm = msg.translate(thai_to_arabic)
+
+        # Explicit nationwide scope
+        is_country = any(k in msg for k in ["ทั่วประเทศ", "ทั้งประเทศ", "ระดับประเทศ"])
+        if is_country:
+            ctx["scope"] = "country"
+
+        # Extract explicit region from message
+        for region_name in REGIONS.keys():
+            if region_name == "ภาคอีสาน":
+                continue  # alias; keep canonical region names first
+            if region_name in msg:
+                ctx["region"] = region_name
+                ctx["scope"] = "region"
+                break
+
+        # Extract explicit province
+        # Prefer deterministic match after keyword "จังหวัด" to avoid false positives.
+        province_candidate = None
+        if "จังหวัด" in msg:
+            tail = msg.split("จังหวัด", 1)[1].strip()
+            for prov in sorted(THAI_PROVINCES, key=len, reverse=True):
+                if tail.startswith(prov):
+                    province_candidate = prov
+                    break
+            if not province_candidate:
+                for alias, full_name in sorted(PROVINCE_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
+                    if tail.startswith(alias):
+                        province_candidate = full_name
+                        break
+        else:
+            # Fallback: direct province mention in sentence
+            for prov in sorted(THAI_PROVINCES, key=len, reverse=True):
+                if prov in msg:
+                    province_candidate = prov
+                    break
+
+        if province_candidate:
+            ctx["province"] = province_candidate
+            ctx["scope"] = "province"
+
+        # Extract year (supports 25xx or short 2-digit after ปี/พ.ศ.)
+        year_match = re.search(r"(?:ปี|พ\.?ศ\.?)\s*(25\d{2}|\d{2})", msg_norm)
+        if year_match:
+            year_raw = year_match.group(1)
+            if len(year_raw) == 2:
+                year_raw = f"25{year_raw}"
+            ctx["year"] = year_raw
+
+        # If current message is broad scope, avoid leaking narrow scope from memory.
+        is_broad_scope_query = any(k in msg for k in ["จังหวัดไหน", "อำเภอไหน", "ภาค", "ทั่วประเทศ", "ระดับประเทศ", "ทั้งประเทศ", "อันดับ"])
+
+        # Memory fallback (only for missing keys)
         if self.memory:
-            if self.memory.last_province:
+            if not is_broad_scope_query and self.memory.last_district and "district" not in ctx:
+                ctx["district"] = self.memory.last_district
+                ctx.setdefault("scope", "district")
+            if not is_broad_scope_query and self.memory.last_province and "province" not in ctx:
                 ctx["province"] = self.memory.last_province
-            if self.memory.last_year:
-                ctx["year"] = self.memory.last_year
+                ctx.setdefault("scope", "province")
+            if self.memory.last_region and "region" not in ctx and "province" not in ctx and not is_country:
+                ctx["region"] = self.memory.last_region
+                ctx.setdefault("scope", "region")
+            if self.memory.last_year and "year" not in ctx:
+                ctx["year"] = str(self.memory.last_year)
+            if hasattr(self.memory, 'last_school_name') and self.memory.last_school_name and "school_name" not in ctx:
+                ctx["school_name"] = str(self.memory.last_school_name)
+
         return ctx or None
 
     # =========================================================================
@@ -767,13 +837,14 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         if is_school_specific_query:
             logger.info(f"🏫 School-specific query detected (school_name: {self.memory.last_school_name}) - skipping cache")
         
-        # Cache context = function reading fresh province/year from memory
-        _cache_ctx = self._get_cache_context
+        # Cache context = evaluate using current message + memory
+        def _cache_ctx() -> Optional[Dict[str, str]]:
+            return self._get_cache_context(message)
         
         # Check Semantic Cache (disabled for testing)
         if DEBUG_DISABLE_CACHE:
             logger.info("🔧 Cache DISABLED by env (ENABLE_SEMANTIC_CACHE=0)")
-        elif not is_school_specific_query and self.cache:
+        elif not is_school_specific_query and self.cache and not was_coreference_resolved:
             cached_response = self.cache.check(message, context=_cache_ctx())
             if cached_response:
                 # CRITICAL: Still update memory on cache hit so follow-up queries retain context
@@ -2073,7 +2144,7 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             yield from self._handle_advanced_search(parsed, history)
             return
 
-        # Comparison queries - use SchoolSearchEngine for accurate counts
+        # Comparison queries - detect metric and use correct data source
         if parsed.intent == QueryIntent.COMPARE:
             provinces_found = []
             for province in THAI_PROVINCES:
@@ -2081,51 +2152,80 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     provinces_found.append(province)
             
             if len(provinces_found) >= 2:
-                # Use SchoolSearchEngine for accurate school counts
-                school_engine = SchoolSearchEngine(self.qdrant_client)
+                # Detect what metric is being compared
+                is_student_compare = any(kw in query_lower for kw in ["นักเรียน", "เด็ก", "ผู้เรียน"])
+                is_teacher_compare = any(kw in query_lower for kw in ["ครู", "บุคลากร", "อาจารย์"])
                 synthesizer = ResponseSynthesizer()
-                
+
                 comparison_data = {
                     "query_type": "compare",
+                    "metric": "students" if is_student_compare else ("teachers" if is_teacher_compare else "schools"),
                     "provinces": []
                 }
-                
+
                 for prov in provinces_found:
-                    count = school_engine.count_schools(province=prov, agency=parsed.agency)
+                    try:
+                        if is_student_compare:
+                            result = self.llm_agent.tool_executor._count_students(
+                                province=prov, school_name=None, region=None, district=None,
+                                grade=None, gender=None, year=getattr(parsed, 'year', None)
+                            )
+                            count = result.get("total_count", 0) if isinstance(result, dict) else 0
+                        elif is_teacher_compare:
+                            result = self.llm_agent.tool_executor._count_teachers(
+                                province=prov, school_name=None, region=None, district=None,
+                                gender=None, person_type=None, year=getattr(parsed, 'year', None)
+                            )
+                            count = result.get("total_count", 0) if isinstance(result, dict) else 0
+                        else:
+                            school_engine = SchoolSearchEngine(self.qdrant_client)
+                            count = school_engine.count_schools(province=prov, agency=parsed.agency)
+                    except Exception as _ce:
+                        logger.warning(f"⚠️ Comparison count error for {prov}: {_ce}")
+                        count = 0
+
                     comparison_data["provinces"].append({
                         "province": prov,
                         "count": count
                     })
-                
+
                 # Sort by count descending
                 comparison_data["provinces"] = sorted(
-                    comparison_data["provinces"], 
-                    key=lambda x: x['count'], 
+                    comparison_data["provinces"],
+                    key=lambda x: x['count'],
                     reverse=True
                 )
-                
-                # Generate response using LLM
-                llm_response = synthesizer.synthesize("COMPARE", comparison_data, message)
-                
-                if llm_response:
-                    history[-1]["content"] = llm_response
+
+                # Metric label
+                metric_label = "นักเรียน" if is_student_compare else ("ครู" if is_teacher_compare else "โรงเรียน")
+                unit = "คน" if (is_student_compare or is_teacher_compare) else "แห่ง"
+
+                # If all counts are 0, data retrieval failed — skip and let LLM agent handle
+                if all(p["count"] == 0 for p in comparison_data["provinces"]):
+                    logger.warning(f"⚠️ All comparison counts are 0, skipping comparison path")
+                    # Fall through to LLM agent path below
                 else:
-                    # Fallback response
-                    response_text = "📊 **ผลการเปรียบเทียบจำนวนโรงเรียน**\n\n"
-                    for i, p in enumerate(comparison_data["provinces"], 1):
-                        response_text += f"{i}. **{p['province']}**: {p['count']:,} โรง\n"
-                    
-                    if len(comparison_data["provinces"]) >= 2:
-                        first = comparison_data["provinces"][0]
-                        second = comparison_data["provinces"][1]
-                        diff = first['count'] - second['count']
+                    # Build formatted response directly (skip LLM synthesizer which is unreliable for comparison)
+                    provinces_sorted = comparison_data["provinces"]
+                    first = provinces_sorted[0]
+                    second = provinces_sorted[1] if len(provinces_sorted) >= 2 else None
+
+                    response_text = f"📊 **เปรียบเทียบจำนวน{metric_label}**\n\n"
+                    response_text += f"| จังหวัด | จำนวน{metric_label} |\n|--------|-------:|\n"
+                    for p in provinces_sorted:
+                        response_text += f"| **{p['province']}** | {p['count']:,} {unit} |\n"
+
+                    if second and first["count"] > 0:
+                        diff = first["count"] - second["count"]
+                        pct = round(diff / second["count"] * 100, 1) if second["count"] > 0 else 0
                         if diff > 0:
-                            response_text += f"\n✨ **{first['province']}** มีมากกว่า **{second['province']}** อยู่ {diff:,} โรง"
-                    
+                            response_text += f"\n✨ **{first['province']}** มีมากกว่า **{second['province']}** อยู่ **{diff:,} {unit}** ({pct}%) ครับ"
+                        else:
+                            response_text += f"\n🔁 จำนวน{metric_label}ใกล้เคียงกันครับ"
+
                     history[-1]["content"] = response_text
-                
-                self.cache.save(message, history[-1]["content"], context=self._get_cache_context())
-                return None  # Already handled
+                    self.cache.save(message, history[-1]["content"], context=self._get_cache_context())
+                    return None  # Already handled
             else:
                 collection_name = self.collections.get(parsed.level.value)
                 if not collection_name:
