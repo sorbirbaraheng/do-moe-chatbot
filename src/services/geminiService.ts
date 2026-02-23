@@ -1551,3 +1551,52 @@ export const testGroqConnection = async (apiKey: string, category: string): Prom
     return { success: false, message: error.message };
   }
 };
+
+// Generic test for OpenAI-compatible providers
+const PROVIDER_ENDPOINTS: Record<string, { url: string; model: string; label: string }> = {
+  openai: { url: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini', label: 'OpenAI' },
+  deepseek: { url: 'https://api.deepseek.com/chat/completions', model: 'deepseek-chat', label: 'DeepSeek' },
+  mistral: { url: 'https://api.mistral.ai/v1/chat/completions', model: 'mistral-small-latest', label: 'Mistral' },
+  together: { url: 'https://api.together.xyz/v1/chat/completions', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', label: 'Together AI' },
+  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', model: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter' },
+};
+
+export const testProviderConnection = async (providerId: string, apiKey: string): Promise<{ success: boolean; message: string; provider: string }> => {
+  if (!apiKey) return { success: false, message: 'กรุณาระบุ API Key', provider: providerId };
+
+  const endpoint = PROVIDER_ENDPOINTS[providerId];
+  if (!endpoint) return { success: false, message: `Unknown provider: ${providerId}`, provider: providerId };
+
+  try {
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    };
+    // OpenRouter requires additional headers
+    if (providerId === 'openrouter') {
+      headers['HTTP-Referer'] = window.location.origin;
+      headers['X-Title'] = 'DO-Moe ICT Hub';
+    }
+
+    const response = await fetch(endpoint.url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: endpoint.model,
+        messages: [{ role: 'user', content: 'Say OK' }],
+        max_tokens: 3,
+      }),
+    });
+
+    if (response.ok) {
+      return { success: true, message: `✅ ${endpoint.label} เชื่อมต่อสำเร็จ!`, provider: providerId };
+    } else {
+      const errorData = await response.json().catch(() => ({}));
+      const errMsg = errorData?.error?.message || `Error ${response.status}`;
+      return { success: false, message: `${endpoint.label}: ${errMsg}`, provider: providerId };
+    }
+  } catch (error: any) {
+    return { success: false, message: `${endpoint.label}: ${error.message}`, provider: providerId };
+  }
+};
+

@@ -25,6 +25,32 @@
     "expect": {"tool": "ranking", "params": {"metric": "teachers", "order": "most", "scope": "province", "region": "ภาคกลาง"}}
   },
   {
+    "id": "route-ranking-region-level",
+    "kind": "route_guard",
+    "question": "ภาคไหนมีนักเรียนมากที่สุด",
+    "tool": "ranking",
+    "params": {"metric": "students", "order": "most"},
+    "expect": {"tool": "ranking", "params": {"metric": "students", "order": "most", "scope": "region"}},
+    "forbid": {"params_keys": ["province", "region"]}
+  },
+  {
+    "id": "route-ranking-country-level-province-scope",
+    "kind": "route_guard",
+    "question": "ระดับประเทศจังหวัดไหนมีครูมากที่สุด",
+    "tool": "ranking",
+    "params": {"metric": "teachers", "order": "most"},
+    "expect": {"tool": "ranking", "params": {"metric": "teachers", "order": "most", "scope": "province"}},
+    "forbid": {"params_keys": ["province"]}
+  },
+  {
+    "id": "route-count-students-region",
+    "kind": "route_guard",
+    "question": "ภาคเหนือมีนักเรียนกี่คน",
+    "tool": "count_students",
+    "params": {},
+    "expect": {"tool": "count_students", "params": {"region": "ภาคเหนือ"}}
+  },
+  {
     "id": "route-filter-fill-operator-value",
     "kind": "route_guard",
     "question": "โรงเรียนในอำเภอกะพ้อ จังหวัดปัตตานี นักเรียนน้อยกว่า 120 คน",
@@ -138,5 +164,45 @@
       }
     },
     "expect": {"tool": null}
+  },
+  {
+    "id": "route-ranking-teacher-person-type",
+    "kind": "route_guard",
+    "question": "จังหวัดไหนมีครูอัตราจ้างน้อยที่สุด",
+    "tool": "ranking",
+    "params": {"metric": "teachers", "order": "least", "scope": "province"},
+    "expect": {"tool": "ranking", "params": {"metric": "teachers", "order": "least", "scope": "province", "person_type": "ลูกจ้างชั่วคราว"}}
+  },
+  {
+    "id": "route-ranking-ratio-understaffed",
+    "kind": "route_guard",
+    "question": "จังหวัดไหนครูดูแลเด็กไม่ทั่วถึงที่สุด",
+    "tool": "ranking",
+    "params": {"metric": "teachers", "order": "most", "scope": "province"},
+    "expect": {"tool": "ranking", "params": {"metric": "ratio", "order": "most", "scope": "province"}}
+  },
+  {
+    "id": "followup-school-detail-to-count-teachers",
+    "kind": "followup_active_query",
+    "question": "แล้วมีครูทั้งหมดกี่คน เป็นข้าราชการกี่คน",
+    "context": {
+      "last_active_query": {
+        "name": "get_school_full_details",
+        "params": {"school_name": "สวนกุหลาบวิทยาลัย ธนบุรี", "province": "กรุงเทพมหานคร"}
+      }
+    },
+    "expect": {"tool": "count_teachers", "params": {"school_name": "สวนกุหลาบวิทยาลัย ธนบุรี", "province": "กรุงเทพมหานคร", "person_type": "ข้าราชการครู"}}
+  },
+  {
+    "id": "followup-ranking-switch-order",
+    "kind": "followup_active_query",
+    "question": "แล้วน้อยที่สุดล่ะ",
+    "context": {
+      "last_active_query": {
+        "name": "ranking",
+        "params": {"metric": "students", "order": "most", "scope": "province", "region": "ภาคเหนือ", "limit": 5}
+      }
+    },
+    "expect": {"tool": "ranking", "params": {"metric": "students", "order": "least", "scope": "province", "region": "ภาคเหนือ", "limit": 5}}
   }
 ]

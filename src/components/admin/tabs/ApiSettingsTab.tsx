@@ -11,6 +11,7 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
     handleTestGroq,
     handleTestRAG,
     handleTestFlask,
+    handleTestProvider,
     handleOptimizeQueue,
     isTesting,
     keyStatuses,
@@ -232,6 +233,50 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
                         >
                             + Add {provider.label} Key
                         </button>
+
+                        {/* Test Connection Button */}
+                        {keys.some((k: string) => k.trim()) && (
+                            <button
+                                onClick={() => handleTestProvider(provider.id, activeApiCategory)}
+                                disabled={isTesting === provider.id}
+                                className={`w-full mt-2 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${isConnected
+                                        ? 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
+                                        : `bg-gradient-to-r from-${provider.color}-500 to-${provider.color}-600 text-white shadow-sm hover:shadow-md`
+                                    } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                style={!isConnected ? {
+                                    background: provider.color === 'emerald' ? 'linear-gradient(to right, #10b981, #059669)' :
+                                        provider.color === 'cyan' ? 'linear-gradient(to right, #06b6d4, #0891b2)' :
+                                            provider.color === 'amber' ? 'linear-gradient(to right, #f59e0b, #d97706)' :
+                                                provider.color === 'violet' ? 'linear-gradient(to right, #8b5cf6, #7c3aed)' :
+                                                    'linear-gradient(to right, #f43f5e, #e11d48)',
+                                    color: 'white'
+                                } : {}}
+                            >
+                                {isTesting === provider.id ? (
+                                    <>
+                                        <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                        </svg>
+                                        Testing...
+                                    </>
+                                ) : isConnected ? (
+                                    <>
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        ✓ Connected — Test Again
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                                        </svg>
+                                        Test {provider.label} Connection
+                                    </>
+                                )}
+                            </button>
+                        )}
                     </div>
                 );
             })}
@@ -381,105 +426,6 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
                 </p>
             </div>
 
-            {/* RAG Connection Section */}
-            <div className="bg-white p-6 rounded-2xl border border-black/5 mt-6">
-                <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-purple-500 flex items-center justify-center">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-5 h-5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
-                            </svg>
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-bold text-[#1D1D1F]">RAG Connection</h3>
-                            <p className="text-xs text-black/50">Connect to external Knowledge Base</p>
-                        </div>
-                    </div>
-                    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${draftApiKeys[activeApiCategory].ragConnected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-                        <div className={`w-2 h-2 rounded-full ${draftApiKeys[activeApiCategory].ragConnected ? 'bg-green-500' : 'bg-red-500'} ${isTesting === 'rag' ? 'animate-ping' : ''}`}></div>
-                        <span className="text-xs font-bold">{draftApiKeys[activeApiCategory].ragConnected ? 'Connected' : 'Disconnected'}</span>
-                    </div>
-                </div>
-
-                <div className="space-y-3">
-                    <label className="text-xs font-bold text-black/40 uppercase tracking-wider ml-1">RAG Endpoint URL</label>
-                    <input
-                        type="text"
-                        name="rag_endpoint_nomoreautofill"
-                        autoComplete="off"
-                        value={draftApiKeys[activeApiCategory].ragEndpoint}
-                        onChange={(e) => updateDraftApiKey(activeApiCategory, 'ragEndpoint', e.target.value)}
-                        placeholder={`https://your-rag-server.com/api/${activeApiCategory}`}
-                        className="w-full px-4 py-3 bg-[#F5F5F7] border-none rounded-xl text-[14px] font-medium focus:ring-2 focus:ring-purple-500/20"
-                    />
-
-                    <label className="text-xs font-bold text-black/40 uppercase tracking-wider ml-1 mt-2 block">RAG API Key (Optional)</label>
-                    <input
-                        type="password"
-                        name="rag_key_nomoreautofill"
-                        autoComplete="new-password"
-                        value={draftApiKeys[activeApiCategory].ragApiKey}
-                        onChange={(e) => updateDraftApiKey(activeApiCategory, 'ragApiKey', e.target.value)}
-                        placeholder="RAG API Key"
-                        className="w-full px-4 py-3 bg-[#F5F5F7] border-none rounded-xl text-[14px] font-medium focus:ring-2 focus:ring-purple-500/20"
-                    />
-
-                    <div className="grid grid-cols-2 gap-4 mt-2">
-                        <div>
-                            <label className="text-xs font-bold text-black/40 uppercase tracking-wider ml-1 block mb-1">Collection Name</label>
-                            <input
-                                type="text"
-                                value={draftApiKeys[activeApiCategory].ragCollection}
-                                onChange={(e) => updateDraftApiKey(activeApiCategory, 'ragCollection', e.target.value)}
-                                placeholder="เช่น moe_data_school"
-                                className="w-full px-4 py-3 bg-[#F5F5F7] border-none rounded-xl text-[14px] font-medium focus:ring-2 focus:ring-purple-500/20"
-                            />
-                        </div>
-                        <div>
-                            <label className="text-xs font-bold text-black/40 uppercase tracking-wider ml-1 block mb-1">Top K (Context Size)</label>
-                            <input
-                                type="number"
-                                value={draftApiKeys[activeApiCategory].ragTopK}
-                                onChange={(e) => updateDraftApiKey(activeApiCategory, 'ragTopK', parseInt(e.target.value) || 5)}
-                                min="1"
-                                max="20"
-                                className="w-full px-4 py-3 bg-[#F5F5F7] border-none rounded-xl text-[14px] font-medium focus:ring-2 focus:ring-purple-500/20"
-                            />
-                        </div>
-                    </div>
-
-                    <div className="pt-4 mt-2">
-                        <button
-                            onClick={() => handleTestRAG(activeApiCategory)}
-                            disabled={!draftApiKeys[activeApiCategory].ragEndpoint || isTesting === 'rag'}
-                            className="w-full px-6 py-3 bg-purple-600 text-white rounded-xl text-sm font-bold hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-purple-500/10 flex items-center justify-center gap-2"
-                        >
-                            {isTesting === 'rag' ? (
-                                <>
-                                    <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24">
-                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                    </svg>
-                                    Testing Connection...
-                                </>
-                            ) : (
-                                <>
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
-                                    </svg>
-                                    Test RAG Connection
-                                </>
-                            )}
-                        </button>
-                    </div>
-                </div>
-
-                <p className="text-xs text-black/40 mt-3">
-                    ℹ️ RAG endpoint ควรรองรับ `/health` endpoint สำหรับทดสอบการเชื่อมต่อ
-                </p>
-            </div>
-
-
 
             {/* Flask Chatbot API Section (for School/Student) */}
             {(activeApiCategory === 'school' || activeApiCategory === 'student') && (
@@ -522,13 +468,11 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
                                 />
                                 <button
                                     onClick={() => {
-                                        // Auto-detect IP from current browser location
                                         const currentHost = window.location.hostname;
                                         const detectedUrl = currentHost === 'localhost' || currentHost === '127.0.0.1'
                                             ? 'http://127.0.0.1:5001'
                                             : `http://${currentHost}:5001`;
                                         updateDraftApiKey(activeApiCategory, 'flaskApiUrl', detectedUrl);
-                                        // Also update other categories
                                         setDraftApiKeys(prev => ({
                                             ...prev,
                                             school: { ...prev.school, flaskApiUrl: detectedUrl },
@@ -618,63 +562,6 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
                     </button>
                 </div>
             )}
-
-            {/* Sync to Backend Button */}
-            <div className="bg-gradient-to-r from-green-50 to-teal-50 p-6 rounded-2xl border border-green-200">
-                <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500 to-teal-600 flex items-center justify-center">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-5 h-5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
-                            </svg>
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-bold text-[#1D1D1F]">🔄 Sync to Backend</h3>
-                            <p className="text-xs text-black/50">ส่ง API Keys ไปยัง Flask Backend อัตโนมัติ</p>
-                        </div>
-                    </div>
-                </div>
-                <button
-                    onClick={async () => {
-                        try {
-                            // Smart URL detection: auto-switch to LAN IP
-                            let flaskUrl = draftApiKeys.school.flaskApiUrl || 'http://127.0.0.1:5001';
-                            const isLocal = flaskUrl.includes('localhost') || flaskUrl.includes('127.0.0.1');
-                            const isLan = typeof window !== 'undefined' &&
-                                window.location.hostname !== 'localhost' &&
-                                window.location.hostname !== '127.0.0.1';
-
-                            if (isLocal && isLan) {
-                                flaskUrl = `http://${window.location.hostname}:5001`;
-                            }
-
-                            const response = await fetch(`${flaskUrl}/api/sync-config`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ apiKeys: draftApiKeys })
-                            });
-
-                            const data = await response.json();
-                            if (data.success) {
-                                alert(`✅ Synced successfully! Backend (${flaskUrl}) now has your API keys.`);
-                            } else {
-                                alert(`❌ Sync failed: ${data.error}`);
-                            }
-                        } catch (error: any) {
-                            alert(`❌ Could not connect to Backend: ${error.message}\n\nMake sure Flask is running on port 5001.`);
-                        }
-                    }}
-                    className="w-full py-3.5 bg-gradient-to-r from-green-500 to-teal-600 text-white rounded-xl text-sm font-bold hover:from-green-600 hover:to-teal-700 transition-all shadow-lg shadow-green-500/20 flex items-center justify-center gap-2"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                    </svg>
-                    Sync API Keys to Backend
-                </button>
-                <p className="text-xs text-green-700 mt-3">
-                    ℹ️ หลังกดบันทึกแล้ว ให้กดปุ่มนี้เพื่อส่ง API Keys ไปยัง Flask Backend ไม่ต้องแก้ไฟล์ .env อีกต่อไป!
-                </p>
-            </div>
 
             {/* Info Card */}
             <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-6 rounded-2xl border border-blue-100">

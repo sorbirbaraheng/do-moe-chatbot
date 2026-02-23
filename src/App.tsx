@@ -1420,15 +1420,48 @@ const AppContent: React.FC = () => {
                   {messages.length === 0 && (
                     <div className="flex flex-col items-center justify-center min-h-[60vh] pb-20 animate-in fade-in zoom-in-95 duration-1000 ease-out">
 
-                      {/* Unified DO AI Welcome - Apple Liquid Glass */}
-                      <div className="text-center mb-12 relative group">
+                      {/* ── MOBILE: No-box, minimal greeting ── */}
+                      <div className="md:hidden flex flex-col items-center text-center px-4 pt-8 pb-6 w-full">
+                        {/* Small orb icon */}
+                        <div className="w-14 h-14 rounded-[18px] bg-gradient-to-br from-[#7CC5FF] via-[#9B8CFF] to-[#C7A6FF] flex items-center justify-center shadow-lg mb-5">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-7 h-7">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
+                          </svg>
+                        </div>
+                        <h2 className="text-[22px] font-bold text-[#1D1D1F] tracking-tight mb-1">
+                          สวัสดีครับ! ผมคือ <span className="hero-title-accent">น้องดีโอ</span>
+                        </h2>
+                        <p className="text-[13px] text-[#6e6e73] leading-relaxed max-w-[280px]">
+                          ถามได้ทั้งโรงเรียน ครู นักเรียน และสถิติระดับจังหวัด
+                        </p>
+
+                        {/* Pill chips — no boxes, compact */}
+                        <div className="flex flex-wrap justify-center gap-2 mt-5">
+                          {[
+                            { icon: "🏫", text: "กรุงเทพมีโรงเรียนกี่แห่ง" },
+                            { icon: "👨‍🏫", text: "จำนวนครูในกรุงเทพ" },
+                            { icon: "🏆", text: "โรงเรียนที่มีนักเรียนมากที่สุด" },
+                            { icon: "📊", text: "อัตราส่วนครูต่อนักเรียน" },
+                          ].map((item, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => handleSendMessage(item.text, null)}
+                              className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white/70 border border-black/[0.07] text-[13px] font-medium text-[#3a3a3c] active:scale-95 transition-transform shadow-sm"
+                            >
+                              <span className="text-[13px]">{item.icon}</span>
+                              <span>{item.text}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* ── DESKTOP: Full hero glass card ── */}
+                      <div className="hidden md:block text-center mb-12 relative group w-full">
                         {/* Ambient Glow */}
                         <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-[320px] h-[320px] bg-gradient-to-tr from-[#7CC5FF]/35 via-[#9B8CFF]/30 to-[#C7A6FF]/25 rounded-full blur-[90px] opacity-70 group-hover:opacity-100 transition-opacity duration-1000"></div>
 
                         <div className="hero-glass hero-float mx-auto max-w-2xl">
                           <div className="hero-badge">MOE‑One • ศทส. สป.</div>
-
-                          {/* Glass Icon Container */}
                           <div className="hero-orb">
                             <div className="hero-orb-glow"></div>
                             <div className="hero-orb-core">
@@ -1437,8 +1470,7 @@ const AppContent: React.FC = () => {
                               </svg>
                             </div>
                           </div>
-
-                          <h2 className="hero-title text-[30px] md:text-[40px] font-bold text-[#1D1D1F] tracking-[-0.035em] mb-3 leading-tight">
+                          <h2 className="hero-title text-[40px] font-bold text-[#1D1D1F] tracking-[-0.035em] mb-3 leading-tight">
                             สวัสดีครับ! ผมคือ <span className="hero-title-accent">น้องดีโอ</span>
                           </h2>
                           <p className="hero-sub">
@@ -1460,8 +1492,8 @@ const AppContent: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Sample Questions Grid - Glassmorphism Cards */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl px-2">
+                      {/* Sample Questions Grid - Desktop only */}
+                      <div className="hidden md:grid grid-cols-2 gap-4 w-full max-w-2xl px-2">
                         {[
                           { icon: "🏫", text: "กรุงเทพมีโรงเรียนกี่แห่ง" },
                           { icon: "👨‍🏫", text: "จำนวนครูในกรุงเทพ" },
@@ -1479,8 +1511,6 @@ const AppContent: React.FC = () => {
                             <span className="text-[15px] font-semibold text-gray-700 group-hover:text-[#1D1D1F] transition-colors tracking-tight">
                               {item.text}
                             </span>
-
-                            {/* Hover Arrow */}
                             <div className="absolute right-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300">
                               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="#007AFF" className="w-5 h-5">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
@@ -1583,7 +1613,7 @@ const AppContent: React.FC = () => {
 
   const renderContainer = () => {
     return (
-      <div className="relative w-full h-[100dvh] overflow-hidden bg-[#F2F2F7]">
+      <div className="relative w-full h-[100dvh] overflow-hidden bg-[#EEF0F8]">
         {previousView && renderViewContent(previousView, true)}
         {renderViewContent(view, false)}
       </div>
@@ -1596,13 +1626,12 @@ const AppContent: React.FC = () => {
       {uiToast && (
         <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[120] pointer-events-none px-4">
           <div
-            className={`rounded-2xl px-4 py-2.5 text-sm font-medium text-white shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl border border-white/20 transition-all duration-300 ${
-              uiToast.type === 'success'
-                ? 'bg-emerald-600/92'
-                : uiToast.type === 'error'
-                  ? 'bg-rose-600/92'
-                  : 'bg-[#1f2937]/88'
-            }`}
+            className={`rounded-2xl px-4 py-2.5 text-sm font-medium text-white shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl border border-white/20 transition-all duration-300 ${uiToast.type === 'success'
+              ? 'bg-emerald-600/92'
+              : uiToast.type === 'error'
+                ? 'bg-rose-600/92'
+                : 'bg-[#1f2937]/88'
+              }`}
           >
             {uiToast.message}
           </div>

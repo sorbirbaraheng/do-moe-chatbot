@@ -398,8 +398,12 @@ def extract_query_structured_via_llm(question: str, llm_client: Any, context: Op
         if c_items:
             context_str = "; ".join(c_items)
 
+    reflection_instruction = ""
+    if context and context.get("reflection_prompt"):
+        reflection_instruction = f"\n\n🚨 [REFLECTION INSTRUCTION]: {context.get('reflection_prompt')}\n🚨 พิจารณาคำค้นหาเดิม และปรับลดเงื่อนไข หรือใช้เครื่องมืออื่นที่ตอบกว้างขึ้น เพื่อให้ได้ผลลัพธ์มาแสดงผล!"
+
     prompt = f"""
-คุณเป็นระบบ Structured Extraction สำหรับแชทบอทข้อมูลการศึกษาไทย
+คุณเป็นระบบ Structured Extraction สำหรับแชทบอทข้อมูลการศึกษาไทย{reflection_instruction}
 
 Context: {context_str}
 User: "{question}"
@@ -427,11 +431,13 @@ Routing hints (อ้างอิงโครงสร้าง Qdrant v5):
   - ⚠️ **DRILL-DOWN — ถ้าถามจังหวัดไหน/อำเภอไหน/ตำบลไหน "ใน" ภาค/จังหวัด:**
     - "จังหวัดไหนในภาคกลางมีนักเรียนมากที่สุด" → ranking(metric=students, order=most, scope=province, region=ภาคกลาง)
     - "จังหวัดไหนในภาคใต้มีครูน้อยที่สุด" → ranking(metric=teachers, order=least, scope=province, region=ภาคใต้)
+    - "อำเภอไหนในภาคใต้มีโรงเรียนเยอะที่สุด" → ranking(metric=schools, order=most, scope=district, region=ภาคใต้)
     - "อำเภอไหนในเชียงใหม่มีโรงเรียนมากที่สุด" → ranking(metric=schools, order=most, scope=district, province=เชียงใหม่)
     - "ตำบลไหนในเชียงใหม่มีนักเรียนเยอะสุด" → ranking(metric=students, order=most, scope=subdistrict, province=เชียงใหม่)
     - "จังหวัดไหนมีครูมากที่สุด" → ranking(metric=teachers, order=most, scope=province) (ทั้งประเทศ)
     - ⚠️ ถ้ามีคำว่า "ภาค" (ภาคเหนือ/ภาคใต้/ภาคกลาง...) → ใส่ region=ชื่อภาค
     - ⚠️ ถ้ามีคำว่า "จังหวัด" + "ใน" + "ภาค" → scope=province, region=ภาค
+    - ⚠️ ถ้ามีคำว่า "อำเภอ" + "ใน" + "ภาค" → scope=district, region=ภาค
 
 ⚡ SCHOOL NAME — กฎสำคัญ:
   - ⚠️ ถ้ามีคำว่า "โรงเรียน[ชื่อ]" เช่น "โรงเรียนเมืองปัตตานี", "โรงเรียนสวนกุหลาบ" → ใช้ get_school_full_details(school_name="เมืองปัตตานี")
@@ -456,7 +462,7 @@ Allowed tools (พร้อมพารามิเตอร์):
 - search_schools (school_name, province, region, district, agency, limit, year)
 - get_school_full_details (school_name, province, year)
 - get_ratio (school_name, province, year)
-- ranking (metric, order, scope, province, region, limit, year)
+- ranking (metric, order, scope, province, region, limit, year, person_type)
 - compare (entity1, entity2, metric, year)
 - search_education_areas (area_name, province, district)
 - get_province_summary (province, year)
@@ -500,6 +506,7 @@ Allowed tools (พร้อมพารามิเตอร์):
 - ⚠️ ถ้าถาม "มีข้าราชการครูกี่คน" → count_teachers(person_type="ข้าราชการครู")
 - ⚠️ ถ้าถาม "โรงเรียน X มีครูอัตราจ้างกี่คน" → count_teachers(school_name="X", person_type="ลูกจ้างชั่วคราว")
 - ⚠️ ถ้าถามแค่ "ครูกี่คน" โดยไม่ระบุประเภท → count_teachers() ไม่ต้องใส่ person_type
+- ⚠️ ถ้าให้จัดอันดับ (ranking) ครูตามประเภท ให้ส่ง person_type ไปใน parameter ของ tool `ranking` ด้วย (เช่น "จังหวัดไหนมีครูอัตราจ้างมากสุด" -> ranking(metric="teachers", person_type="ลูกจ้างชั่วคราว", scope="province"))
 
 แนวทาง multi-step:
 - ถ้าคำถามต้อง "คำนวณเฉลี่ย" หรือ "ต่อโรงเรียน" ให้สร้าง multi_step
@@ -597,9 +604,9 @@ Allowed tools (พร้อมพารามิเตอร์):
                 or tool in ["search_education_areas", "get_education_area_info", "analyze_teacher_distribution", "count_by_system_type"]
             )
         )
-        valid_values = fetch_valid_values() if needs_valid_values else {
-            'person_type': [], 'grade': [], 'agency': [], 'area_name': [], 'district': []
-        }
+        valid_values = fetch_valid_values() if needs_valid_values else {}
+        if not valid_values:
+            valid_values = {'person_type': [], 'grade': [], 'agency': [], 'area_name': [], 'district': []}
 
         # Normalize agency (prefer canonical short code)
         if "agency" in params:
@@ -678,8 +685,8 @@ Allowed tools (พร้อมพารามิเตอร์):
             "clarification_question": clarification_question
         }
 
-    except Exception as e:
-        logger.warning(f"⚠️ Structured extraction failed: {e}")
+    except json.JSONDecodeError as e:
+        logger.warning(f"⚠️ Structured extraction failed (JSON Parse Error): {e}")
         return {
             "tool": None,
             "params": {},
@@ -690,6 +697,20 @@ Allowed tools (พร้อมพารามิเตอร์):
             "multi_step": None,
             "needs_clarification": True,
             "clarification_question": "ขอรายละเอียดเพิ่มอีกนิดได้ไหมครับ เช่น จังหวัด/โรงเรียน/ประเภทข้อมูลที่ต้องการ"
+        }
+    except Exception as e:
+        import traceback
+        logger.error(f"❌ Structured extraction failed (System Error):\n{traceback.format_exc()}")
+        return {
+            "tool": None,
+            "params": {},
+            "intent": None,
+            "confidence": 0.2,
+            "data_required": False,
+            "data_reason": None,
+            "multi_step": None,
+            "needs_clarification": True,
+            "clarification_question": "ขออภัยครับ ระบบประมวลผลคำถามขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง"
         }
 
 

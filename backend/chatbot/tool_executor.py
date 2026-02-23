@@ -1657,8 +1657,60 @@ class ToolExecutor:
                 logger.error(f"❌ Failed to attach student breakdown in count_students: {e}")
 
 
+        # SMART GRADE FALLBACK: If queried a specific grade+school but got 0 results,
+        # re-query WITHOUT grade to discover what grades the school actually offers.
+        if total_count == 0 and grade and school_name:
+            try:
+                logger.info(f"🔍 Grade fallback: re-querying '{school_name}' without grade filter to find available grades...")
+                
+                # Build filter without grade
+                fallback_conditions = []
+                if resolved_school_id:
+                    fallback_conditions.append(
+                        FieldCondition(key="metadata.school_id", match=MatchValue(value=str(resolved_school_id)))
+                    )
+                elif school_name:
+                    sn_clean, _ = self._normalize_school_name(school_name)
+                    fallback_conditions.append(
+                        FieldCondition(key="metadata.school_name", match=MatchText(text=sn_clean))
+                    )
+                if province:
+                    fallback_conditions.append(
+                        FieldCondition(key="metadata.province", match=MatchValue(value=province))
+                    )
+                
+                fb_filter = self._build_filter(fallback_conditions)
+                fb_results = self._scroll_all(
+                    self._get_collection("students"), fb_filter, limit=5000,
+                    with_payload=["metadata.grade", "metadata.count", "metadata.school_name"]
+                )
+                
+                available_grades = {}
+                total_no_grade = 0
+                for r in fb_results:
+                    meta = r.payload.get("metadata", {})
+                    g = meta.get("grade", "")
+                    count = meta.get("count", 0)
+                    if g:
+                        available_grades[g] = available_grades.get(g, 0) + count
+                    total_no_grade += count
+                
+                if available_grades:
+                    logger.info(f"📚 School '{school_name}' offers grades: {list(available_grades.keys())}")
+                    result["grade_not_found"] = True
+                    result["requested_grade"] = grade
+                    result["available_grades"] = available_grades
+                    result["total_students_all_grades"] = total_no_grade
+                    result["ai_summary"] = (
+                        f"โรงเรียน{school_name} ไม่มีชั้น {grade} ในระบบ "
+                        f"โรงเรียนนี้เปิดสอนระดับ: {', '.join(available_grades.keys())} "
+                        f"มีนักเรียนรวมทั้งหมด {total_no_grade:,} คน"
+                    )
+            except Exception as e:
+                logger.error(f"❌ Grade fallback query failed: {e}")
+        
         # FUZZY SUGGESTION FALLBACK
-        if total_count == 0 and school_name:
+        if total_count == 0 and school_name and not result.get("grade_not_found"):
              suggestions = self._suggest_schools(school_name)
              if suggestions:
                  result["found"] = False
@@ -1669,105 +1721,147 @@ class ToolExecutor:
     def _count_schools(self, province: str = None, district: str = None,
                        subdistrict: str = None, agency: str = None, region: str = None, **kwargs) -> Dict[str, Any]:
         """Count schools in an area including subdistrict (ตำบล/แขวง) and region"""
-        
-        # Strip inputs
-        if province: province = province.strip()
-        if region: region = region.strip()
-
-        # FIX: Detect if 'province' parameter is actually a region name
-        from .constants import REGIONS
-        if province and not region:
-            if province.startswith("ภาค") or province in REGIONS:
-                logger.info(f"🗺️ [CountSchools] Detected region in province param: '{province}' -> Moving to region")
-                region = province
-                province = None
-        
-        conditions = []
-        
-        # Region filter - expand to multiple provinces
+        if province:
+            province = province.strip()
         if region:
-            region_provinces = REGIONS.get(region, [])
-            if region_provinces:
-                logger.info(f"🗺️ [CountSchools] Expanding region '{region}' to {len(region_provinces)} provinces")
-                province_conditions = [
-                    FieldCondition(key="metadata.province", match=MatchValue(value=prov))
-                    for prov in region_provinces
-                ]
-                conditions.append(
-                    Filter(should=province_conditions)
-                )
-        elif province:
-            province = self._normalize_province(province)
-            conditions.append(
-                FieldCondition(key="metadata.province", match=MatchValue(value=province))
+            region = region.strip()
+
+        # Detect if "province" accidentally contains a region name
+        if province and not region and (province.startswith("ภาค") or province in REGIONS):
+            logger.info(f"🗺️ [CountSchools] Province param is region -> promote to region: '{province}'")
+            region = province
+            province = None
+
+        agency_norm = self._normalize_agency(agency) if agency else None
+        province_norm = self._normalize_province(province) if province else None
+
+        def _build_conditions(pv: Optional[str], dist: Optional[str], subdist: Optional[str], reg: Optional[str]) -> List[Any]:
+            conds: List[Any] = []
+            if reg:
+                region_provinces = REGIONS.get(reg, [])
+                if region_provinces:
+                    conds.append(
+                        Filter(should=[
+                            FieldCondition(key="metadata.province", match=MatchValue(value=prov))
+                            for prov in region_provinces
+                        ])
+                    )
+            elif pv:
+                conds.append(FieldCondition(key="metadata.province", match=MatchValue(value=pv)))
+            if dist:
+                conds.append(FieldCondition(key="metadata.district", match=MatchText(text=dist)))
+            if subdist:
+                conds.append(FieldCondition(key="metadata.subdistrict", match=MatchText(text=subdist)))
+            if agency_norm:
+                conds.append(FieldCondition(key="metadata.agency", match=MatchValue(value=agency_norm)))
+            return conds
+
+        def _aggregate(rows: List[Any]) -> Dict[str, Any]:
+            unique_keys = set()
+            by_agency: Dict[str, int] = {}
+            by_district: Dict[str, int] = {}
+            total_students_all = 0
+            total_teachers_all = 0
+
+            for r in rows:
+                meta = r.payload.get("metadata", {})
+                sid = meta.get("school_id")
+                name = meta.get("school_name", "ไม่ระบุ")
+                key = sid if sid else f"{name}_{meta.get('province', '')}"
+                if key in unique_keys:
+                    continue
+                unique_keys.add(key)
+
+                agency_name = meta.get("agency", "ไม่ระบุ")
+                by_agency[agency_name] = by_agency.get(agency_name, 0) + 1
+
+                district_name = meta.get("district", "ไม่ระบุ")
+                by_district[district_name] = by_district.get(district_name, 0) + 1
+
+                total_students_all += meta.get("total_students", 0) or 0
+                total_teachers_all += meta.get("total_teachers", 0) or 0
+
+            sorted_districts = dict(sorted(by_district.items(), key=lambda x: x[1], reverse=True)[:10])
+            return {
+                "total_schools": len(unique_keys),
+                "total_students": total_students_all,
+                "total_teachers": total_teachers_all,
+                "by_agency": by_agency,
+                "by_district": sorted_districts if sorted_districts else None,
+            }
+
+        def _query_rows(pv: Optional[str], dist: Optional[str], subdist: Optional[str], reg: Optional[str]) -> List[Any]:
+            scroll_filter = self._build_filter(_build_conditions(pv, dist, subdist, reg))
+            return self._scroll_all(
+                self._get_collection("schools"),
+                scroll_filter,
+                limit=20000,
+                with_payload=[
+                    "metadata.school_id",
+                    "metadata.school_name",
+                    "metadata.province",
+                    "metadata.agency",
+                    "metadata.district",
+                    "metadata.total_students",
+                    "metadata.total_teachers",
+                ],
             )
-        if district:
-            conditions.append(
-                FieldCondition(key="metadata.district", match=MatchText(text=district))
-            )
-        if subdistrict:
-            conditions.append(
-                FieldCondition(key="metadata.subdistrict", match=MatchText(text=subdistrict))
-            )
-        if agency:
-            # Normalize agency abbreviations (e.g. สพฐ → สำนักงานคณะกรรมการการศึกษาขั้นพื้นฐาน)
-            agency = self._normalize_agency(agency)
-            conditions.append(
-                FieldCondition(key="metadata.agency", match=MatchValue(value=agency))
-            )
-        
-        scroll_filter = self._build_filter(conditions)
-        # Increase limit for province-wide school queries
-        # OPTIMIZATION: Only fetch fields needed for grouping/counting
-        results = self._scroll_all(self._get_collection("schools"), scroll_filter, limit=20000,
-                                  with_payload=["metadata.school_id", "metadata.school_name", "metadata.province", "metadata.agency", "metadata.district", "metadata.total_students", "metadata.total_teachers"])
-        
-        # Group by agency (and deduplicate)
-        agencies = {}
-        unique_keys = set()
-        
-        # Aggregation Stats
-        total_students_all = 0
-        total_teachers_all = 0
-        
-        for r in results:
-            meta = r.payload.get("metadata", {})
-            sid = meta.get("school_id")
-            name = meta.get("school_name", "ไม่ระบุ")
-            
-            # Use same fallback key logic
-            key = sid if sid else f"{name}_{meta.get('province','')}"
-            
-            if key in unique_keys:
-                continue
-            unique_keys.add(key)
-            
-            ag = meta.get("agency", "ไม่ระบุ")
-            agencies[ag] = agencies.get(ag, 0) + 1
-            
-            # Also track by district for breakdown
-            dist = meta.get("district", "ไม่ระบุ")
-            if "districts" not in locals():
-                districts = {}
-            districts[dist] = districts.get(dist, 0) + 1
-            
-            # Aggregate Students & Teachers
-            # Note: schools collection metadata has pre-calculated totals
-            total_students_all += meta.get("total_students", 0)
-            total_teachers_all += meta.get("total_teachers", 0)
-        
-        # Sort districts by count and take top 10
-        sorted_districts = sorted(districts.items() if "districts" in locals() else [], 
-                                  key=lambda x: x[1], reverse=True)[:10]
-        
+
+        rows = _query_rows(province_norm, district, subdistrict, region)
+        stats = _aggregate(rows)
+        ai_summary = None
+
+        # Self-healing: if narrow scope has no data, retry with broader scope
+        if stats["total_schools"] == 0 and (district or subdistrict):
+            # Step 1: drop only subdistrict first
+            if subdistrict:
+                broader_rows = _query_rows(province_norm, district, None, region)
+                broader_stats = _aggregate(broader_rows)
+                if broader_stats["total_schools"] > 0:
+                    stats = broader_stats
+                    ai_summary = (
+                        f"ไม่พบข้อมูลตำบล/แขวง '{subdistrict}' ตามเงื่อนไขที่ระบุครับ "
+                        f"แต่พบข้อมูลในระดับอำเภอ '{district}' จำนวน {stats['total_schools']:,} โรงเรียน"
+                    )
+
+            # Step 2: drop district + subdistrict to province/region level
+            if stats["total_schools"] == 0 and district:
+                broader_rows = _query_rows(province_norm, None, None, region)
+                broader_stats = _aggregate(broader_rows)
+                if broader_stats["total_schools"] > 0:
+                    stats = broader_stats
+                    scope_text = f"จังหวัด{province_norm}" if province_norm else (region or "พื้นที่ที่เกี่ยวข้อง")
+                    ai_summary = (
+                        f"ไม่พบข้อมูลอำเภอ/เขต '{district}' ใน{scope_text} ครับ "
+                        f"แต่พบข้อมูล{scope_text}รวม {stats['total_schools']:,} โรงเรียน"
+                    )
+                    # Add fuzzy district suggestions when possible
+                    district_pool = list((broader_stats.get("by_district") or {}).keys())
+                    if district_pool:
+                        ranked = sorted(
+                            district_pool,
+                            key=lambda name: difflib.SequenceMatcher(a=district, b=name).ratio(),
+                            reverse=True,
+                        )
+                        candidates = [name for name in ranked[:3] if name and difflib.SequenceMatcher(a=district, b=name).ratio() >= 0.5]
+                        if candidates:
+                            ai_summary += f" (ชื่ออำเภอที่ใกล้เคียง: {', '.join(candidates)})"
+
         return {
             "tool": "count_schools",
-            "query": {"province": province, "district": district, "agency": agency, "region": region},
-            "total_schools": len(unique_keys),
-            "total_students": total_students_all,
-            "total_teachers": total_teachers_all,
-            "by_agency": agencies,
-            "by_district": dict(sorted_districts) if sorted_districts else None
+            "query": {
+                "province": province_norm,
+                "district": district,
+                "subdistrict": subdistrict,
+                "agency": agency_norm,
+                "region": region,
+            },
+            "total_schools": stats["total_schools"],
+            "total_students": stats["total_students"],
+            "total_teachers": stats["total_teachers"],
+            "by_agency": stats["by_agency"],
+            "by_district": stats["by_district"],
+            "ai_summary": ai_summary,
         }
     
     def _get_ratio(self, school_name: str = None, province: str = None, **kwargs) -> Dict[str, Any]:
@@ -1998,8 +2092,8 @@ class ToolExecutor:
                 kwargs['region'] = region
                 province = None
         
-        # Auto-downgrade scope when region is set but province is missing
-        if region and not province and scope in ["district", "districts"]:
+        # Auto-downgrade scope when region is set but province is missing AND scope is NOT district
+        if region and not province and scope not in ["district", "districts"]:
             logger.info(f"🔄 [Ranking] Downgrading scope from '{scope}' to 'school' (region query without province)")
             scope = "school"
         
@@ -2027,7 +2121,38 @@ class ToolExecutor:
         
         # Aggregate ranking by area (province/district/subdistrict) for students/teachers/ratio
         scope_norm = scope or "school"
-        if metric in ["students", "teachers", "ratio"] and scope_norm in ["province", "provinces", "district", "districts", "subdistrict", "subdistricts"]:
+        if scope_norm in ["region", "regions"]:
+            if metric not in ["schools", "students", "teachers", "ratio"]:
+                return {"error": f"Ranking metric '{metric}' not supported"}
+
+            explicit_region = kwargs.get("region")
+            target_regions: List[str] = []
+            if explicit_region:
+                normalized_region = self._normalize_region(explicit_region) or explicit_region
+                if normalized_region in REGIONS:
+                    target_regions = [normalized_region]
+                else:
+                    return {"error": f"ไม่รู้จักภาค '{explicit_region}'"}
+            else:
+                # Canonical region order (avoid alias duplicates like ภาคอีสาน)
+                canonical_regions = [
+                    "ภาคเหนือ",
+                    "ภาคตะวันออกเฉียงเหนือ",
+                    "ภาคกลาง",
+                    "ภาคตะวันออก",
+                    "ภาคตะวันตก",
+                    "ภาคใต้",
+                ]
+                target_regions = [r for r in canonical_regions if REGIONS.get(r)]
+
+            items = []
+            for region_name in target_regions:
+                region_data = self._get_region_data(region_name, metric)
+                if region_data.get("error"):
+                    continue
+                items.append((region_name, region_data.get("total", 0)))
+
+        elif metric in ["students", "teachers", "ratio"] and scope_norm in ["province", "provinces", "district", "districts", "subdistrict", "subdistricts"]:
             group_key_map = {
                 "province": "province",
                 "provinces": "province",
@@ -2037,8 +2162,8 @@ class ToolExecutor:
                 "subdistricts": "subdistrict",
             }
             group_key = group_key_map.get(scope_norm, "province")
-            if group_key in ["district", "subdistrict"] and not province:
-                return {"error": f"Ranking by {group_key} requires province"}
+            if group_key in ["district", "subdistrict"] and not province and not kwargs.get("region"):
+                return {"error": f"Ranking by {group_key} requires province or region"}
 
             conditions = []
             if kwargs.get("region"):
@@ -2052,33 +2177,70 @@ class ToolExecutor:
             if group_key == "subdistrict" and kwargs.get("district"):
                 conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=kwargs.get("district"))))
 
-            scroll_filter = self._build_filter(conditions)
-            results = self._scroll_all(
-                self._get_collection("schools"),
-                scroll_filter,
-                limit=200000,
-                with_payload=[
-                    "metadata.province",
-                    "metadata.district",
-                    "metadata.subdistrict",
-                    "metadata.total_students",
-                    "metadata.total_teachers",
-                ],
-            )
+            person_type = kwargs.get("person_type")
+            is_teacher_type_ranking = metric == "teachers" and person_type
+            
+            if is_teacher_type_ranking:
+                logger.info(f"📊 [Ranking] Specialized ranking for teachers by person_type: {person_type}")
+                person_type = self._normalize_person_type(person_type)
+                conditions.append(FieldCondition(key="metadata.person_type", match=MatchValue(value=person_type)))
+                scroll_filter = self._build_filter(conditions)
+                results = self._scroll_all(
+                    self._get_collection("teachers"),
+                    scroll_filter,
+                    limit=200000,
+                    with_payload=[
+                        "metadata.province",
+                        "metadata.district",
+                        "metadata.subdistrict",
+                        "metadata.count",
+                    ],
+                )
+            else:
+                scroll_filter = self._build_filter(conditions)
+                results = self._scroll_all(
+                    self._get_collection("schools"),
+                    scroll_filter,
+                    limit=200000,
+                    with_payload=[
+                        "metadata.province",
+                        "metadata.district",
+                        "metadata.subdistrict",
+                        "metadata.total_students",
+                        "metadata.total_teachers",
+                    ],
+                )
 
             aggregates: Dict[str, Dict[str, float]] = {}
             for r in results:
                 meta = r.payload.get("metadata", {})
-                key = meta.get(group_key)
-                if not key:
-                    continue
-                students = meta.get("total_students") or 0
-                teachers = meta.get("total_teachers") or 0
+                
+                # If grouping by district across a whole region, append province to avoid collisions
+                # (e.g. อำเภอเมือง มีในหลายจังหวัด)
+                if group_key == "district" and not province and kwargs.get("region"):
+                    k_dist = meta.get("district")
+                    k_prov = meta.get("province")
+                    if not k_dist or not k_prov:
+                        continue
+                    key = f"{k_prov} - {k_dist}"
+                else:
+                    key = meta.get(group_key)
+                    if not key:
+                        continue
+                        
                 entry = aggregates.setdefault(key, {"students": 0, "teachers": 0})
-                if isinstance(students, (int, float)):
-                    entry["students"] += students
-                if isinstance(teachers, (int, float)):
-                    entry["teachers"] += teachers
+                
+                if is_teacher_type_ranking:
+                    teachers = meta.get("count", 1)  # Teachers collection has count=1 or aggregated count
+                    if isinstance(teachers, (int, float)):
+                        entry["teachers"] += teachers
+                else:
+                    students = meta.get("total_students") or 0
+                    teachers = meta.get("total_teachers") or 0
+                    if isinstance(students, (int, float)):
+                        entry["students"] += students
+                    if isinstance(teachers, (int, float)):
+                        entry["teachers"] += teachers
 
             items = []
             for name, totals in aggregates.items():
@@ -2117,18 +2279,27 @@ class ToolExecutor:
         elif metric == "schools":
             # Ranking provinces by number of schools
             if scope in ["district", "districts"]:
-                if not province:
-                    return {"error": "Ranking by district requires province"}
-                conditions = [FieldCondition(key="metadata.province", match=MatchValue(value=province))]
+                if not province and not kwargs.get("region"):
+                    return {"error": "Ranking by district requires province or region"}
+                    
+                conditions = []
+                if kwargs.get("region"):
+                    provinces = REGIONS.get(kwargs.get("region"), [])
+                    if provinces:
+                        conditions.append(FieldCondition(key="metadata.province", match=MatchAny(any=provinces)))
+                if province:
+                    conditions.append(FieldCondition(key="metadata.province", match=MatchValue(value=province)))
+                
                 # Optional district filter for sub-scope
                 if kwargs.get("district"):
                     conditions.append(FieldCondition(key="metadata.district", match=MatchText(text=kwargs.get("district"))))
+                    
                 scroll_filter = self._build_filter(conditions)
                 results = self._scroll_all(
                     self._get_collection("schools"),
                     scroll_filter,
                     limit=200000,
-                    with_payload=["metadata.district"]
+                    with_payload=["metadata.province", "metadata.district"]
                 )
                 counts = {}
                 for r in results:
@@ -2136,6 +2307,12 @@ class ToolExecutor:
                     dist = meta.get("district")
                     if not dist:
                         continue
+                        
+                    if not province and kwargs.get("region"):
+                        prov = meta.get("province")
+                        if prov:
+                            dist = f"{prov} - {dist}"
+                            
                     counts[dist] = counts.get(dist, 0) + 1
                 items = list(counts.items())
             elif scope in ["subdistrict", "subdistricts"]:
@@ -3250,10 +3427,15 @@ class ToolExecutor:
             }
         }
     
-    def _compare_provinces(self, provinces: str, metrics: str = "all", **kwargs) -> Dict[str, Any]:
+    def _compare_provinces(self, provinces, metrics: str = "all", **kwargs) -> Dict[str, Any]:
         """Compare education data between multiple provinces"""
-        province_list = [p.strip() for p in provinces.split(",")]
+        # Accept both list and comma-separated string
+        if isinstance(provinces, list):
+            province_list = [p.strip() for p in provinces if p]
+        else:
+            province_list = [p.strip() for p in str(provinces).split(",")]
         results = []
+
         
         for prov in province_list:
             prov = self._normalize_province(prov)

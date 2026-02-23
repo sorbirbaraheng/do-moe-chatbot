@@ -333,7 +333,7 @@ const MessageBubble = React.memo<MessageBubbleProps>(({
                 ? 'rounded-tr-[4px] user-bubble-glass text-white selection:bg-white/20 shadow-[0_14px_30px_rgba(88,60,200,0.35)]'
                 : message.isError
                   ? 'rounded-tl-[4px] bg-red-50/90 backdrop-blur-xl border border-red-200/50 text-red-900 shadow-sm'
-                  : 'rounded-tl-[4px] bg-white/70 backdrop-blur-2xl border border-white/80 text-[#1D1D1F] shadow-[0_10px_30px_rgba(0,0,0,0.04)]'}
+                  : 'ai-bubble rounded-tl-[4px] bg-white/70 backdrop-blur-2xl border border-white/80 text-[#1D1D1F] shadow-[0_10px_30px_rgba(0,0,0,0.04)]'}
                 ${copied ? 'ring-2 ring-blue-500/20 scale-[0.99] shadow-none' : ''}
               `}
           >

@@ -406,7 +406,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 <button
                   onClick={() => handleSubmit()}
                   disabled={(!text.trim() && !image) || disabled}
-                  className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all
+                  className={`send-btn w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all
                     ${(!text.trim() && !image) || disabled
                       ? 'bg-black/5 text-[#1D1D1F]/15 cursor-not-allowed'
                       : 'bg-gradient-to-br from-[#1D1D1F] to-[#3D3D3F] text-white hover:scale-105 active:scale-95 shadow-lg hover:shadow-[0_8px_24px_rgba(0,0,0,0.15)]'}`}

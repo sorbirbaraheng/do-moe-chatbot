@@ -25,6 +25,8 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [fade, setFade] = useState(true);
   const [isListening, setIsListening] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const flatSuggestions = useMemo(() => {
@@ -103,195 +105,221 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
   }, []);
 
   // ===============================================
-  // MOBILE VIEW - Premium Apple Design System (2026)
+  // MOBILE VIEW - Gemini-Style Layout (no useMemo to ensure state reactivity)
   // ===============================================
-  const mobileView = useMemo(() => (
-    <div className="landing-mobile min-h-[100dvh] bg-[#eff1f5] flex flex-col relative overflow-hidden">
+  const renderMobileView = () => (
+    <div className="landing-mobile h-[100dvh] bg-[#EEF0F8] flex flex-col relative">
 
-      {/* Dynamic Mesh Gradient Background - Subtle & Premium */}
-      <div className="absolute inset-0 z-0 pointer-events-none">
-        <div className="absolute top-[-20%] left-[-20%] w-[80%] h-[60%] rounded-full bg-blue-400/20 blur-[100px] animate-pulse-slow"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[70%] h-[60%] rounded-full bg-purple-400/20 blur-[100px] animate-pulse-slow" style={{ animationDelay: '2s' }}></div>
-      </div>
-
-      {/* Header - Ultra Glassmorphism */}
-      <header className="landing-header sticky top-0 z-50 flex items-center justify-between px-6 pt-14 pb-4 bg-[#eff1f5]/60 backdrop-blur-3xl border-b border-white/20 shadow-[0_4px_30px_rgba(0,0,0,0.03)] transition-all duration-500">
-        <div className="flex items-center gap-3 active:opacity-70 transition-opacity duration-300" onClick={() => onStart(Category.Auto)}>
-          <div className="relative group">
-            <div className="absolute inset-0 bg-gradient-to-tr from-blue-500 to-purple-500 rounded-2xl blur-lg opacity-40 group-hover:opacity-60 transition-opacity duration-500"></div>
-            <img src="/do-mascot.png" alt="DO" className="relative w-10 h-10 rounded-2xl shadow-inner border border-white/50 bg-white/50 backdrop-blur-md p-0.5 transition-transform duration-500 group-hover:scale-105" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-[17px] font-bold text-[#1d1d1f] tracking-tight leading-none drop-shadow-sm">MOE - One</span>
-            <span className="text-[10px] text-[#86868b] font-medium tracking-wide uppercase mt-0.5">AI Assistant</span>
+      {/* ── Menu Bottom Sheet ── */}
+      {showMenu && (
+        <div className="absolute inset-0 z-50 flex flex-col justify-end" onClick={() => setShowMenu(false)}>
+          <div className="absolute inset-0 bg-black/20 backdrop-blur-sm" />
+          <div className="relative bg-white rounded-t-[28px] px-5 pt-5 pb-10 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="w-10 h-1 bg-black/10 rounded-full mx-auto mb-6" />
+            <p className="text-[12px] font-semibold text-[#86868b] uppercase tracking-wider mb-3 px-1">เมนู</p>
+            <button
+              onClick={() => { setShowMenu(false); onStart(); }}
+              className="w-full flex items-center gap-4 px-4 py-4 rounded-2xl hover:bg-[#F2F2F7] active:bg-[#E5E5EA] transition-colors text-left"
+            >
+              <div className="w-10 h-10 rounded-xl bg-[#007AFF]/10 flex items-center justify-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#007AFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-[16px] font-semibold text-[#1d1d1f]">เริ่มแชท</p>
+                <p className="text-[12px] text-[#86868b]">คุยกับ DO AI</p>
+              </div>
+            </button>
           </div>
         </div>
+      )}
 
+      {/* ── Profile Bottom Sheet ── */}
+      {showProfile && (
+        <div className="absolute inset-0 z-50 flex flex-col justify-end" onClick={() => setShowProfile(false)}>
+          <div className="absolute inset-0 bg-black/20 backdrop-blur-sm" />
+          <div className="relative bg-white rounded-t-[28px] px-5 pt-5 pb-10 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="w-10 h-1 bg-black/10 rounded-full mx-auto mb-6" />
+            {user ? (
+              <>
+                <div className="flex items-center gap-4 mb-6 px-1">
+                  <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#5856D6] to-[#007AFF] flex items-center justify-center text-white text-[18px] font-bold shadow-md">
+                    {user.initials}
+                  </div>
+                  <div>
+                    <p className="text-[17px] font-bold text-[#1d1d1f]">{user.name}</p>
+                    <p className="text-[13px] text-[#86868b]">{user.role}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setShowProfile(false); onLogout(); }}
+                  className="w-full py-4 rounded-2xl bg-red-50 text-[#FF3B30] text-[16px] font-semibold active:bg-red-100 transition-colors"
+                >
+                  ออกจากระบบ
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => { setShowProfile(false); onStart(); }}
+                className="w-full py-4 rounded-2xl bg-[#007AFF] text-white text-[16px] font-semibold active:opacity-80 transition-opacity"
+              >
+                เริ่มใช้งาน
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Top Bar ── */}
+      <header className="flex-shrink-0 flex items-center justify-between px-5 pt-12 pb-3">
+        {/* Hamburger */}
         <button
-          onClick={() => onStart()}
-          className="landing-cta px-5 py-2 rounded-full bg-[#007AFF] hover:bg-[#0071eb] active:scale-95 transition-all duration-300 text-white text-[13px] font-semibold shadow-[0_4px_12px_rgba(0,122,255,0.3)] hover:shadow-[0_6px_20px_rgba(0,122,255,0.4)] border border-white/10"
+          onClick={() => setShowMenu(true)}
+          className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-black/5 active:bg-black/10 transition-colors"
+          aria-label="เมนู"
         >
-          เริ่มแชท
+          <svg viewBox="0 0 24 24" fill="none" stroke="#1d1d1f" strokeWidth="2.2" strokeLinecap="round" className="w-5 h-5">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+
+        {/* App Name */}
+        <span className="text-[17px] font-semibold text-[#1d1d1f] tracking-tight">MOE - One</span>
+
+        {/* Avatar */}
+        <button
+          onClick={() => user ? setShowProfile(true) : onStart()}
+          className="w-10 h-10 rounded-full overflow-hidden bg-gradient-to-br from-[#5856D6] to-[#007AFF] flex items-center justify-center shadow-sm ring-2 ring-white/60 active:scale-95 transition-transform"
+          aria-label="โปรไฟล์"
+        >
+          {user ? (
+            <span className="text-white text-[13px] font-bold">{user.initials}</span>
+          ) : (
+            <img src="/do-mascot.png" alt="DO" className="w-8 h-8 object-contain" />
+          )}
         </button>
       </header>
 
-      <main className="landing-main flex-1 relative z-10 px-6 pt-6 pb-24 overflow-y-auto scrollbar-hide">
+      {/* ── Scrollable Middle ── */}
+      <div className="flex-1 overflow-y-auto px-5 pt-6 pb-4" style={{ WebkitOverflowScrolling: 'touch' }}>
 
-        {/* Large Title Greeting */}
-        <div className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-          <p className="landing-eyebrow text-[13px] font-semibold text-[#86868b] uppercase tracking-wider mb-2">{greeting.sub}</p>
-          <h1 className="landing-title text-[34px] font-bold text-[#1d1d1f] leading-[1.1] tracking-tight">
-            {user?.name ? (
-              <>สวัสดี, <br /><span className="text-transparent bg-clip-text bg-gradient-to-r from-[#007AFF] to-[#5856D6]">{user.name.split(' ')[0]}</span></>
-            ) : (
-              <>ยินดีต้อนรับสู่<br />MOE - One AI</>
-            )}
+        {/* Greeting */}
+        <div className="mb-8">
+          <p className="text-[15px] text-[#5f6368] font-medium mb-1">
+            {user ? `สวัสดี คุณ ${user.name.split(' ')[0]}` : greeting.sub}
+          </p>
+          <h1 className="text-[26px] font-bold text-[#1d1d1f] leading-[1.2] tracking-tight">
+            {user ? 'เราจะเริ่มจากตรงไหนก่อนดี' : 'ยินดีต้อนรับสู่\nMOE - One AI'}
           </h1>
         </div>
 
-        {/* Spotlight Search - Super Glass & Depth */}
-        <div className="landing-search relative mb-10 z-30" ref={dropdownRef}>
-          <form onSubmit={handleSubmit} className="landing-search-form relative group perspective-1000">
-            <div className={`
-              absolute -inset-1 bg-gradient-to-r from-blue-400/40 via-purple-400/40 to-blue-400/40 rounded-[22px] blur-xl opacity-0 group-focus-within:opacity-100 transition duration-700 ease-out
-            `}></div>
-            <div className="landing-search-inner relative bg-white/60 backdrop-blur-2xl rounded-[20px] shadow-[0_8px_32px_rgba(0,0,0,0.04)] border border-white/60 p-1.5 flex items-center transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-focus-within:bg-white/80 group-focus-within:shadow-[0_16px_40px_rgba(0,0,0,0.08)] group-focus-within:scale-[1.02] group-focus-within:border-white/80 ring-1 ring-white/40">
-              <div className="pl-3.5 pr-2 text-[#8e8e93]">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-              </div>
+        {/* Suggestion Chips — pill style, wrapping */}
+        <div className="flex flex-wrap gap-3">
+          {[
+            { emoji: '🏫', label: 'ค้นหาโรงเรียนใกล้ฉัน' },
+            { emoji: '👩‍🏫', label: 'สรุปสถิติครูทั่วประเทศ' },
+            { emoji: '📊', label: 'แนวโน้มจำนวนนักเรียนปีนี้' },
+            { emoji: '🏆', label: 'โรงเรียนที่มีนักเรียนมากที่สุด' },
+            { emoji: '📍', label: 'โรงเรียนในจังหวัดเชียงใหม่' },
+            { emoji: '✏️', label: 'เขียนอะไรก็ได้' },
+          ].map((chip, i) => (
+            <button
+              key={i}
+              onClick={() => onStart(Category.General, chip.label !== 'เขียนอะไรก็ได้' ? chip.label : undefined)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-white/80 backdrop-blur-md border border-white/60 shadow-sm text-[14px] font-medium text-[#1d1d1f] active:scale-95 active:bg-white/60 transition-all duration-200"
+              style={{ boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}
+            >
+              <span>{chip.emoji}</span>
+              <span>{chip.label}</span>
+            </button>
+          ))}
+        </div>
 
-              <input
-                type="text"
-                value={searchValue}
-                onChange={(e) => { setSearchValue(e.target.value); setShowDropdown(true); }}
-                placeholder="ค้นหาข้อมูลโรงเรียน, ครู..."
-                className="landing-search-input flex-1 bg-transparent h-11 outline-none text-[17px] text-[#1d1d1f] placeholder:text-[#aeaeb2] font-medium"
-              />
+        {/* Bottom padding so chips don't hide behind input */}
+        <div className="h-10" />
+      </div>
 
-              <div className="flex items-center gap-1 pr-1.5">
-                <button
-                  type="button"
-                  onClick={handleVoiceSearch}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 active:scale-90 shadow-sm border border-transparent ${isListening ? 'bg-red-500 text-white animate-pulse shadow-red-500/30' : 'text-[#8e8e93] hover:bg-white/50 hover:border-black/5 hover:shadow-sm'}`}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill={isListening ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
-                </button>
-                <button
-                  type="submit"
-                  className="w-10 h-10 rounded-full bg-[#1d1d1f] text-white flex items-center justify-center shadow-[0_4px_12px_rgba(0,0,0,0.15)] active:scale-90 transition-all duration-300 hover:bg-black hover:scale-105"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                </button>
-              </div>
-            </div>
+      {/* ── Fixed Bottom Input Bar (Gemini-style) ── */}
+      <div className="flex-shrink-0 px-4 pb-8 pt-3 bg-[#EEF0F8]">
+        <div
+          ref={dropdownRef}
+          className="relative bg-white rounded-[26px] shadow-[0_4px_24px_rgba(0,0,0,0.08)] border border-white/60"
+        >
+          {/* Search input row */}
+          <form onSubmit={handleSubmit} className="flex items-center px-5 py-4 gap-3">
+            <input
+              type="text"
+              value={searchValue}
+              onChange={(e) => { setSearchValue(e.target.value); setShowDropdown(true); }}
+              onFocus={() => setShowDropdown(searchValue.length > 0)}
+              placeholder="ขอความช่วยเหลือจาก DO AI"
+              className="flex-1 bg-transparent text-[15px] text-[#1d1d1f] placeholder:text-[#aeaeb2] font-medium outline-none border-none"
+            />
           </form>
 
-          {/* Suggestions Dropdown - Apple Menu Style */}
+          {/* Suggestions dropdown */}
           {showDropdown && filteredSuggestions.length > 0 && (
-            <div className="absolute top-full left-0 right-0 mt-3 p-1.5 bg-white/90 backdrop-blur-2xl rounded-2xl border border-white/40 shadow-[0_20px_40px_rgba(0,0,0,0.12)] z-40 animate-in zoom-in-95 duration-200 origin-top">
+            <div className="absolute bottom-full left-0 right-0 mb-2 p-1.5 bg-white/95 backdrop-blur-2xl rounded-2xl border border-white/40 shadow-[0_12px_40px_rgba(0,0,0,0.10)] z-40">
               {filteredSuggestions.map((s, i) => (
                 <button
                   key={i}
-                  onClick={() => handleSuggestionClick(s)}
-                  className="w-full flex items-center gap-3.5 px-3 py-3 rounded-xl hover:bg-[#F2F2F7] transition-colors text-left group"
+                  onClick={() => { handleSuggestionClick(s); setShowDropdown(false); }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[#F2F2F7] transition-colors text-left"
                 >
-                  <div className="w-8 h-8 rounded-lg bg-blue-50 text-[#007AFF] flex items-center justify-center group-hover:scale-110 transition-transform">
-                    {s.cat === Category.General ? '🌍' : s.cat === Category.School ? '🏫' : '📊'}
-                  </div>
-                  <span className="text-[15px] font-medium text-[#1d1d1f]">{s.text}</span>
+                  <span className="text-base">{s.cat === Category.School ? '🏫' : s.cat === Category.General ? '🌍' : '📊'}</span>
+                  <span className="text-[14px] font-medium text-[#1d1d1f]">{s.text}</span>
                 </button>
               ))}
             </div>
           )}
-        </div>
 
-        {/* Quick Actions - iOS Widget Glass */}
-        <div className="mb-10">
-          <h3 className="landing-section-title text-[13px] font-semibold text-[#86868b] uppercase tracking-wider mb-4 px-1 drop-shadow-sm">เมนูลัด</h3>
-          <div className="grid grid-cols-1 gap-4">
-            {['ค้นหาโรงเรียนใกล้ฉัน', 'สรุปสถิติครูทั่วประเทศ', 'แนวโน้มจำนวนนักเรียนปีนี้'].map((q, i) => (
-              <button
-                key={i}
-                onClick={() => onStart(Category.General, q)}
-                className="landing-quick-card w-full bg-white/60 backdrop-blur-2xl rounded-[22px] p-5 flex items-center justify-between shadow-[0_4px_24px_rgba(0,0,0,0.02)] hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] border border-white/50 active:scale-[0.98] transition-all duration-300 active:bg-white/80 group ring-1 ring-white/60"
-              >
-                <span className="text-[16px] font-medium text-[#1d1d1f] group-hover:text-[#007AFF] transition-colors">{q}</span>
-                <div className="w-8 h-8 rounded-full bg-white/50 flex items-center justify-center shadow-sm border border-white/80 group-hover:bg-[#007AFF] group-hover:text-white transition-all duration-300">
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                </div>
-              </button>
-            ))}
+          {/* Bottom toolbar row */}
+          <div className="flex items-center justify-between px-4 pb-3">
+            {/* Left: + button */}
+            <button
+              type="button"
+              className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-black/5 active:bg-black/10 transition-colors text-[#5f6368]"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="w-5 h-5">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </button>
+
+            {/* Center: Model selector pill */}
+            <button
+              type="button"
+              onClick={() => onStart()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] active:scale-95 transition-all text-[13px] font-semibold text-[#3c3c43]"
+            >
+              <span>DO AI</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 opacity-60">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+
+            {/* Right: Mic button */}
+            <button
+              type="button"
+              onClick={handleVoiceSearch}
+              className={`w-9 h-9 flex items-center justify-center rounded-full transition-all active:scale-90 ${isListening ? 'bg-red-500 text-white animate-pulse' : 'hover:bg-black/5 text-[#5f6368]'}`}
+            >
+              <svg viewBox="0 0 24 24" fill={isListening ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            </button>
           </div>
         </div>
+      </div>
 
-        {/* Stats Cards - Horizontal Scroll with Snap */}
-        <div className="mb-8 -mx-6">
-          <div className="px-6 flex items-center justify-between mb-4">
-            <h3 className="landing-section-title text-[13px] font-semibold text-[#86868b] uppercase tracking-wider">ภาพรวมวันนี้</h3>
-            <span className="landing-live-pill text-[11px] font-bold text-[#007AFF] bg-blue-50 px-2 py-0.5 rounded-full">Live</span>
-          </div>
-
-          <div className="flex gap-4 overflow-x-auto px-6 pb-12 snap-x snap-mandatory scrollbar-hide pt-4">
-            {MOCK_STATS.map((stat, idx) => (
-              <div
-                key={idx}
-                onClick={() => onStart(stat.category)}
-                className="landing-stat-card snap-center flex-shrink-0 w-[260px] bg-white/70 backdrop-blur-3xl rounded-[28px] p-6 shadow-[0_15px_40px_-5px_rgba(0,0,0,0.05)] hover:shadow-[0_25px_50px_-10px_rgba(0,0,0,0.1)] border border-white/60 relative overflow-hidden group active:scale-[0.98] transition-all duration-500 ease-out ring-1 ring-white/50"
-              >
-                <div className={`absolute -right-10 -top-10 w-40 h-40 bg-gradient-to-br ${stat.color} opacity-15 blur-[60px] group-hover:opacity-25 transition-opacity duration-700`}></div>
-
-                <div className="flex items-start justify-between mb-8 relative z-10">
-                  <div className="w-12 h-12 rounded-[18px] bg-white/80 backdrop-blur-md flex items-center justify-center text-2xl shadow-[0_4px_12px_rgba(0,0,0,0.03)] border border-white/60 group-hover:scale-110 transition-transform duration-500">
-                    {stat.icon}
-                  </div>
-                  <div className="text-[10px] font-bold text-[#8e8e93] uppercase tracking-wide bg-white/50 px-2.5 py-1.5 rounded-full border border-white/40 backdrop-blur-sm self-start">
-                    {stat.unit}
-                  </div>
-                </div>
-
-                <div className="relative">
-                  <div className="text-[12px] font-medium text-[#86868b] mb-0.5">{stat.label}</div>
-                  <div className="text-[26px] font-bold text-[#1d1d1f] tracking-tight">{stat.value}</div>
-                  <div className="mt-2 text-[11px] font-bold text-[#34C759] flex items-center gap-1">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>
-                    {stat.trend}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* User Card - Apple ID Style */}
-        {user && (
-          <div className="mb-6">
-            <div className="bg-white/80 backdrop-blur-xl rounded-[24px] p-1 shadow-sm border border-white/60">
-              <div className="flex items-center gap-4 p-4">
-                <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#007AFF] to-[#5856D6] flex items-center justify-center text-white text-xl font-bold shadow-md ring-4 ring-white">
-                  {user.initials}
-                </div>
-                <div className="flex-1">
-                  <div className="text-[17px] font-bold text-[#1d1d1f] tracking-tight">{user.name}</div>
-                  <div className="text-[13px] text-[#86868b] font-medium">{user.role} • {user.email}</div>
-                </div>
-              </div>
-              <button
-                onClick={onLogout}
-                className="w-full py-3.5 border-t border-[#c6c6c8]/30 text-[#FF3B30] text-[15px] font-semibold active:bg-gray-50 rounded-b-[20px] transition-colors"
-              >
-                ออกจากระบบ
-              </button>
-            </div>
-          </div>
-        )}
-
-        <footer className="text-center pb-6">
-          <p className="text-[11px] font-medium text-[#86868b]/60">© 2026 Ministry of Education</p>
-        </footer>
-
-      </main>
     </div>
-  ), [searchValue, showDropdown, filteredSuggestions, placeholderIndex, fade, isListening, user, greeting, handleSubmit, handleSuggestionClick, handleVoiceSearch, onStart, onLogout, onAdminLogin]);
+  );
 
   // ===============================================
   // DESKTOP VIEW - Original Design (Unchanged)
@@ -474,7 +502,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
   return (
     <>
       <div className="md:hidden">
-        {mobileView}
+        {renderMobileView()}
       </div>
       <div className="hidden md:block">
         {desktopView}
