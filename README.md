@@ -13,13 +13,14 @@
 ## ✨ Features
 
 - 🧠 **Multi-LLM AI** — Groq (llama-3.3-70b) + Gemini (gemini-2.0-flash) พร้อม auto-failover
-- 🔍 **RAG Pipeline** — ค้นหาข้อมูลจาก Qdrant Vector Database 2.6 ล้าน records
-- 📊 **Chart Generation** — สร้างกราฟเปรียบเทียบข้อมูลอัตโนมัติ
-- 💬 **Context-Aware** — จำบริบทจังหวัด/ปี ตอบ follow-up ได้ถูกต้อง
-- ⚡ **Semantic Cache** — แยก cache ตาม province + year ลด latency
+- 💎 **Apple 2025 Glass UI** — หน้า UI สวยงาม พรีเมียม พร้อม Suggestion Chips ใสลอยตัว
+- 🔍 **RAG Pipeline & Metadata Filtering** — ค้นหาข้อมูลจาก Qdrant Vector Database 2.6 ล้าน records ได้อย่างแม่นยำ
+- 📊 **Chart Generation** — สร้างกราฟเปรียบเทียบข้อมูลอัตโนมัติ (Bar, Line, Pie)
+- 💬 **Advanced Context-Aware** — จำบริบทจังหวัด/ปี และสลับหมวดหมู่คำถามอัตโนมัติ (ผ่าน 10-Question Benchmark 10/10)
+- ⚡ **Local LAN Ready** — Nginx reverse proxy ให้รันบน LAN ได้ทันที
 - 🏫 **School Search** — ค้นหาโรงเรียนรายชื่อ + ข้อมูลละเอียด
-- 🔑 **Multi-Key Rotation** — รองรับหลาย API keys หมุนเวียนอัตโนมัติ
-- 🛡️ **Admin Panel** — จัดการ API keys, โมเดล, prompt ผ่านหน้าเว็บ
+- 🔑 **Multi-Key Rotation & Firestore Sync** — ดึง API Keys จาก Admin Panel มาใช้แบบ Real-time
+- 🛡️ **Admin Panel** — จัดการ API keys, ตรวจสอบ Audit Log, Monitor Session การใช้งาน
 - 🐳 **Docker Ready** — Deploy ด้วย Docker Compose คำสั่งเดียว
 
 ---
@@ -117,36 +118,34 @@ REDIS_URL=redis://localhost:6379/0
 do-moe-chatbot/
 ├── backend/
 │   ├── chatbot/
-│   │   ├── chatbot_core.py          # Main chatbot class
-│   │   ├── llm.py                   # Multi-provider LLM (Groq/Gemini)
-│   │   ├── llm_agent.py             # LLM Agent with function calling
-│   │   ├── tools.py                 # Tool definitions
-│   │   ├── tool_executor.py         # Tool executor for Qdrant
-│   │   ├── cache.py                 # Context-aware semantic cache
-│   │   ├── memory.py                # Conversation memory
-│   │   ├── context_manager.py       # Coreference resolution
-│   │   └── handlers/                # Mixin handlers
-│   ├── firebase_config.py           # Firebase/Firestore config
-│   ├── redis_session.py             # Redis session storage
-│   ├── gunicorn.conf.py             # Production server config
+│   │   ├── agent/                   # LLM Agent definitions (llm_agent.py, tools.py)
+│   │   ├── core/                    # Core logic (chatbot_core.py, memory.py, context.py)
+│   │   ├── data/                    # Data sources (thai_provinces.py, location data)
+│   │   ├── executors/               # Tool Executors (school_tools.py, normalizers.py)
+│   │   ├── handlers/                # Request Handlers (search, proxy, stats, intercept)
+│   │   ├── search/                  # Qdrant Search Engine & Extractors
+│   │   └── utils/                   # Helpers (formatters.py)
+│   ├── configs/                     # Application & Vector DB configurations
+│   ├── routes/                      # Flask API endpoints (admin, metrics, chat)
+│   ├── run_10q_test.py              # Automated 10-Question benchmark script
 │   └── web_chatbot_v5.py            # Flask API entry point
-├── components/
-│   ├── admin/                       # Admin Panel components
-│   ├── ChatMessage.tsx              # Chat message display
-│   └── ChatInput.tsx                # Chat input component
-├── services/
-│   ├── geminiService.ts             # Frontend AI service
-│   └── chatService.ts              # Chat API service
-├── contexts/
-│   └── AdminConfigContext.tsx       # Config management
+├── src/
+│   ├── components/
+│   │   ├── admin/                   # Admin Panel components
+│   │   ├── chat/                    # Chat UI (ChatView, MessageBubble, ChatInput)
+│   │   ├── layout/                  # Sidebar & Mobile Menu
+│   │   └── pages/                   # LandingPage & LoginPage
+│   ├── contexts/                    # React Contexts (Auth, AdminConfig)
+│   ├── hooks/                       # Custom React Hooks (useChatManager, useSpeechSynthesis)
+│   ├── services/                    # Firebase, API, and Core Services
+│   ├── types/                       # TypeScript definitions
+│   └── utils/                       # Frontend helpers
 ├── deploy/
-│   ├── docker/                      # Dockerfiles
-│   ├── nginx/                       # Nginx config
-│   ├── .env.backend.example         # Backend env template
-│   └── .env.frontend.example        # Frontend env template
+│   ├── docker/                      # Dockerfiles for frontend/backend
+│   └── nginx/                       # Nginx reverse proxy configuration
 ├── docs/
-│   └── DEPLOYMENT.md                # 📄 คู่มือ Deploy (Thai)
-├── scripts/                         # Utility scripts
+│   └── DEPLOYMENT.md                # Deployment manual (Thai)
+├── scripts/                         # Utility scripts (Docker management)
 │   ├── start.sh / stop.sh           # Service management
 │   └── flush_cache.sh               # Cache management
 ├── docker-compose.prod.yml          # Production Docker Compose
