@@ -1,0 +1,8 @@
+# Don't copy local dev .env into Docker image
+# Docker Compose provides env vars via env_file: deploy/.env.backend
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+*.pyo

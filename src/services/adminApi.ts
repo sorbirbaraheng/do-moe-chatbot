@@ -7,9 +7,12 @@ const isPrivateHost = (host: string) => {
 };
 
 export const getBackendBaseUrl = (port = 5001) => {
+  if (typeof window === 'undefined') return `http://127.0.0.1:${port}`;
+  const currentPort = window.location.port;
+  // Docker nginx (port 3001/80) — use relative URL, nginx proxies /api/ → backend
+  if (currentPort === '3001' || currentPort === '80' || currentPort === '') return '';
   const envUrl = (import.meta as any)?.env?.VITE_BACKEND_URL || (import.meta as any)?.env?.VITE_FLASK_API_URL;
   if (envUrl) return normalizeBase(envUrl);
-  if (typeof window === 'undefined') return `http://127.0.0.1:${port}`;
   const host = window.location.hostname;
   if (host === 'localhost' || host === '127.0.0.1') return `http://127.0.0.1:${port}`;
   return `http://${host}:${port}`;
@@ -21,7 +24,7 @@ const withAuth = (headers: HeadersInit = {}) => {
   return { ...headers, Authorization: `Bearer ${token}` };
 };
 
-export const adminLogin = async (password: string) => {
+export const adminLogin = async (password: string): Promise<{ success: true; token: string; role: 'admin' | 'operator' | 'viewer' } | { success: false; error: any }> => {
   const url = `${getBackendBaseUrl()}/api/admin/login`;
   const response = await fetch(url, {
     method: 'POST',

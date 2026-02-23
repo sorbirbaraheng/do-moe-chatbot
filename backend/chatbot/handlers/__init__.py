@@ -10,8 +10,14 @@ Contains mixin classes for EducationChatbot handlers
 
 from .llm_handlers import LLMHandlersMixin
 from .stats_handlers import StatsHandlersMixin
+from .intercept_handlers import InterceptHandlersMixin
+from .school_handlers import SchoolHandlersMixin
+from .search_handlers import SearchHandlersMixin
 
 __all__ = [
     'LLMHandlersMixin',
     'StatsHandlersMixin',
+    'InterceptHandlersMixin',
+    'SchoolHandlersMixin',
+    'SearchHandlersMixin',
 ]

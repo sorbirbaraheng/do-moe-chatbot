@@ -41,3 +41,11 @@ export interface ChatState {
     isLoading: boolean;
     category: Category;
 }
+
+export interface ChatSession {
+    sessionId: string;
+    userId: string;
+    title: string;
+    category: Category;
+    updatedAt?: Date;
+}

@@ -5,7 +5,7 @@
 
 // Chat types - Category is enum (value export), rest are interfaces (type export)
 export { Category } from './chat.types';
-export type { User, Message, RagDebugInfo, ChatState } from './chat.types';
+export type { User, Message, RagDebugInfo, ChatState, ChatSession } from './chat.types';
 
 // Admin types - all are interfaces (type export)
 export type {

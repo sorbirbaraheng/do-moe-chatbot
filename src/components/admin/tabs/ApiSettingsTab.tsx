@@ -240,8 +240,8 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
                                 onClick={() => handleTestProvider(provider.id, activeApiCategory)}
                                 disabled={isTesting === provider.id}
                                 className={`w-full mt-2 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${isConnected
-                                        ? 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
-                                        : `bg-gradient-to-r from-${provider.color}-500 to-${provider.color}-600 text-white shadow-sm hover:shadow-md`
+                                    ? 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
+                                    : `bg-gradient-to-r from-${provider.color}-500 to-${provider.color}-600 text-white shadow-sm hover:shadow-md`
                                     } disabled:opacity-50 disabled:cursor-not-allowed`}
                                 style={!isConnected ? {
                                     background: provider.color === 'emerald' ? 'linear-gradient(to right, #10b981, #059669)' :
@@ -469,6 +469,7 @@ const ApiSettingsTab: React.FC<ApiSettingsTabProps> = ({
                                 <button
                                     onClick={() => {
                                         const currentHost = window.location.hostname;
+                                        // Always show real IP for admin display
                                         const detectedUrl = currentHost === 'localhost' || currentHost === '127.0.0.1'
                                             ? 'http://127.0.0.1:5001'
                                             : `http://${currentHost}:5001`;

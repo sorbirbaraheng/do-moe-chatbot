@@ -19,7 +19,7 @@ Contains handlers for student, teacher, ratio, ranking, and education area queri
 import re
 import logging
 from typing import Optional
-from ..constants import COLLECTION_NAMES
+from ..core.constants import COLLECTION_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -596,7 +596,7 @@ class StatsHandlersMixin:
         
         try:
             from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchText, MatchAny
-            from .constants import REGIONS
+            from ..core.constants import REGIONS
             
             conditions = []
             

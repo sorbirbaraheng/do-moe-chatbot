@@ -4,7 +4,7 @@ Modular components for the DO-MOE Education Chatbot
 """
 
 # Types and Enums
-from .types import (
+from .core.types import (
     QueryIntent,
     QueryLevel,
     ParsedQuery,
@@ -14,7 +14,7 @@ from .types import (
 )
 
 # Constants
-from .constants import (
+from .core.constants import (
     THAI_PROVINCES,
     PROVINCE_ALIASES,
     REGIONS,
@@ -26,22 +26,22 @@ from .constants import (
 )
 
 # Security
-from .security import (
+from .core.security import (
     InputSanitizer,
     input_sanitizer
 )
 
 # LLM
-from .llm import MultiProviderLLM
+from .core.llm import MultiProviderLLM
 
 # Cache
-from .cache import (
+from .data.cache import (
     SemanticCache,
     HybridCache
 )
 
 # Query Parser
-from .query_parser import (
+from .search.query_parser import (
     SmartQueryParser,
     LLMIntentClassifier,
     ResponseSynthesizer,
@@ -49,17 +49,17 @@ from .query_parser import (
 )
 
 # Search Engines
-from .search_engine import SearchEngine, route_to_collection
-from .school_search import SchoolSearchEngine
+from .search.search_engine import SearchEngine, route_to_collection
+from .search.school_search import SchoolSearchEngine
 
 # Aggregators
-from .aggregators import ResultAggregator
+from .data.aggregators import ResultAggregator
 
 # Formatters
-from .formatters import ResponseFormatter
+from .data.formatters import ResponseFormatter
 
 # Memory
-from .memory import (
+from .data.memory import (
     ConversationMemory,
     session_memories,
     get_or_create_memory,

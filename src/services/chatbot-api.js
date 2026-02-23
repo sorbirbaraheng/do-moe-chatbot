@@ -6,25 +6,30 @@
 
 /**
  * Auto-detect Flask API URL based on browser location
- * - localhost/127.0.0.1 → http://127.0.0.1:5001
- * - Network IP → Same IP with port 5001
+ * - Docker/nginx (port 80/3001) → '' (relative URL, nginx proxies /api/ to backend)
+ * - Dev localhost → http://127.0.0.1:5001
+ * - Network IP (direct) → Same IP with port 5001
  * @param {number} port - Flask port (default: 5001)
  * @returns {string} Flask API base URL
  */
 export function getFlaskBaseUrl(port = 5001) {
     if (typeof window === 'undefined') {
-        // Node.js environment - return localhost
         return `http://127.0.0.1:${port}`;
     }
 
-    const hostname = window.location.hostname;
+    const currentPort = window.location.port;
 
-    // localhost or 127.0.0.1 → use localhost
+    // Docker nginx serves on port 3001 (mapped from 80) — use relative URL
+    // nginx reverse-proxies /api/ → backend:5001 internally
+    if (currentPort === '3001' || currentPort === '80' || currentPort === '') {
+        return '';
+    }
+
+    const hostname = window.location.hostname;
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
         return `http://127.0.0.1:${port}`;
     }
 
-    // Network IP or domain → use same host with Flask port
     return `http://${hostname}:${port}`;
 }
 

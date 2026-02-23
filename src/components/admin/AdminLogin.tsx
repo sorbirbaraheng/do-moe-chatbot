@@ -20,12 +20,13 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onCancel }) => {
 
         try {
             const result = await adminLogin(password);
-            if (result.success) {
+            if (result.success === true) {
                 setAdminSession(result.token, result.role, false);
                 onSuccess();
                 return;
+            } else {
+                setError(result.error || 'รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
             }
-            setError(result.error || 'รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
             setIsLoading(false);
         } catch (err) {
             console.error("Admin Login Error:", err);

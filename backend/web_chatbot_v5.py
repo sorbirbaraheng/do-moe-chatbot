@@ -88,7 +88,7 @@ logger = logging.getLogger(__name__)
 # CONFIGURATION
 # =====================================================================
 current_dir = Path(__file__).parent
-load_dotenv(dotenv_path=current_dir / ".env")
+load_dotenv(dotenv_path=current_dir / ".env", override=False)
 
 # API Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -220,7 +220,7 @@ def create_flask_api():
             "http://127.0.0.1:3000",
         ]
 
-    CORS(app, resources={r"/*": {"origins": allowed_origins}}, supports_credentials=True)
+    CORS(app, resources={r"/.*": {"origins": allowed_origins}}, supports_credentials=True, send_wildcard=False)
 
     limiter = Limiter(
         get_remote_address,
@@ -239,11 +239,12 @@ def create_flask_api():
     @app.after_request
     def after_request(response):
         """Global CORS header enforcement"""
-        if 'Access-Control-Allow-Origin' not in response.headers and isinstance(allowed_origins, str):
-            response.headers.add('Access-Control-Allow-Origin', allowed_origins)
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-API-Key')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        origin = request.headers.get('Origin', '')
+        if origin and origin in allowed_origins:
+            response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-API-Key'
+        response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
         if 'Content-Type' not in response.headers:
             response.headers.add('Content-Type', 'application/json; charset=utf-8')  # Ensure Thai support
         return response
