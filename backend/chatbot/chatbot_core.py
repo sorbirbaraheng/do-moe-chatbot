@@ -201,7 +201,11 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                 session_context.last_active_query = active_query
                 self.context_manager.save_context(session_id, session_context)
                 logger.info(f"💾 Active Query Saved: {active_query.get('name')} (Session: {session_id})")
-            
+
+            # Fallback storage in in-process memory (covers sessions where ContextManager is bypassed)
+            if active_query and self.memory is not None:
+                self.memory.last_active_query = active_query
+
             # 🧠 UPDATE MEMORY: Extract entities from active_query and persist for follow-up
             if active_query and self.memory:
                 params = active_query.get('params', {})
@@ -248,6 +252,106 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         except Exception as e:
             logger.error(f"❌ LLM Agent processing failed: {e}")
             return None
+
+    def _infer_active_query_from_parsed(self, parsed: ParsedQuery, message: str) -> Optional[Dict[str, Any]]:
+        """
+        Infer a minimal active_query from parser output.
+        Used when response comes from cache (no tool execution), so follow-up can still route correctly.
+        """
+        if not parsed:
+            return None
+
+        msg = message or ""
+        params: Dict[str, Any] = {}
+        if parsed.province:
+            params["province"] = parsed.province
+        if parsed.region:
+            params["region"] = parsed.region
+        if parsed.district:
+            params["district"] = parsed.district
+        if parsed.subdistrict:
+            params["subdistrict"] = parsed.subdistrict
+        if parsed.agency:
+            params["agency"] = parsed.agency
+        if parsed.school_name:
+            params["school_name"] = parsed.school_name
+        if parsed.person_type:
+            params["person_type"] = parsed.person_type
+
+        intent = parsed.intent
+        tool_name = None
+
+        # Filter intents (preserve threshold for follow-up like "มากกว่า 800 คนล่ะ")
+        inferred_metric = "students"
+        if any(k in msg for k in ["ครู", "อาจารย์", "บุคลากร"]):
+            inferred_metric = "teachers"
+        elif any(k in msg for k in ["นักเรียน", "ผู้เรียน", "เด็ก"]):
+            inferred_metric = "students"
+
+        if intent == QueryIntent.FILTER_LESS_THAN:
+            tool_name = "filter_schools"
+            params["operator"] = "lt"
+            params["value"] = parsed.threshold or 0
+            params["metric"] = inferred_metric
+        elif intent == QueryIntent.FILTER_GREATER_THAN:
+            tool_name = "filter_schools"
+            params["operator"] = "gt"
+            params["value"] = parsed.threshold or 0
+            params["metric"] = inferred_metric
+        elif intent == QueryIntent.FILTER_EQUALS:
+            tool_name = "filter_schools"
+            params["operator"] = "eq"
+            params["value"] = parsed.threshold or 0
+            params["metric"] = inferred_metric
+
+        # Ranking intents
+        elif intent in [QueryIntent.RANKING_MOST, QueryIntent.RANKING_LEAST]:
+            tool_name = "ranking"
+            params["order"] = "most" if intent == QueryIntent.RANKING_MOST else "least"
+            if any(k in msg for k in ["อัตราส่วน", "ครูต่อ", "นักเรียนต่อครู", "ไม่ทั่วถึง", "ขาดแคลนครู"]):
+                params["metric"] = "ratio"
+            elif any(k in msg for k in ["ครู", "อาจารย์", "บุคลากร"]):
+                params["metric"] = "teachers"
+            elif any(k in msg for k in ["นักเรียน", "ผู้เรียน", "เด็ก"]):
+                params["metric"] = "students"
+            else:
+                params["metric"] = "schools"
+
+            if parsed.level == QueryLevel.DISTRICT:
+                params["scope"] = "district"
+            elif parsed.level == QueryLevel.SUBDISTRICT:
+                params["scope"] = "subdistrict"
+            elif parsed.level == QueryLevel.REGION:
+                params["scope"] = "region"
+            else:
+                params["scope"] = "province"
+
+        elif intent == QueryIntent.SCHOOL_COUNT:
+            tool_name = "count_schools"
+        elif intent == QueryIntent.STUDENT_COUNT:
+            tool_name = "count_students"
+        elif intent == QueryIntent.TEACHER_COUNT:
+            tool_name = "count_teachers"
+        elif intent == QueryIntent.RATIO:
+            tool_name = "get_ratio"
+        elif intent == QueryIntent.SCHOOL_LIST:
+            tool_name = "list_schools"
+        elif intent == QueryIntent.SCHOOL_SEARCH:
+            tool_name = "search_schools"
+        elif intent == QueryIntent.SCHOOL_DETAIL and parsed.school_name:
+            tool_name = "get_school_full_details"
+        elif intent == QueryIntent.COUNT:
+            # Generic fallback
+            if "ครู" in msg:
+                tool_name = "count_teachers"
+            elif "นักเรียน" in msg:
+                tool_name = "count_students"
+            else:
+                tool_name = "count_schools"
+
+        if not tool_name:
+            return None
+        return {"name": tool_name, "params": params}
 
     def _try_disambiguation_intercept(self, message: str, history: List[Dict[str, str]]) -> Optional[str]:
         """
@@ -833,9 +937,40 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         is_school_specific_query = False
         if hasattr(self.memory, 'last_school_name') and self.memory.last_school_name:
             is_school_specific_query = _is_school_specific_message(message, self.memory.last_school_name)
-        
+
+        def _is_short_followup_message(msg: str) -> bool:
+            if not msg:
+                return False
+            m = msg.strip()
+            follow_kws = [
+                "แล้ว", "ล่ะ", "ละ", "ต่อ", "อีก", "เพิ่ม", "สรุปอีกที",
+                "เท่าไหร่", "กี่คน", "กี่แห่ง", "มากกว่า", "น้อยกว่า"
+            ]
+            return len(m) <= 60 and any(k in m for k in follow_kws)
+
+        def _is_subjective_best_school_query(msg: str) -> bool:
+            if not msg:
+                return False
+            m = msg.strip()
+            m_norm = m.replace(" ", "")
+            has_school = "โรงเรียน" in m
+            has_best = any(k in m_norm for k in ["โรงเรียนไหนดี", "ไหนดีสุด", "ดีที่สุด"])
+            has_metric_or_scope = any(
+                k in m for k in [
+                    "อัตราส่วน", "นักเรียน", "ครู", "ผลสอบ", "คะแนน", "ใกล้",
+                    "สังกัด", "ค่าเทอม", "จังหวัด", "อำเภอ", "ภาค", "อันดับ"
+                ]
+            )
+            return has_school and has_best and not has_metric_or_scope
+
         if is_school_specific_query:
             logger.info(f"🏫 School-specific query detected (school_name: {self.memory.last_school_name}) - skipping cache")
+        is_short_followup_query = _is_short_followup_message(message)
+        if is_short_followup_query:
+            logger.info("🔄 Short follow-up query detected - skipping cache for context-safe routing")
+        is_subjective_best_query = _is_subjective_best_school_query(message)
+        if is_subjective_best_query:
+            logger.info("🧭 Subjective best-school query detected - skipping cache to force ask-back clarification")
         
         # Cache context = evaluate using current message + memory
         def _cache_ctx() -> Optional[Dict[str, str]]:
@@ -844,7 +979,13 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
         # Check Semantic Cache (disabled for testing)
         if DEBUG_DISABLE_CACHE:
             logger.info("🔧 Cache DISABLED by env (ENABLE_SEMANTIC_CACHE=0)")
-        elif not is_school_specific_query and self.cache and not was_coreference_resolved:
+        elif (
+            not is_school_specific_query
+            and not is_short_followup_query
+            and not is_subjective_best_query
+            and self.cache
+            and not was_coreference_resolved
+        ):
             cached_response = self.cache.check(message, context=_cache_ctx())
             if cached_response:
                 # CRITICAL: Still update memory on cache hit so follow-up queries retain context
@@ -852,6 +993,10 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     cache_parsed = self.parser.parse(message)
                     if cache_parsed:
                         self.memory.update(cache_parsed, original_query=message)
+                        inferred_active_query = self._infer_active_query_from_parsed(cache_parsed, message)
+                        if inferred_active_query:
+                            self.memory.last_active_query = inferred_active_query
+                            logger.info(f"💾 Active Query inferred (cache hit): {inferred_active_query.get('name')}")
                         logger.info(f"🧠 Memory updated (cache hit): province={cache_parsed.province}, year={self.memory.last_year}")
                     else:
                         # Even if parser fails, extract year from the message
@@ -991,8 +1136,17 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
             
             EDUCATION_KEYWORDS = ['โรงเรียน', 'นักเรียน', 'ครู', 'การศึกษา', 'สพฐ', 'สช']
             has_strong_edu_keyword = any(kw in message for kw in EDUCATION_KEYWORDS)
+            has_active_query_context = bool(getattr(self.memory, "last_active_query", None))
+            has_followup_signal = any(k in (message or "") for k in ["แล้ว", "ล่ะ", "ละ", "ต่อ", "เพิ่ม", "อีก"])
             
-            if "GENERAL" in intent_type and not has_strong_edu_keyword:
+            if (
+                "GENERAL" in intent_type
+                and not has_strong_edu_keyword
+                and not has_rank_filter_intent
+                and not (is_followup and has_context)
+                and not has_active_query_context
+                and not has_followup_signal
+            ):
                 # UNIFIED MODE: Respond directly with LLM for general/casual queries
                 logger.info(f"🌐 General intent detected - responding with LLM directly")
                 try:
@@ -1062,8 +1216,10 @@ class EducationChatbot(LLMHandlersMixin, StatsHandlersMixin):
                     rich_context_dict['last_scope_type'] = self.memory.last_scope_type
                 if self.memory.last_scope_value:
                     rich_context_dict['last_scope_value'] = self.memory.last_scope_value
-            
-            
+                if getattr(self.memory, "last_active_query", None):
+                    rich_context_dict['last_active_query'] = self.memory.last_active_query
+
+
             agent_response = self.process_with_llm_agent(
                 message, 
                 rich_context=rich_context_dict, 

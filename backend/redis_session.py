@@ -38,6 +38,16 @@ _redis_pool = None
 _redis_client = None
 
 
+def _get_sqlite_fallback_module():
+    """Import SQLite fallback module in both package and script execution modes."""
+    try:
+        from . import session_db as sqlite_session_db  # package mode
+        return sqlite_session_db
+    except Exception:
+        import session_db as sqlite_session_db  # script mode
+        return sqlite_session_db
+
+
 def get_redis_client():
     """Get Redis client with connection pooling"""
     global _redis_pool, _redis_client
@@ -77,9 +87,8 @@ def init_db():
         logger.info("✅ Redis Session Storage initialized")
     else:
         logger.warning("⚠️ Redis unavailable, falling back to SQLite")
-        # Import SQLite fallback
-        from . import session_db
-        session_db.init_db()
+        sqlite_session_db = _get_sqlite_fallback_module()
+        sqlite_session_db.init_db()
 
 
 def get_session_data(session_id: str) -> Optional[Dict[str, Any]]:
@@ -101,9 +110,9 @@ def get_session_data(session_id: str) -> Optional[Dict[str, Any]]:
     
     # Fallback to SQLite
     try:
-        from . import session_db
-        return session_db.get_session_data(session_id)
-    except:
+        sqlite_session_db = _get_sqlite_fallback_module()
+        return sqlite_session_db.get_session_data(session_id)
+    except Exception:
         return None
 
 
@@ -124,9 +133,9 @@ def save_session_data(session_id: str, memory_data: Dict[str, Any]):
     
     # Fallback to SQLite
     try:
-        from . import session_db
-        session_db.save_session_data(session_id, memory_data)
-    except:
+        sqlite_session_db = _get_sqlite_fallback_module()
+        sqlite_session_db.save_session_data(session_id, memory_data)
+    except Exception:
         pass
 
 
@@ -170,9 +179,9 @@ def cleanup_old_sessions(days: int = 7):
     
     # SQLite fallback
     try:
-        from . import session_db
-        session_db.cleanup_old_sessions(days)
-    except:
+        sqlite_session_db = _get_sqlite_fallback_module()
+        sqlite_session_db.cleanup_old_sessions(days)
+    except Exception:
         pass
 
 

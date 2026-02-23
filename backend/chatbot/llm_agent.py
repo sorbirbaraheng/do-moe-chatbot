@@ -114,6 +114,51 @@ class LLMAgent:
                     tool_call.get("params", {})
                 )
                 results.append(result)
+                
+            # Step 2.5: self-healing reflection loop for Empty Results
+            # If the data returned is empty, we will ask the agent to broaden its search.
+            def is_empty_result(res):
+                if not isinstance(res, dict): return False
+                if res.get("error"): return True
+                if "data" in res and not res["data"]: return True
+                if "ranking" in res and not res["ranking"]: return True
+                if "schools" in res and not res["schools"]: return True
+                if "total_schools" in res and res["total_schools"] == 0: return True
+                if "total_students" in res and res["total_students"] == 0: return True
+                if "total_teachers" in res and res["total_teachers"] == 0: return True
+                return False
+                
+            # If ALL tool results are empty, let's trigger a reflection retry (max 1 retry)
+            if results and all(is_empty_result(r) for r in results):
+                logger.warning("⚠️ All tool results were empty. Triggering Agentic Reflection Loop...")
+                reflection_context = dict(context or {})
+                reflection_context["reflection_prompt"] = (
+                    "คำค้นหาก่อนหน้านี้ไม่พบข้อมูลในฐานข้อมูลเลย (Empty Result). "
+                    "กรุณาลองลดเงื่อนไขที่แคบเกินไป เช่น ตัดชื่ออำเภอ/ตำบลออกเพื่อค้นหาทั่วจังหวัด "
+                    "หรือถ้ามีชื่อโรงเรียน ให้ระบุเฉพาะชื่อหลักไม่ต้องใส่คำว่า โรงเรียน หรือลองใช้ tool อื่นที่ขอบเขตกว้างขึ้น"
+                )
+                # Retry tool selection with reflection context
+                retry_tool_calls = self._select_tools(question, reflection_context)
+                
+                # If LLM decided to change tools/params, execute them again
+                if retry_tool_calls and str(retry_tool_calls) != str(tool_calls):
+                    logger.info(f"🔄 Retry: Selected new tools: {[t['name'] for t in retry_tool_calls]}")
+                    retry_results = []
+                    should_use_deterministic = False
+                    for tool_call in retry_tool_calls:
+                        name = tool_call["name"]
+                        if name in deterministic_tools:
+                            should_use_deterministic = True
+                        result = self.tool_executor.execute(name, tool_call.get("params", {}))
+                        retry_results.append(result)
+                        
+                    # Override original if the retry actually yielded non-empty data
+                    if retry_results and not all(is_empty_result(r) for r in retry_results):
+                        logger.info("✅ Reflection try succeeded! Replacing empty results with new data.")
+                        tool_calls = retry_tool_calls
+                        results = retry_results
+                    else:
+                        logger.warning("❌ Reflection try also yielded empty data. Falling through to original.")
             
             # Step 3: Generate Response
             # Hybrid mode: template for data accuracy → LLM for natural language
@@ -172,6 +217,63 @@ class LLMAgent:
             if len(q) <= 20 and any(k in q for k in greet_keywords):
                 msg = "สวัสดีครับ ยินดีช่วยครับ อยากสอบถามเรื่องการศึกษาด้านไหนครับ"
                 return [{"name": "__ask_back__", "params": {"message": msg, "pending_tool": None}}]
+
+        # Quick ask-back: subjective "best school" needs explicit metric/scope
+        q_raw = (question or "").strip()
+        q_norm = q_raw.replace(" ", "")
+        if q_raw:
+            has_best_school_phrase = any(k in q_norm for k in ["โรงเรียนไหนดี", "ไหนดีสุด", "ดีที่สุด"])
+            has_school_context = "โรงเรียน" in q_raw
+            has_metric_hint = any(k in q_raw for k in ["อัตราส่วน", "นักเรียน", "ครู", "ผลสอบ", "คะแนน", "ใกล้", "สังกัด", "ค่าเทอม"])
+            if has_best_school_phrase and has_school_context and not has_metric_hint:
+                msg = "ต้องการดูคำว่า 'ดีที่สุด' ในแง่ไหนครับ เช่น อัตราส่วนครูต่อนักเรียน หรือจำนวนนักเรียน"
+                return [{"name": "__ask_back__", "params": {"message": msg, "pending_tool": None}}]
+
+        # Quick-path: threshold follow-up ("มากกว่า 800 คนล่ะ")
+        # Avoid dropping to GENERAL/ask-back when user omits metric but previous scope exists.
+        q_followup_markers = ["แล้ว", "ล่ะ", "ละ", "ต่อ", "อีก", "เพิ่ม", "งั้น", "ถ้า", "แล้วถ้า"]
+        threshold_info = self._extract_threshold_followup(q_raw)
+        has_threshold = threshold_info.get("value") is not None and threshold_info.get("operator") is not None
+        if has_threshold:
+            explicit_metric = None
+            if any(k in q_raw for k in ["ครู", "อาจารย์", "บุคลากร"]):
+                explicit_metric = "teachers"
+            elif any(k in q_raw for k in ["นักเรียน", "ผู้เรียน", "เด็ก"]):
+                explicit_metric = "students"
+
+            followup_like = q_raw.startswith(("แล้ว", "งั้น", "ถ้า", "แล้วถ้า")) or any(k in q_raw for k in q_followup_markers)
+            has_scope_in_question = any(k in q_raw for k in ["จังหวัด", "อำเภอ", "เขต", "ตำบล", "แขวง", "ภาค"])
+            ctx = context or {}
+            has_context_scope = bool(ctx.get("last_province") or ctx.get("last_district") or ctx.get("last_region"))
+
+            if followup_like or (not has_scope_in_question and has_context_scope):
+                params: Dict[str, Any] = {
+                    "operator": threshold_info["operator"],
+                    "value": threshold_info["value"],
+                    "limit": 20,
+                }
+
+                metric = explicit_metric
+                if not metric:
+                    active = ctx.get("last_active_query") or {}
+                    if isinstance(active, dict):
+                        active_params = active.get("params", {}) or {}
+                        if active.get("name") == "filter_schools":
+                            metric = active_params.get("metric")
+                params["metric"] = metric or "students"
+
+                province = self._extract_province(q_raw) or ctx.get("last_province")
+                district = self._extract_district(q_raw) or ctx.get("last_district")
+                region = self._extract_region(q_raw) or ctx.get("last_region")
+                if province:
+                    params["province"] = province
+                if district:
+                    params["district"] = district
+                if region and not province:
+                    params["region"] = region
+
+                logger.info(f"⚡ Quick-path THRESHOLD FOLLOW-UP: {params}")
+                return [{"name": "filter_schools", "params": params}]
 
 
         # ══════════════════════════════════════════════════════════════
@@ -314,15 +416,68 @@ class LLMAgent:
                 enriched["region"] = region
 
         if tool == "ranking":
+            q_lower = q.lower()
             scope = enriched.get("scope")
+            asks_region_entity = (
+                any(k in q for k in ["ภาคไหน", "ภาคใด", "ภูมิภาคไหน", "ภูมิภาคใด"])
+                or ("ระดับภาค" in q and not any(k in q for k in ["จังหวัด", "อำเภอ", "ตำบล", "โรงเรียน"]))
+            )
+
+            # Infer ranking metric/order when LLM params are incomplete
+            ratio_kws = [
+                "อัตราส่วน", "ครูต่อ", "ครูต่อนักเรียน", "นักเรียนต่อครู", "ต่อครู", "ต่อเด็ก",
+                "ไม่ทั่วถึง", "ดูแลเด็ก", "ขาดแคลนครู", "ครูน้อยเมื่อเทียบกับเด็ก"
+            ]
+            if any(k in q for k in ratio_kws):
+                enriched["metric"] = "ratio"
+            elif not enriched.get("metric"):
+                if any(k in q for k in ["ครู", "อาจารย์", "บุคลากร"]):
+                    enriched["metric"] = "teachers"
+                elif any(k in q for k in ["นักเรียน", "ผู้เรียน", "เด็ก"]):
+                    enriched["metric"] = "students"
+                else:
+                    enriched["metric"] = "schools"
+
+            if not enriched.get("order"):
+                if any(k in q for k in ["น้อยที่สุด", "ต่ำที่สุด", "ต่ำสุด", "น้อยสุด", "รั้งท้าย"]):
+                    enriched["order"] = "least"
+                else:
+                    enriched["order"] = "most"
+
+            if enriched.get("metric") == "teachers" and not enriched.get("person_type"):
+                person_type = self._extract_person_type(q)
+                if person_type:
+                    pt_aliases = {
+                        "ครูอัตราจ้าง": "ลูกจ้างชั่วคราว",
+                        "อัตราจ้าง": "ลูกจ้างชั่วคราว",
+                        "ครูจ้าง": "ลูกจ้างชั่วคราว",
+                        "ข้าราชการ": "ข้าราชการครู",
+                    }
+                    enriched["person_type"] = pt_aliases.get(person_type, person_type)
+
             if not scope:
-                if any(k in q for k in ["ตำบล", "แขวง"]):
+                if asks_region_entity:
+                    enriched["scope"] = "region"
+                elif any(k in q for k in ["ตำบล", "แขวง"]):
                     enriched["scope"] = "subdistrict"
                 elif any(k in q for k in ["อำเภอ", "เขต"]):
                     enriched["scope"] = "district"
                 elif "จังหวัด" in q:
                     enriched["scope"] = "province"
-            if enriched.get("scope") in ["district", "subdistrict"] and not enriched.get("province"):
+
+            is_country_scope = any(k in q for k in ["ทั่วประเทศ", "ทั้งประเทศ", "ระดับประเทศ"])
+            if is_country_scope and enriched.get("scope") == "province":
+                enriched.pop("province", None)
+                enriched.pop("region", None)
+
+            if enriched.get("scope") == "region":
+                # Region ranking should not be narrowed by stale province context
+                enriched.pop("province", None)
+            if (
+                enriched.get("scope") in ["district", "subdistrict"]
+                and not enriched.get("province")
+                and not enriched.get("region")
+            ):
                 province = self._extract_province(q)
                 if province:
                     enriched["province"] = province
@@ -376,7 +531,11 @@ class LLMAgent:
         if any(k in q for k in rank_kws):
             least_kws = ["น้อยที่สุด", "ต่ำสุด", "ต่ำที่สุด", "รั้งท้าย"]
             order = "least" if any(k in q for k in least_kws) else "most"
-            if any(k in q for k in ["อัตราส่วน", "ครูต่อ", "ครูต่อนักเรียน", "ครูต่อเด็ก", "นักเรียนต่อครู"]):
+            ratio_kws = [
+                "อัตราส่วน", "ครูต่อ", "ครูต่อนักเรียน", "ครูต่อเด็ก", "นักเรียนต่อครู",
+                "ไม่ทั่วถึง", "ดูแลเด็ก", "ขาดแคลนครู", "ครูน้อยเมื่อเทียบกับเด็ก"
+            ]
+            if any(k in q for k in ratio_kws):
                 metric = "ratio"
             elif has_teachers:
                 metric = "teachers"
@@ -394,32 +553,69 @@ class LLMAgent:
 
             province = params.get("province") or self._extract_province(q)
             region = params.get("region") or self._extract_region(q)
+            person_type = params.get("person_type") or self._extract_person_type(q)
+            if isinstance(person_type, str):
+                person_type = {
+                    "ครูอัตราจ้าง": "ลูกจ้างชั่วคราว",
+                    "อัตราจ้าง": "ลูกจ้างชั่วคราว",
+                    "ครูจ้าง": "ลูกจ้างชั่วคราว",
+                    "ข้าราชการ": "ข้าราชการครู",
+                }.get(person_type, person_type)
 
             if any(k in q for k in ["ตำบล", "แขวง"]):
-                # Prefer ranking_subdistricts for explicit subdistrict questions
-                return "ranking_subdistricts", {
-                    "province": province,
-                    "district": params.get("district"),
+                # Prefer dedicated subdistrict ranking when province is known.
+                # If only region is known, use generic ranking(scope=subdistrict, region=...)
+                if province:
+                    return "ranking_subdistricts", {
+                        "province": province,
+                        "district": params.get("district"),
+                        "metric": metric,
+                        "order": order,
+                        "limit": limit or 5
+                    }
+                ranking_params = {
                     "metric": metric,
                     "order": order,
+                    "scope": "subdistrict",
                     "limit": limit or 5
                 }
+                if region:
+                    ranking_params["region"] = region
+                return "ranking", ranking_params
 
-            if any(k in q for k in ["อำเภอ", "เขต"]):
+            asks_region_entity = (
+                any(k in q for k in ["ภาคไหน", "ภาคใด", "ภูมิภาคไหน", "ภูมิภาคใด"])
+                or ("ระดับภาค" in q and not any(k in q for k in ["จังหวัด", "อำเภอ", "ตำบล", "โรงเรียน"]))
+            )
+
+            if asks_region_entity:
+                scope = "region"
+            elif any(k in q for k in ["อำเภอ", "เขต"]):
                 scope = "district"
             elif "โรงเรียน" in q:
                 scope = "school"
             else:
                 scope = "province"
 
-            return "ranking", {
+            ranking_params = {
                 "metric": metric,
                 "order": order,
                 "scope": scope,
-                "province": province,
-                "region": region,
                 "limit": limit or 5
             }
+            if metric == "teachers" and person_type:
+                ranking_params["person_type"] = person_type
+            if scope == "region":
+                # "ภาคไหน..." should rank all regions (not constrain to one region/province)
+                ranking_params.pop("province", None)
+                ranking_params.pop("region", None)
+            else:
+                if province:
+                    ranking_params["province"] = province
+                if region:
+                    ranking_params["region"] = region
+
+            return "ranking", ranking_params
 
         # If asking for both students + teachers at province scope (WITHOUT school name), use province summary
         if (has_students and has_teachers) and params.get("province") and not params.get("school_name"):
@@ -545,12 +741,20 @@ class LLMAgent:
 
         if cleaned.get("scope") in scope_map:
             cleaned["scope"] = scope_map[cleaned["scope"]]
-        # If scope ends up as "region" for ranking, normalize to province-scope with region filter
-        if tool == "ranking" and cleaned.get("scope") == "region":
-            cleaned["scope"] = "province"
+        # Keep scope="region" for ranking (used by questions like "ภาคไหนมี...มากที่สุด")
 
         if cleaned.get("operator") in operator_map:
             cleaned["operator"] = operator_map[cleaned["operator"]]
+
+        if isinstance(cleaned.get("person_type"), str):
+            person_type_map = {
+                "ครูอัตราจ้าง": "ลูกจ้างชั่วคราว",
+                "อัตราจ้าง": "ลูกจ้างชั่วคราว",
+                "ครูจ้าง": "ลูกจ้างชั่วคราว",
+                "ข้าราชการ": "ข้าราชการครู",
+                "พนง.ราชการ": "พนักงานราชการ",
+            }
+            cleaned["person_type"] = person_type_map.get(cleaned["person_type"].strip(), cleaned["person_type"].strip())
 
         # Ensure limit is int and reasonable
         if "limit" in cleaned and cleaned["limit"] is not None:
@@ -631,8 +835,10 @@ class LLMAgent:
         if not text:
             return None
 
-        # Only handle short follow-ups
-        if len(text) > 30:
+        # Handle short/medium follow-ups, but ignore long standalone questions
+        followup_markers = ["แล้ว", "ล่ะ", "ละ", "ต่อ", "อีก", "เพิ่ม", "ขอ", "รายละเอียด", "เทียบ", "ส่วน", "เฉพาะ"]
+        looks_followup = text.startswith(("แล้ว", "งั้น", "ถ้า", "แล้วถ้า")) or any(k in text for k in followup_markers)
+        if len(text) > 160 or (len(text) > 40 and not looks_followup):
             return None
 
         # Detect "latest year" hints
@@ -651,6 +857,13 @@ class LLMAgent:
             region = self._extract_region(text.replace("ทั้ง", ""))
         threshold = self._extract_threshold_followup(text)
         person_type = self._extract_person_type(text)
+        if isinstance(person_type, str):
+            person_type = {
+                "ครูอัตราจ้าง": "ลูกจ้างชั่วคราว",
+                "อัตราจ้าง": "ลูกจ้างชั่วคราว",
+                "ครูจ้าง": "ลูกจ้างชั่วคราว",
+                "ข้าราชการ": "ข้าราชการครู",
+            }.get(person_type, person_type)
 
         # If nothing useful found
         if (
@@ -662,6 +875,7 @@ class LLMAgent:
             and not threshold.get("value")
             and not person_type
             and not has_system_followup
+            and not looks_followup
         ):
             return None
 
@@ -743,7 +957,46 @@ class LLMAgent:
                 params["district"] = district
             return [{"name": tool, "params": params}]
 
-        # If active query is get_school_full_details or search, ignore year follow-up
+        if tool == "ranking":
+            if any(k in text for k in ["น้อยที่สุด", "ต่ำสุด", "ต่ำที่สุด", "น้อยสุด"]):
+                params["order"] = "least"
+            elif any(k in text for k in ["มากที่สุด", "สูงสุด", "เยอะที่สุด", "มากสุด"]):
+                params["order"] = "most"
+            if person_type and params.get("metric") == "teachers":
+                params["person_type"] = person_type
+            if region and not params.get("region") and not params.get("province"):
+                params["region"] = region
+            if province and not params.get("province") and not params.get("region"):
+                params["province"] = province
+            if district and not params.get("district") and params.get("scope") in ["subdistrict"]:
+                params["district"] = district
+            return [{"name": tool, "params": params}]
+
+        # Follow-up from school details: continue within same school context
+        if tool == "get_school_full_details":
+            school_name = params.get("school_name")
+            if not school_name:
+                return None
+
+            follow_params = {"school_name": school_name}
+            if params.get("province"):
+                follow_params["province"] = params.get("province")
+            if year:
+                follow_params["year"] = year
+
+            if any(k in text for k in ["ครู", "อาจารย์", "บุคลากร"]):
+                if person_type:
+                    follow_params["person_type"] = person_type
+                return [{"name": "count_teachers", "params": follow_params}]
+            if any(k in text for k in ["นักเรียน", "ชั้น", "ม.", "ป.", "อนุบาล"]):
+                grade = self._extract_grade(text)
+                if grade:
+                    follow_params["grade"] = grade
+                return [{"name": "count_students", "params": follow_params}]
+            if any(k in text for k in ["รายละเอียด", "อยู่ที่ไหน", "พิกัด", "แผนที่"]):
+                return [{"name": "get_school_full_details", "params": follow_params}]
+
+        # If active query is unrelated for follow-up transformation, use standard routing
         return None
 
     def _extract_threshold_followup(self, text: str) -> Dict[str, Any]:
@@ -922,7 +1175,8 @@ class LLMAgent:
         q_text = question or ""
         q_norm = q_text.replace(" ", "")
         follow_kws = ["แล้ว", "ต่อ", "อีก", "เพิ่ม", "ขอรายละเอียด", "รายละเอียด", "พิกัด", "ที่ไหน", "เบอร์ติดต่อ", "ครูกี่", "นักเรียนกี่", "ข้อมูล"]
-        is_followup = len(q_text) <= 28 and any(k in q_text for k in follow_kws)
+        starts_followup = q_text.startswith(("แล้ว", "งั้น", "ถ้า", "กรณี", "แล้วถ้า"))
+        is_followup = (len(q_text) <= 120 and any(k in q_text for k in follow_kws)) or starts_followup
         
         for tool in tool_calls:
             params = tool.get('params', {})
@@ -956,13 +1210,12 @@ class LLMAgent:
                     else:
                         # If a specific school_name is present, do NOT force province from context
                         # This avoids incorrectly narrowing searches for named schools.
-                        if params.get('school_name'):
-                            continue
-                        # Combine school-specific + province-only tools for province injection
-                        province_aware_tools = school_specific_tools + province_only_tools + aggregation_tools
-                        if isinstance(ctx_province, str) and tool['name'] in province_aware_tools:
-                            params['province'] = ctx_province
-                            logger.info(f"💉 Injected context province: {ctx_province}")
+                        if not params.get('school_name'):
+                            # Combine school-specific + province-only tools for province injection
+                            province_aware_tools = school_specific_tools + province_only_tools + aggregation_tools
+                            if isinstance(ctx_province, str) and tool['name'] in province_aware_tools:
+                                params['province'] = ctx_province
+                                logger.info(f"💉 Injected context province: {ctx_province}")
 
             # Normalize region if LLM put it into province
             if params.get('province') and not params.get('region'):
@@ -2796,6 +3049,8 @@ After answering the main question, please **NATURALLY** suggest 1-2 of these act
                     subject_text = "อำเภอ"
                 elif scope in ["subdistrict", "subdistricts"]:
                     subject_text = "ตำบล"
+                elif scope in ["region", "regions"]:
+                    subject_text = "ภาค"
                 else:
                     subject_text = "โรงเรียน"
 

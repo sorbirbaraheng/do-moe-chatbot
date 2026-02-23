@@ -95,6 +95,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
         testGeminiConnection,
         testGroqConnection,
         testRAGConnection,
+        testProviderConnection,
         supportedModelsByCategory,
         updateRAG,
         resetToDefault,
@@ -292,6 +293,29 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
         }));
     };
 
+    const handleTestProvider = async (providerId: string, category: 'general' | 'school' | 'student') => {
+        setIsTesting(providerId as any);
+        const keysField = `${providerId}Keys` as keyof typeof draftApiKeys[typeof category];
+        const connectedField = `${providerId}Connected` as keyof typeof draftApiKeys[typeof category];
+        const keys = ((draftApiKeys[category] as any)[keysField] || []).filter((k: string) => k.trim());
+
+        if (keys.length === 0) {
+            setSaveMessage(`❌ No ${providerId} keys to test`);
+            setIsTesting(null);
+            return;
+        }
+
+        const result = await testProviderConnection(providerId, keys[0]);
+
+        setSaveMessage(result.success ? `✅ ${result.message}` : `❌ ${result.message}`);
+        setTimeout(() => setSaveMessage(''), 3000);
+        setIsTesting(null);
+
+        setDraftApiKeys(prev => ({
+            ...prev,
+            [category]: { ...prev[category], [connectedField]: result.success }
+        }));
+    };
 
     const handleTestRAG = async (category: 'general' | 'school' | 'student') => {
         setIsTesting('rag');
@@ -490,6 +514,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
                         setActiveApiCategory={setActiveApiCategory}
                         handleTestGemini={handleTestGemini}
                         handleTestGroq={handleTestGroq}
+                        handleTestProvider={handleTestProvider}
                         handleTestRAG={handleTestRAG}
                         handleTestFlask={handleTestFlask}
                         handleOptimizeQueue={handleOptimizeQueue}
@@ -514,7 +539,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
                 return <AdminAuditTab />;
 
             default:
-                return <ApiSettingsTab {...sharedProps} activeApiCategory={activeApiCategory} setActiveApiCategory={setActiveApiCategory} handleTestGemini={handleTestGemini} handleTestGroq={handleTestGroq} handleTestRAG={handleTestRAG} handleTestFlask={handleTestFlask} handleOptimizeQueue={handleOptimizeQueue} keyStatuses={keyStatuses} keyErrorMessages={keyErrorMessages} keyErrorTypes={keyErrorTypes} testingKeyIndex={testingKeyIndex} />;
+                return <ApiSettingsTab {...sharedProps} activeApiCategory={activeApiCategory} setActiveApiCategory={setActiveApiCategory} handleTestGemini={handleTestGemini} handleTestGroq={handleTestGroq} handleTestProvider={handleTestProvider} handleTestRAG={handleTestRAG} handleTestFlask={handleTestFlask} handleOptimizeQueue={handleOptimizeQueue} keyStatuses={keyStatuses} keyErrorMessages={keyErrorMessages} keyErrorTypes={keyErrorTypes} testingKeyIndex={testingKeyIndex} />;
         }
     };
 

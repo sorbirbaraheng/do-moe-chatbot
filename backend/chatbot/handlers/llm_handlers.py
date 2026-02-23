@@ -249,6 +249,19 @@ class LLMHandlersMixin:
                 
                 response += "\nครับ"
                 
+            # Handle student_count_not_found data type
+            elif data_type == "student_count_not_found":
+                school_name = data.get('school_name', '')
+                requested = data.get('requested_grade', '')
+                available = data.get('available_grades', {})
+                total = data.get('total_students', 0)
+                response = f"โรงเรียน{school_name} ไม่ได้เปิดสอนชั้น {requested} ครับ"
+                if available:
+                    levels = ', '.join(available.keys())
+                    response += f"\n\n🏢 โรงเรียนนี้เปิดสอน: **{levels}**"
+                    response += f"\n📊 นักเรียนทั้งหมด: **{total:,} คน**ครับ"
+                response += f"\n\n💡 ลองถามระดับที่มีได้ เช่นลองถาม '{list(available.keys())[0] if available else 'ป.1'} มีกี่คน'"
+                return response
             # Generic fallback
             else:
                 # Just format key-value pairs nicely
@@ -279,7 +292,17 @@ class LLMHandlersMixin:
         """
         try:
             import json
-            
+
+            # Build data_type-specific instruction
+            extra_instructions = ""
+            if data_type == "student_count_not_found":
+                extra_instructions = """
+**กรณีพิเศษ: ไม่พบชั้นเรียนที่ถาม** (grade_not_found = true)
+1. อธิบายอย่างเป็นอารมณ์ดีว่าโรงเรียนนี้ไม่ได้เปิดสอนระดับชั้นที่ถาม
+2. บอกว่าโรงเรียนนี้เปิดสอนระดับใดบ้าง (จาก available_grades) และมีนักเรียนรวมเท่าไร (total_students)
+3. เสนอทางเลือกให้ปิ่ เช่น "ปิ่อยากทราบว่าชั้น ป.X มีกี่คนไหมครับ"
+4. ห้ามใช้ ❌ หรือบอกว่า"ไม่พบข้อมูล" ตรงๆ ให้พูดเป็นธรรมชาติว่าโรงเรียนเปิดกี่ระดับ"""
+
             prompt = f"""คุณคือ "น้องดีโอ" (DO-MOE) ผู้ช่วย AI อารมณ์ดีจากกระทรวงศึกษาธิการ
 หน้าที่ของคุณคือรายงานข้อมูลการศึกษาให้เข้าใจง่ายและน่าอ่านที่สุด
 
@@ -287,16 +310,16 @@ class LLMHandlersMixin:
 - 👦 **เป็นผู้ชาย** สุภาพ อ่อนน้อม (ใช้ "ครับ" เสมอ)
 - 🤝 **เป็นกันเอง** เหมือนน้องรายงานพี่ (ใช้คำว่า "พี่" แทนผู้ใช้ได้)
 - 💡 **ฉลาดและกระตือรือร้น** ที่จะช่วยเหลือ
-
+{extra_instructions}
 **คำถามจากพี่:** "{question}"
 **ข้อมูลที่พบ:**
 {json.dumps(data, ensure_ascii=False, indent=2)}
 
 **คำแนะนำการตอบ:**
 1. **ทักทายอย่างสดใส** (เช่น "สวัสดีครับพี่! น้องดีโอไปค้นข้อมูลมาให้แล้วครับ/เจอข้อมูลแล้วครับ")
-2. **สรุปคำตอบให้ชัดเจน** ในบรรทัดแรก (เช่น "โรงเรียน... มีนักเรียนทั้งหมด X คนครับ")
+2. **สรุปคำตอบให้ชัดเจน** ในบรรทัดแรก
 3. **แสดงรายละเอียด** เป็นข้อย่อยอ่านง่าย (ใช้ Emoji ประกอบหัวข้อ)
-4. **ปิดท้าย** ด้วยเกร็ดเล็กๆ หรือคำอวยพรสั้นๆ ให้น่าประทับใจ
+4. **ปิดท้าย** ด้วยเกร็ดเล็กๆ หรือชวนถามต่อ
 
 **ข้อควรระวัง:**
 - ห้ามมั่วตัวเลขเด็ดขาด (ใช้ตามที่ให้เท่านั้น)
@@ -312,3 +335,4 @@ class LLMHandlersMixin:
             logger.error(f"❌ LLM formatting failed: {e}")
             # Fallback: Format data nicely instead of raw JSON
             return self._fallback_format_data(data, data_type, question)
+

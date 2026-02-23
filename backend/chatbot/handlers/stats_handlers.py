@@ -151,6 +151,8 @@ class StatsHandlersMixin:
                 search_query = f"โรงเรียน{school_name or ''} {detected_grade or ''} {detected_gender or ''} {parsed.agency or ''}"
                 results = self.search_engine._semantic_search(search_query, "edu_students_v5", top_k=50)
             
+            # Filter by grade if detected
+            all_school_results = list(results)  # keep full results for fallback
             if detected_grade and results:
                 grade_lower = detected_grade.lower()
                 filtered_results = []
@@ -167,11 +169,8 @@ class StatsHandlersMixin:
                 school_counts = {}
                 for r in results:
                     meta = r.payload.get('metadata', {})
-                    # DEBUG: Add school name debug tag
                     school = meta.get('school_name', 'ไม่ระบุ')
-                    school = f"{school} [Q: {school_name}]" 
                     count = meta.get('count', 1)
-                    
                     if school not in school_counts:
                         school_counts[school] = {
                             'total': 0,
@@ -183,7 +182,6 @@ class StatsHandlersMixin:
                     school_counts[school]['total'] += count
                 
                 total_students = sum(s['total'] for s in school_counts.values())
-                
                 data = {
                     "school_counts": {k: v for k, v in school_counts.items()},
                     "total_students": total_students,
@@ -192,18 +190,42 @@ class StatsHandlersMixin:
                     "school_name": school_name,
                     "num_schools": len(school_counts)
                 }
-                
                 return self._format_response_with_llm(message, data, "student_count")
+            
             else:
-                response_text = f"❌ ไม่พบข้อมูลนักเรียน"
+                # ── Smart Fallback: grade not found → show school total + available grades ──
+                if detected_grade and school_name and all_school_results:
+                    # Collect all grades available for this school
+                    available_grades = {}
+                    total_all = 0
+                    for r in all_school_results:
+                        meta = r.payload.get('metadata', {})
+                        grade = meta.get('grade', '')
+                        count = meta.get('count', 0)
+                        if grade:
+                            available_grades[grade] = available_grades.get(grade, 0) + count
+                        total_all += count
+                    
+                    data = {
+                        "school_name": school_name,
+                        "requested_grade": detected_grade,
+                        "grade_not_found": True,
+                        "available_grades": available_grades,
+                        "total_students": total_all,
+                        "hint": "โรงเรียนนี้อาจไม่เปิดสอนในระดับชั้นที่ถาม"
+                    }
+                    return self._format_response_with_llm(message, data, "student_count_not_found")
+                
+                # Generic fallback
+                parts = []
                 if school_name:
-                    response_text += f" โรงเรียน \"{school_name}\""
+                    parts.append(f"โรงเรียน\"{school_name}\"")
                 if detected_grade:
-                    response_text += f" ระดับ {detected_grade}"
+                    parts.append(f"ชั้น {detected_grade}")
                 if detected_gender:
-                    response_text += f" เพศ{detected_gender}"
-                response_text += "\n\n💡 **แนะนำ:**\n• ตรวจสอบชื่อโรงเรียนให้ถูกต้อง\n• ลองค้นหาด้วยชื่อเต็มหรือชื่อย่อ\n"
-                return response_text
+                    parts.append(f"เพศ{detected_gender}")
+                hint = "\n\n💡 ลองตรวจสอบชื่อโรงเรียน หรือระบุจังหวัดเพิ่มเติมครับ"
+                return f"ขออภัยครับ ไม่พบข้อมูลนักเรียน {'ของ' + ' '.join(parts) if parts else ''} ในฐานข้อมูล{hint}"
                 
         except Exception as e:
             logger.error(f"❌ Student count query error: {e}")
@@ -322,13 +344,18 @@ class StatsHandlersMixin:
                 
                 return self._format_response_with_llm(message, data, "teacher_count")
             else:
-                response_text = f"❌ ไม่พบข้อมูลครู"
+                # Smart fallback: try to give context
+                parts = []
                 if clean_school_name:
-                    response_text += f" โรงเรียน \"{clean_school_name}\""
+                    parts.append(f"โรงเรียน\"{clean_school_name}\"")
                 if detected_gender:
-                    response_text += f" เพศ{detected_gender}"
-                response_text += "\n\n💡 ลองตรวจสอบชื่อโรงเรียนให้ถูกต้อง"
-                return response_text
+                    parts.append(f"เพศ{detected_gender}")
+                scope = ' '.join(parts) if parts else 'ที่ระบุ'
+                return (f"ขออภัยครับ ไม่พบข้อมูลครู{scope} ในฐานข้อมูล\n\n"
+                        f"💡 อาจเกิดจาก:\n"
+                        f"• ชื่อโรงเรียนสะกดไม่ตรง ลองใช้ชื่อเต็ม\n"
+                        f"• โรงเรียนนี้ไม่มีข้อมูลครูในระบบ\n"
+                        f"• ลองถามข้อมูลนักเรียนหรือข้อมูลโรงเรียนแทนได้ครับ")
                 
         except Exception as e:
             logger.error(f"❌ Teacher count query error: {e}")
@@ -421,7 +448,11 @@ class StatsHandlersMixin:
                 
                 return response_text
             else:
-                return f"❌ ไม่พบข้อมูลโรงเรียน \"{clean_school_name}\" ในฐานข้อมูล\n\n💡 ลองตรวจสอบชื่อโรงเรียนให้ถูกต้อง"
+                return (f"ขออภัยครับ ไม่พบข้อมูลโรงเรียน \"{clean_school_name}\" ในฐานข้อมูลโดยตรงครับ\n\n"
+                        f"💡 ลองใช้:\n"
+                        f"• ชื่อเต็ม เช่น \"โรงเรียน{clean_school_name}\"\n"
+                        f"• ระบุจังหวัด เช่น \"{clean_school_name} จังหวัด...\"\n"
+                        f"• หรือลองถามว่า \"โรงเรียนในจังหวัด... มีอะไรบ้าง\"")
                 
         except Exception as e:
             logger.error(f"❌ School info v5 error: {e}")
@@ -511,9 +542,13 @@ class StatsHandlersMixin:
                 return self._format_response_with_llm(message, data, "ratio")
             else:
                 if clean_school_name:
-                    return f"❌ ไม่พบข้อมูลอัตราส่วนของโรงเรียน \"{clean_school_name}\""
+                    return (f"ขออภัยครับ ไม่พบข้อมูลอัตราส่วนครู:นักเรียนของโรงเรียน \"{clean_school_name}\"\n\n"
+                            f"💡 ลองถามว่า:\n"
+                            f"• นักเรียนโรงเรียน{clean_school_name}มีกี่คน\n"
+                            f"• ครูโรงเรียน{clean_school_name}มีกี่คน")
                 else:
-                    return f"❌ ไม่พบข้อมูลอัตราส่วน กรุณาระบุโรงเรียนหรือจังหวัด"
+                    return ("กรุณาระบุชื่อโรงเรียนหรือจังหวัดที่ต้องการทราบอัตราส่วนครูต่อนักเรียนด้วยครับ\n"
+                            "เช่น \"อัตราส่วนครูต่อนักเรียนโรงเรียนอนุบาลนราธิวาส\"")
                 
         except Exception as e:
             logger.error(f"❌ Ratio query error: {e}")
@@ -732,7 +767,9 @@ class StatsHandlersMixin:
                 
                 return self._format_response_with_llm(message, data, "school_list")
             else:
-                return f"❌ ไม่พบโรงเรียนในพื้นที่นี้"
+                area = district or province or 'พื้นที่ที่ระบุ'
+                return (f"ขออภัยครับ ไม่พบข้อมูลโรงเรียนใน{area}\n\n"
+                        f"💡 ลองระบุจังหวัดหรืออำเภอให้ถูกต้อง เช่น \"โรงเรียนในจังหวัดเชียงใหม่\"")
                 
         except Exception as e:
             logger.error(f"❌ School list error: {e}")

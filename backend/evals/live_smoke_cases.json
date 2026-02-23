@@ -1,0 +1,64 @@
+[
+  {
+    "id": "school-count-province",
+    "session": "thread-a",
+    "message": "จังหวัดนครสวรรค์มีโรงเรียนกี่แห่ง",
+    "expect_any": ["โรงเรียน", "แห่ง"]
+  },
+  {
+    "id": "ranking-district-in-province",
+    "session": "thread-b",
+    "message": "ในจังหวัดสงขลา อำเภอไหนมีโรงเรียนมากที่สุด",
+    "expect_any": ["อำเภอ", "อันดับ"]
+  },
+  {
+    "id": "ranking-region-level",
+    "session": "thread-c",
+    "message": "ภาคไหนมีนักเรียนมากที่สุด",
+    "expect_any": ["ภาค"]
+  },
+  {
+    "id": "filter-less-than",
+    "session": "thread-d",
+    "message": "มีโรงเรียนในอำเภอกะพ้อ ปัตตานี ที่นักเรียนน้อยกว่า 120 คนไหม",
+    "expect_any": ["โรงเรียน", "คน"]
+  },
+  {
+    "id": "filter-followup-greater-than",
+    "session": "thread-d",
+    "message": "มากกว่า 800 คนล่ะ",
+    "expect_any": ["คน", "โรงเรียน"],
+    "forbid_any": ["ขอรายละเอียดเพิ่มอีกนิด"]
+  },
+  {
+    "id": "system-type-in",
+    "session": "thread-e",
+    "message": "โรงเรียนในระบบมีกี่โรงในจังหวัดนราธิวาส",
+    "expect_any": ["ในระบบ", "จังหวัดนราธิวาส"]
+  },
+  {
+    "id": "system-type-followup-out",
+    "session": "thread-e",
+    "message": "นอกระบบล่ะ",
+    "expect_any": ["นอกระบบ", "จังหวัดนราธิวาส"],
+    "forbid_any": ["ขอรายละเอียดเพิ่มอีกนิด"]
+  },
+  {
+    "id": "teacher-person-type-ranking",
+    "session": "thread-f",
+    "message": "จังหวัดไหนมีครูอัตราจ้างน้อยที่สุด",
+    "expect_any": ["ครู", "จังหวัด"]
+  },
+  {
+    "id": "askback-best-school",
+    "session": "thread-g",
+    "message": "อยากรู้ว่าโรงเรียนไหนดีสุด",
+    "expect_any": ["แง่ไหน", "อัตราส่วนครูต่อนักเรียน"]
+  },
+  {
+    "id": "province-summary",
+    "session": "thread-h",
+    "message": "สรุปจังหวัดเชียงใหม่ (โรงเรียน นักเรียน ครู)",
+    "expect_any": ["เชียงใหม่", "โรงเรียน", "นักเรียน", "ครู"]
+  }
+]

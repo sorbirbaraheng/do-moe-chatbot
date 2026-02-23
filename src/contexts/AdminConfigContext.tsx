@@ -37,6 +37,7 @@ interface AdminConfigContextType {
     testGeminiConnection: (apiKey: string, category: 'general' | 'school' | 'student') => Promise<{ success: boolean; message: string; supportedModels?: string[]; quota?: string; errorType?: 'none' | 'quota_daily' | 'quota_minute' | 'invalid_key' | 'network' | 'unknown'; quotaInfo?: { remainingRequests?: number; limitRequests?: number; resetTime?: string } }>;
     testGroqConnection: (apiKey: string, category: string) => Promise<{ success: boolean; message: string; errorType?: string }>;
     testRAGConnection: (endpoint: string, apiKey: string, category: 'general' | 'school' | 'student') => Promise<{ success: boolean; message: string }>;
+    testProviderConnection: (providerId: string, apiKey: string) => Promise<{ success: boolean; message: string; provider: string }>;
     supportedModelsByCategory: Record<string, string[]>;
 }
 
@@ -417,6 +418,11 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
         return await serviceTest(apiKey, category);
     };
 
+    const testProviderConnection = async (providerId: string, apiKey: string) => {
+        const { testProviderConnection: serviceTest } = await import('../services/geminiService');
+        return await serviceTest(providerId, apiKey);
+    };
+
     const testRAGConnection = async (endpoint: string, apiKey: string, category: 'general' | 'school' | 'student'): Promise<{ success: boolean; message: string }> => {
         try {
             if (!endpoint) return { success: false, message: 'กรุณาระบุ URL' };
@@ -500,6 +506,7 @@ ${category === Category.Auto ? '- ระบบจะเลือกหมวด�
             testGeminiConnection,
             testGroqConnection,
             testRAGConnection,
+            testProviderConnection,
             supportedModelsByCategory,
         }
         }>

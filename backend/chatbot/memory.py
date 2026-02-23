@@ -32,6 +32,7 @@ class ConversationMemory:
         self.last_scope_type: Optional[str] = None
         self.last_scope_value: Optional[str] = None
         self.last_updated_at: Optional[float] = None
+        self.last_active_query: Optional[Dict[str, Any]] = None  # For follow-up routing fallback
         # Disambiguation state (for multi-turn school selection)
         self.last_disambig_choices: Optional[List[Dict[str, str]]] = None  # [{"name": ..., "province": ...}]
         self.last_disambig_query: Optional[str] = None  # Original query that triggered disambiguation
@@ -92,7 +93,14 @@ class ConversationMemory:
                     self.last_province = province_val
         if parsed.region:
             self.last_region = parsed.region
-        if parsed.district:
+        # Guard: never store Thai adjectives/superlatives as district names
+        DISTRICT_BLACKLIST = {
+            "มาก", "น้อย", "สุด", "ดี", "เก่ง", "ใหญ่", "เล็ก", "ไหน", "ทั้งหมด",
+            "อะไร", "เท่าไร", "กี่", "ไหม", "ครับ", "ค่ะ", "นะ", "อีก", "บ้าง",
+            "ที่สุด", "มากสุด", "น้อยสุด", "มากที่สุด", "น้อยที่สุด", "ทั่วประเทศ",
+            "ทั้งประเทศ", "ทุก", "แรก", "อันดับ", "ลำดับ", "หลัก", "รอง",
+        }
+        if parsed.district and parsed.district not in DISTRICT_BLACKLIST:
             self.last_district = parsed.district
         if parsed.intent:
             self.last_intent = parsed.intent
@@ -199,6 +207,9 @@ class ConversationMemory:
         has_follow_up_word = any(p in query_lower for p in follow_up_patterns)
         lacks_location = not parsed.province and not parsed.district
         is_global_ranking_query = ("จังหวัด" in query_lower) and any(p in query_lower for p in ["อันดับ", "จัดอันดับ", "มากที่สุด", "น้อยที่สุด", "สูงที่สุด", "ต่ำที่สุด"])
+        is_country_scope_query = any(p in query_lower for p in ["ทั่วประเทศ", "ทั้งประเทศ", "ระดับประเทศ"])
+        is_region_scope_query = bool(parsed.region) or ("ภาค" in query_lower)
+        is_broad_scope_query = is_global_ranking_query or is_country_scope_query or is_region_scope_query
         
         # Detect "ทุกสังกัด" or "ทั้งหมด" type queries
         is_all_agencies_query = any(p in query_lower for p in ['ทุกสังกัด', 'ทั้งหมด', 'สังกัดอื่น', 'ทุกหน่วยงาน', 'ทั้งนั้น'])
@@ -219,6 +230,8 @@ class ConversationMemory:
             if has_new_school_name:
                 # User is asking about a specific school - search globally, don't use memory province
                 logger.info(f"   🏫 New school name detected: '{parsed.school_name}' - skipping province memory for accurate search")
+            elif is_country_scope_query:
+                logger.info("   🌐 Country-scope query detected - skipping province/region memory")
             elif not parsed.province and not parsed.region and self.last_province and not is_agency_only_query:
                 if self.last_province in REGIONS:
                     parsed.region = self.last_province
@@ -235,7 +248,11 @@ class ConversationMemory:
                 logger.info(f"   ℹ️ Region query detected - skipping province memory")
             
             # Apply stored district if relevant
-            if not parsed.district and self.last_district:
+            wants_district_scope = (
+                any(k in query_lower for k in ["อำเภอ", "เขต", "ตำบล", "แขวง"])
+                or parsed.level in [QueryLevel.DISTRICT, QueryLevel.SUBDISTRICT]
+            )
+            if not parsed.district and self.last_district and wants_district_scope and not is_broad_scope_query:
                 parsed.district = self.last_district
                 logger.info(f"   ✅ Applied district from memory: {self.last_district}")
             
@@ -258,7 +275,7 @@ class ConversationMemory:
         region_safe = not parsed.region or (self.last_region and parsed.region == self.last_region)
         
         if self.last_school_name and not parsed.school_name and province_safe and region_safe:
-             if not is_global_ranking_query:
+             if not is_broad_scope_query:
                  parsed.school_name = self.last_school_name
                  logger.info(f"   🏫 Applied school name from memory: {self.last_school_name}")
         
@@ -278,6 +295,7 @@ class ConversationMemory:
         self.last_scope_type = None
         self.last_scope_value = None
         self.last_updated_at = None
+        self.last_active_query = None
         self.last_disambig_choices = None
         self.last_disambig_query = None
         self.last_ai_response = None
@@ -300,6 +318,7 @@ class ConversationMemory:
             'last_scope_type': self.last_scope_type,
             'last_scope_value': self.last_scope_value,
             'last_updated_at': self.last_updated_at,
+            'last_active_query': self.last_active_query,
             'last_disambig_choices': self.last_disambig_choices,
             'last_disambig_query': self.last_disambig_query,
             'last_ai_response': self.last_ai_response,
@@ -319,6 +338,7 @@ class ConversationMemory:
         mem.last_scope_type = data.get('last_scope_type')
         mem.last_scope_value = data.get('last_scope_value')
         mem.last_updated_at = data.get('last_updated_at')
+        mem.last_active_query = data.get('last_active_query')
         mem.last_disambig_choices = data.get('last_disambig_choices')
         mem.last_disambig_query = data.get('last_disambig_query')
         mem.last_ai_response = data.get('last_ai_response')

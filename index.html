@@ -1647,8 +1647,199 @@
           transform: translateY(0);
         }
       }
+
+      /* ═══════════════════════════════════════════════════
+         📱 MOBILE REDESIGN — Apple iOS 18 Style
+         ─ All rules below are MOBILE-ONLY (≤767px) ─
+         ═══════════════════════════════════════════════════ */
+
+      /* ── 1. Background ─────────────────────────────── */
+      body {
+        background: #F5F5F7 !important;
+      }
+
+      /* ── 2. Header: floating pill ──────────────────── */
+      .app-header {
+        height: auto !important;
+        margin: 10px 14px 0 !important;
+        padding: 0 8px 0 16px !important;
+        border-radius: 999px !important;
+        background: rgba(255, 255, 255, 0.82) !important;
+        border: 1px solid rgba(255, 255, 255, 0.75) !important;
+        box-shadow:
+          0 8px 28px rgba(13, 18, 40, 0.10),
+          0 2px 8px rgba(0, 0, 0, 0.04),
+          inset 0 1px 0 rgba(255, 255, 255, 0.90) !important;
+        backdrop-filter: blur(30px) saturate(180%) !important;
+        -webkit-backdrop-filter: blur(30px) saturate(180%) !important;
+        position: sticky !important;
+        top: 10px !important;
+        z-index: 50 !important;
+        min-height: 52px !important;
+      }
+
+      /* Hide status dot on mobile */
+      .app-header .hidden.sm\:flex {
+        display: none !important;
+      }
+
+      /* ── 3. Message bubbles ────────────────────────── */
+      .user-bubble-glass {
+        background: linear-gradient(145deg,
+            rgba(28, 28, 34, 0.97) 0%,
+            rgba(36, 33, 46, 0.95) 100%) !important;
+        border: 1px solid rgba(255, 255, 255, 0.13) !important;
+        box-shadow:
+          0 8px 22px rgba(0, 0, 0, 0.20),
+          0 2px 8px rgba(0, 0, 0, 0.10),
+          inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
+        border-radius: 20px 20px 6px 20px !important;
+        max-width: 82vw !important;
+      }
+
+      .ai-bubble {
+        background: #FFFFFF !important;
+        border: 1px solid rgba(0, 0, 0, 0.055) !important;
+        box-shadow:
+          0 4px 16px rgba(0, 0, 0, 0.07),
+          0 1px 4px rgba(0, 0, 0, 0.04) !important;
+        border-radius: 6px 20px 20px 20px !important;
+        max-width: 88vw !important;
+      }
+
+      .animate-message {
+        animation: mob-msg-in 0.40s cubic-bezier(0.23, 1, 0.32, 1) both !important;
+      }
+
+      @keyframes mob-msg-in {
+        from {
+          opacity: 0;
+          transform: translateY(10px) scale(0.98);
+        }
+
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+
+      /* ── 4. Welcome / empty state ─────────────────── */
+      .hero-glass {
+        padding: 26px 20px 22px !important;
+        border-radius: 24px !important;
+        background: rgba(255, 255, 255, 0.82) !important;
+        border: 1px solid rgba(255, 255, 255, 0.80) !important;
+        backdrop-filter: blur(26px) !important;
+        -webkit-backdrop-filter: blur(26px) !important;
+        box-shadow:
+          0 20px 56px rgba(20, 26, 48, 0.10),
+          0 4px 14px rgba(0, 0, 0, 0.05) !important;
+      }
+
+      .hero-title {
+        font-size: clamp(22px, 5.8vw, 30px) !important;
+        line-height: 1.2 !important;
+        letter-spacing: -0.025em !important;
+      }
+
+      .hero-title-accent {
+        background: linear-gradient(135deg, #A78BFA 0%, #7C6AED 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent !important;
+        filter: drop-shadow(0 1px 5px rgba(124, 106, 237, 0.28));
+      }
+
+      .hero-sub {
+        font-size: 13.5px !important;
+        line-height: 1.65 !important;
+        color: rgba(30, 41, 59, 0.72) !important;
+      }
+
+      .hero-sub-muted {
+        font-size: 12px !important;
+        color: rgba(51, 65, 85, 0.50) !important;
+      }
+
+      .hero-cta-btn {
+        background: linear-gradient(135deg, #A78BFA 0%, #7C6AED 100%) !important;
+        border: none !important;
+        color: #FFFFFF !important;
+        font-weight: 700 !important;
+        font-size: 14px !important;
+        padding: 12px 30px !important;
+        border-radius: 999px !important;
+        box-shadow:
+          0 8px 22px rgba(124, 106, 237, 0.40),
+          0 2px 8px rgba(124, 106, 237, 0.20) !important;
+        letter-spacing: -0.01em;
+        transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+      }
+
+      .hero-cta-btn:active {
+        transform: scale(0.95) !important;
+        box-shadow: 0 3px 10px rgba(124, 106, 237, 0.28) !important;
+      }
+
+      .hero-sample-card {
+        background: rgba(255, 255, 255, 0.88) !important;
+        border: 1px solid rgba(255, 255, 255, 0.90) !important;
+        backdrop-filter: blur(16px) !important;
+        border-radius: 18px !important;
+        box-shadow:
+          0 4px 14px rgba(0, 0, 0, 0.07),
+          0 1px 4px rgba(0, 0, 0, 0.03) !important;
+        padding: 14px 16px !important;
+        transition: transform 0.14s ease, box-shadow 0.14s ease !important;
+      }
+
+      .hero-sample-card:active {
+        transform: scale(0.97) !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04) !important;
+      }
+
+      /* ── 5. Floating Input Area ────────────────────── */
+      .chat-input-area {
+        padding: 10px 10px !important;
+        padding-bottom: max(10px, env(safe-area-inset-bottom, 10px)) !important;
+      }
+
+      /* Glass wrap around input */
+      .chat-input-glass {
+        background: rgba(255, 255, 255, 0.88) !important;
+        border-radius: 26px !important;
+        border: 1px solid rgba(255, 255, 255, 0.82) !important;
+        box-shadow:
+          0 8px 28px rgba(0, 0, 0, 0.09),
+          0 2px 8px rgba(0, 0, 0, 0.04),
+          inset 0 1px 0 rgba(255, 255, 255, 0.92) !important;
+        backdrop-filter: blur(30px) saturate(180%) !important;
+        -webkit-backdrop-filter: blur(30px) saturate(180%) !important;
+      }
+
+      /* Purple send button */
+      .send-btn:not(:disabled) {
+        background: linear-gradient(135deg, #A78BFA 0%, #7C6AED 100%) !important;
+        border-radius: 20px !important;
+        box-shadow:
+          0 6px 18px rgba(124, 106, 237, 0.42),
+          0 2px 6px rgba(124, 106, 237, 0.18) !important;
+        color: #fff !important;
+      }
+
+      .send-btn:not(:disabled):active {
+        transform: scale(0.92) !important;
+        box-shadow: 0 3px 10px rgba(124, 106, 237, 0.28) !important;
+      }
+
+      /* ── 6. Utility ─────────────────────────────────── */
+      .chat-scroll::-webkit-scrollbar,
+      .no-scrollbar::-webkit-scrollbar {
+        display: none !important;
+      }
     }
   </style>
+
   <script type="importmap">
     {
       "imports": {
