@@ -141,16 +141,19 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
             return;
         }
 
-        // Auto-detect if URLs are empty or localhost when accessing from LAN
+        // Auto-detect: always update when accessing from LAN, or when URLs are empty/placeholder
         const currentHost = window.location.hostname;
         const isLan = currentHost !== 'localhost' && currentHost !== '127.0.0.1';
+        const isValidUrl = (url?: string) => url && url.startsWith('http') && !url.includes('your-flask');
         const needsAutoDetect = (
-            !schoolUrl ||
-            !studentUrl ||
-            (isLan && (schoolUrl?.includes('127.0.0.1') || schoolUrl?.includes('localhost')))
+            isLan ||
+            !isValidUrl(schoolUrl) ||
+            !isValidUrl(studentUrl)
         );
 
         if (needsAutoDetect) {
+            // Always store real IP for display/config — actual API calls use
+            // getFlaskBaseUrl() which handles relative URL for nginx proxy separately
             const detectedUrl = isLan
                 ? `http://${currentHost}:5001`
                 : 'http://127.0.0.1:5001';

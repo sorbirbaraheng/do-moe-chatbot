@@ -1,7 +1,0 @@
-# Data Directory
-# วางไฟล์ Excel ที่ต้องการ ingest ไว้ที่นี่
-# 
-# ตัวอย่าง:
-# - Fact_Bangkok.xlsx
-# - Fact_ChiangMai.xlsx
-# - Fact_Songkhla.xlsx

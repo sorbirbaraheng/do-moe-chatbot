@@ -435,12 +435,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
                 // If on LAN (not localhost) but config says localhost, force use of LAN IP for sync
                 if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
                     if (!flaskUrl || flaskUrl.includes('localhost') || flaskUrl.includes('127.0.0.1')) {
-                        console.log('[AdminPanel] 🛡️ Smart Sync: Overriding localhost with LAN IP for backend sync');
-                        flaskUrl = `http://${window.location.hostname}:5001`;
+                        const currentPort = window.location.port;
+                        if (currentPort === '3001' || currentPort === '80' || currentPort === '') {
+                            console.log('[AdminPanel] 🛡️ Smart Sync: Using nginx proxy (relative URL)');
+                            flaskUrl = '';
+                        } else {
+                            console.log('[AdminPanel] 🛡️ Smart Sync: Overriding localhost with LAN IP for backend sync');
+                            flaskUrl = `http://${window.location.hostname}:5001`;
+                        }
                     }
                 }
 
-                flaskUrl = flaskUrl || 'http://127.0.0.1:5001'; // Default to 5001 (Flask), not 7860
+                flaskUrl = flaskUrl ?? 'http://127.0.0.1:5001';
 
                 const response = await fetch(`${flaskUrl}/api/sync-config`, {
                     method: 'POST',

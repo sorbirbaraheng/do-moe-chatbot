@@ -25,8 +25,11 @@ export const SessionMonitorTab: React.FC<SessionMonitorTabProps> = ({ config }) 
         setIsLoading(true);
         setError('');
         try {
-            const rawUrl = config.apiKeys?.general?.flaskApiUrl;
-            const baseUrl = rawUrl ? rawUrl.replace(/\/$/, '') : 'http://127.0.0.1:7860';
+            const currentPort = window.location.port;
+            // Use relative URL on Docker nginx (port 3001/80) — nginx proxies /api/ to backend
+            const baseUrl = (currentPort === '3001' || currentPort === '80' || currentPort === '')
+                ? ''
+                : (config.apiKeys?.school?.flaskApiUrl || 'http://127.0.0.1:5001').replace(/\/$/, '');
 
             console.log('[SessionMonitor] Fetching from:', baseUrl);
             const token = getAdminToken() || '';

@@ -1,0 +1,16 @@
+# Logs
+*.log
+*.jsonl
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment
+.env
+serviceAccountKey.json
+
+# IDE
+.vscode/
+.idea/
