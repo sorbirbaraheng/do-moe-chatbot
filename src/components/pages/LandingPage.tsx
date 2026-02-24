@@ -458,7 +458,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, onAdminLogin, onLogo
 
             {/* Stats Cards */}
             <div className="w-full max-w-5xl">
-              <div className="grid grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                 {MOCK_STATS.map((stat, idx) => (
                   <div key={idx} onClick={() => onStart(stat.category)} className="bg-white/60 backdrop-blur-2xl p-6 rounded-[2rem] text-left transition-all hover:scale-[1.03] hover:bg-white/80 cursor-pointer shadow-[0_10px_40px_rgba(0,0,0,0.03)] hover:shadow-[0_30px_70px_rgba(0,0,0,0.07)] border border-white/80 relative overflow-hidden">
                     <div className="flex items-center justify-between mb-4">
