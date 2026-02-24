@@ -81,7 +81,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
   // MOBILE VIEW - Apple Style (< md breakpoint)
   // =============================================
   const MobileView = () => (
-    <div className="min-h-screen bg-gradient-to-br from-[#F2F2F7] via-[#E8E8ED] to-[#F2F2F7] flex flex-col relative overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-[#F2F2F7] via-[#E8E8ED] to-[#F2F2F7] flex flex-col relative overflow-hidden px-6 sm:px-8">
 
       {/* Dynamic Background */}
       <div className="absolute inset-0 z-0 pointer-events-none">
@@ -90,74 +90,74 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
       </div>
 
       {/* Navigation Bar */}
-      <div className="pt-safe pt-12 px-5 pb-2 z-10 flex items-center justify-between">
+      <div className="pt-safe pt-12 sm:pt-14 pb-5 sm:pb-6 z-10 flex items-center justify-between">
         <button
           onClick={onBack}
-          className="flex items-center gap-1.5 text-[#007AFF] text-[17px] font-normal active:opacity-60 transition-opacity pl-2"
+          className="flex items-center gap-1.5 text-[#007AFF] text-[17px] sm:text-[18px] font-normal active:opacity-60 transition-opacity"
         >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
           ย้อนกลับ
         </button>
       </div>
 
       {/* Header - Large Title */}
-      <div className="px-5 pb-6 z-10">
-        <h1 className="text-[32px] font-bold text-[#1d1d1f] tracking-tight leading-[1.1]">
+      <div className="pb-7 sm:pb-8 z-10">
+        <h1 className="text-[34px] sm:text-[36px] font-bold text-[#1d1d1f] tracking-tight leading-[1.1]">
           {isSignUp ? 'สร้างบัญชี' : 'เข้าสู่ระบบ'}
         </h1>
-        <p className="text-[15px] text-[#86868b] mt-2 leading-snug">
+        <p className="text-[16px] sm:text-[17px] text-[#86868b] mt-3 leading-snug">
           {isSignUp ? 'กรอกข้อมูลเพื่อเริ่มต้นใช้งาน MOE One' : 'ยินดีต้อนรับกลับมา'}
         </p>
       </div>
 
       {/* Form Content */}
-      <div className="flex-1 px-5 z-10 pb-safe pb-6">
+      <div className="flex-1 z-10 pb-safe pb-8 max-w-md mx-auto w-full">
 
         {/* iOS Inset Grouped Table Style - Ultra Glass */}
-        <div className="bg-white/80 backdrop-blur-2xl rounded-[20px] overflow-hidden shadow-[0_10px_40px_-8px_rgba(0,0,0,0.12)] border border-white/80 mb-5 ring-1 ring-white/60 relative">
+        <div className="bg-white/80 backdrop-blur-2xl rounded-[22px] sm:rounded-[24px] overflow-hidden shadow-[0_10px_40px_-8px_rgba(0,0,0,0.12)] border border-white/80 mb-6 sm:mb-7 ring-1 ring-white/60 relative">
           {/* Shine Effect */}
           <div className="absolute inset-0 bg-gradient-to-br from-white/50 to-transparent pointer-events-none"></div>
 
           <form onSubmit={handleSubmit} className="relative z-10">
 
             {/* Email Field - Inner Shadow */}
-            <div className="pl-4 pr-4 py-3.5 flex items-center bg-transparent active:bg-white/95 transition-colors relative group border-b border-[#c6c6c8]/15">
-              <label className="w-20 text-[15px] text-[#1d1d1f] font-medium">อีเมล</label>
+            <div className="pl-5 sm:pl-6 pr-5 sm:pr-6 py-4 sm:py-[18px] flex items-center bg-transparent active:bg-white/95 transition-colors relative group border-b border-[#c6c6c8]/15">
+              <label className="w-20 sm:w-24 text-[16px] sm:text-[17px] text-[#1d1d1f] font-medium">อีเมล</label>
               <input
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="example@moe.go.th"
-                className="flex-1 text-[15px] text-[#007AFF] placeholder:text-[#c7c7cc]/70 bg-transparent outline-none text-right font-normal"
+                className="flex-1 text-[16px] sm:text-[17px] text-[#007AFF] placeholder:text-[#c7c7cc]/70 bg-transparent outline-none text-right font-normal"
               />
             </div>
 
             {/* Password Field */}
-            <div className="pl-4 pr-4 py-3.5 flex items-center bg-transparent active:bg-white/95 transition-colors relative group">
-              <label className="w-20 text-[15px] text-[#1d1d1f] font-medium">รหัสผ่าน</label>
+            <div className="pl-5 sm:pl-6 pr-5 sm:pr-6 py-4 sm:py-[18px] flex items-center bg-transparent active:bg-white/95 transition-colors relative group">
+              <label className="w-20 sm:w-24 text-[16px] sm:text-[17px] text-[#1d1d1f] font-medium">รหัสผ่าน</label>
               <input
                 type="password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••"
-                className="flex-1 text-[15px] text-[#007AFF] placeholder:text-[#c7c7cc]/70 bg-transparent outline-none text-right font-normal"
+                className="flex-1 text-[16px] sm:text-[17px] text-[#007AFF] placeholder:text-[#c7c7cc]/70 bg-transparent outline-none text-right font-normal"
               />
-              {isSignUp && <div className="absolute bottom-0 left-4 right-0 h-[0.5px] bg-[#c6c6c8]/30" />}
+              {isSignUp && <div className="absolute bottom-0 left-5 sm:left-6 right-0 h-[0.5px] bg-[#c6c6c8]/30" />}
             </div>
 
             {/* Repeat Password (SignUp) */}
             {isSignUp && (
-              <div className="pl-4 pr-4 py-3.5 flex items-center bg-transparent active:bg-white/95 transition-colors relative">
-                <label className="w-24 text-[15px] text-[#1d1d1f] font-medium">ยืนยันรหัส</label>
+              <div className="pl-5 sm:pl-6 pr-5 sm:pr-6 py-4 sm:py-[18px] flex items-center bg-transparent active:bg-white/95 transition-colors relative">
+                <label className="w-24 sm:w-28 text-[16px] sm:text-[17px] text-[#1d1d1f] font-medium">ยืนยันรหัส</label>
                 <input
                   type="password"
                   required
                   value={repeatPassword}
                   onChange={(e) => setRepeatPassword(e.target.value)}
                   placeholder="••••••"
-                  className="flex-1 text-[15px] text-[#007AFF] placeholder:text-[#c7c7cc]/70 bg-transparent outline-none text-right font-normal"
+                  className="flex-1 text-[16px] sm:text-[17px] text-[#007AFF] placeholder:text-[#c7c7cc]/70 bg-transparent outline-none text-right font-normal"
                 />
               </div>
             )}
@@ -166,8 +166,8 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
 
         {/* Forgot Password Link */}
         {!isSignUp && (
-          <div className="text-right mb-6">
-            <button type="button" className="text-[14px] text-[#007AFF] font-semibold active:opacity-60 transition-opacity">
+          <div className="text-right mb-7 sm:mb-8">
+            <button type="button" className="text-[15px] sm:text-[16px] text-[#007AFF] font-semibold active:opacity-60 transition-opacity">
               ลืมรหัสผ่าน?
             </button>
           </div>
@@ -175,16 +175,16 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
 
         {/* Terms Checkbox */}
         {isSignUp && (
-          <div className="flex items-start gap-2.5 mb-6">
+          <div className="flex items-start gap-3 sm:gap-3.5 mb-7 sm:mb-8">
             <div className="pt-0.5">
               <input
                 type="checkbox"
                 checked={acceptTerms}
                 onChange={(e) => setAcceptTerms(e.target.checked)}
-                className="w-[18px] h-[18px] rounded border-2 border-gray-300 text-[#007AFF] focus:ring-2 focus:ring-blue-500/30 cursor-pointer"
+                className="w-[19px] h-[19px] sm:w-5 sm:h-5 rounded border-2 border-gray-300 text-[#007AFF] focus:ring-2 focus:ring-blue-500/30 cursor-pointer"
               />
             </div>
-            <p className="text-[13px] text-[#86868b] leading-relaxed">
+            <p className="text-[14px] sm:text-[15px] text-[#86868b] leading-relaxed">
               ฉันตกลงยอมรับ <span className="text-[#007AFF] font-medium">ข้อตกลงและเงื่อนไข</span> และ <span className="text-[#007AFF] font-medium">นโยบายความเป็นส่วนตัว</span>
             </p>
           </div>
@@ -194,7 +194,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
         <button
           onClick={handleSubmit as any}
           disabled={loading}
-          className="w-full py-[14px] rounded-[14px] bg-[#007AFF] text-white text-[16px] font-semibold active:scale-[0.985] disabled:opacity-50 transition-all shadow-lg shadow-blue-500/25 mb-5"
+          className="w-full py-[15px] sm:py-4 rounded-[15px] sm:rounded-[16px] bg-[#007AFF] text-white text-[17px] sm:text-[18px] font-semibold active:scale-[0.985] disabled:opacity-50 transition-all shadow-lg shadow-blue-500/25 mb-6 sm:mb-7"
         >
           {loading ? (
             <span className="flex items-center justify-center gap-2">
@@ -207,31 +207,31 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
         </button>
 
         {/* Apple Style "Or" Divider */}
-        <div className="relative flex py-3 items-center mb-5">
+        <div className="relative flex py-3.5 sm:py-4 items-center mb-6 sm:mb-7">
           <div className="flex-grow border-t border-[#c6c6c8]/50"></div>
-          <span className="flex-shrink mx-4 text-[#86868b] text-[12px] font-medium">หรือ</span>
+          <span className="flex-shrink mx-5 sm:mx-6 text-[#86868b] text-[13px] sm:text-[14px] font-medium">หรือ</span>
           <div className="flex-grow border-t border-[#c6c6c8]/50"></div>
         </div>
 
         {/* Google Login Button - White Glass */}
         <button
           onClick={() => handleSocialLogin('Google')}
-          className="w-full py-[13px] rounded-[14px] bg-white/90 backdrop-blur-xl text-[#1d1d1f] text-[15px] font-semibold border border-[#d1d1d6] flex items-center justify-center gap-2.5 active:bg-[#f2f2f7] active:scale-[0.985] transition-all shadow-sm"
+          className="w-full py-[14px] sm:py-[15px] rounded-[15px] sm:rounded-[16px] bg-white/90 backdrop-blur-xl text-[#1d1d1f] text-[16px] sm:text-[17px] font-semibold border border-[#d1d1d6] flex items-center justify-center gap-3 sm:gap-3.5 active:bg-[#f2f2f7] active:scale-[0.985] transition-all shadow-sm"
         >
-          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-[18px] h-[18px]" />
+          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-[19px] h-[19px] sm:w-5 sm:h-5" />
           ดำเนินการต่อด้วย Google
         </button>
 
       </div>
 
       {/* Footer Toggle */}
-      <div className="py-6 text-center z-10 pb-safe pb-8">
-        <span className="text-[14px] text-[#86868b]">
+      <div className="py-6 sm:py-7 text-center z-10 pb-safe pb-7 sm:pb-9">
+        <span className="text-[15px] sm:text-[16px] text-[#86868b]">
           {isSignUp ? 'มีบัญชีอยู่แล้ว?' : 'ยังไม่มีบัญชี?'}
         </span>
         <button
           onClick={() => setIsSignUp(!isSignUp)}
-          className="ml-2 text-[14px] text-[#007AFF] font-semibold active:opacity-60 transition-opacity"
+          className="ml-2 text-[15px] sm:text-[16px] text-[#007AFF] font-semibold active:opacity-60 transition-opacity"
         >
           {isSignUp ? 'เข้าสู่ระบบ' : 'สมัครสมาชิก'}
         </button>
