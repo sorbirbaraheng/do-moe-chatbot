@@ -238,15 +238,50 @@ def create_flask_api():
 
     @app.after_request
     def after_request(response):
-        """Global CORS header enforcement"""
+        """Global CORS + Security header enforcement"""
         origin = request.headers.get('Origin', '')
-        if origin and origin in allowed_origins:
+        origin_allowed = False
+        if origin:
+            if origin in allowed_origins:
+                origin_allowed = True
+            else:
+                try:
+                    req_host = (request.host or "").split(":", 1)[0].strip().lower()
+                    origin_host = (urlparse(origin).hostname or "").strip().lower()
+                    if req_host and origin_host and req_host == origin_host:
+                        origin_allowed = True
+                except Exception:
+                    origin_allowed = False
+
+        if origin_allowed:
             response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-API-Key'
         response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
         response.headers['Access-Control-Allow-Credentials'] = 'true'
         if 'Content-Type' not in response.headers:
             response.headers.add('Content-Type', 'application/json; charset=utf-8')  # Ensure Thai support
+
+        # ── Security Headers ─────────────────────────────────────────
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+        response.headers['Permissions-Policy'] = 'camera=(), microphone=(self), geolocation=()'
+        # HSTS — only enforce when served over HTTPS
+        if request.is_secure or request.headers.get('X-Forwarded-Proto') == 'https':
+            response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+        # Content-Security-Policy — permissive enough for the SPA frontend
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://esm.sh https://cdn.tailwindcss.com https://fonts.googleapis.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: https: blob:; "
+            "connect-src 'self' https: wss:; "
+            "media-src 'self' blob: data:; "
+            "frame-ancestors 'none';"
+        )
+
         return response
     
     if not qdrant_client:
