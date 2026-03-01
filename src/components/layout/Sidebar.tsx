@@ -33,7 +33,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 </div>
                 <div className="transition-transform duration-300 group-hover:translate-x-0.5">
                     <h1 className="font-bold text-[17px] tracking-tight text-[#1D1D1F] group-hover:text-blue-600 transition-colors duration-300">MOE - One</h1>
-                    <p className="text-[10px] font-semibold opacity-50 uppercase tracking-[0.15em]">ศทส. • สป.</p>
+                    <p className="text-[10px] font-semibold opacity-50 uppercase tracking-[0.15em]">ศทก. • สป.</p>
                 </div>
             </div>
             <div className="relative z-10 px-5 mb-5">

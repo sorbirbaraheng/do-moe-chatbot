@@ -81,16 +81,16 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
   // MOBILE VIEW - Apple Style (< md breakpoint)
   // =============================================
   const MobileView = () => (
-    <div className="min-h-screen bg-[#F2F2F7] flex flex-col relative overflow-hidden">
+    <div className="min-h-[100dvh] bg-[#F2F2F7] flex flex-col relative overflow-y-auto w-full">
 
       {/* Dynamic Background */}
-      <div className="absolute inset-0 z-0 pointer-events-none">
+      <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
         <div className="absolute top-[-10%] right-[-20%] w-[70%] h-[50%] rounded-full bg-blue-400/10 blur-[80px] animate-pulse-slow"></div>
         <div className="absolute bottom-[-10%] left-[-10%] w-[60%] h-[50%] rounded-full bg-purple-400/10 blur-[80px] animate-pulse-slow" style={{ animationDelay: '1.5s' }}></div>
       </div>
 
       {/* Navigation Bar */}
-      <div className="pt-14 px-4 pb-2 z-10 flex items-center justify-between">
+      <div className="pt-14 px-4 pb-2 z-10 flex items-center justify-between shrink-0">
         <button
           onClick={onBack}
           className="flex items-center gap-1.5 text-[#007AFF] text-[17px] font-normal active:opacity-60 transition-opacity pl-2"
@@ -101,7 +101,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
       </div>
 
       {/* Header - Large Title */}
-      <div className="px-6 pb-8 z-10">
+      <div className="px-6 pb-6 z-10 shrink-0">
         <h1 className="text-[34px] font-bold text-[#1d1d1f] tracking-tight leading-tight">
           {isSignUp ? 'สร้างบัญชี' : 'เข้าสู่ระบบ'}
         </h1>
@@ -111,10 +111,10 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
       </div>
 
       {/* Form Content */}
-      <div className="flex-1 px-4 z-10">
+      <div className="flex-1 px-4 z-10 flex flex-col justify-start">
 
         {/* iOS Inset Grouped Table Style - Ultra Glass */}
-        <div className="bg-white/70 backdrop-blur-3xl rounded-[24px] overflow-hidden shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] border border-white/60 mb-6 ring-1 ring-white/50 relative">
+        <div className="bg-white/70 backdrop-blur-3xl rounded-[24px] overflow-hidden shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] border border-white/60 mb-6 ring-1 ring-white/50 relative shrink-0">
           {/* Shine Effect */}
           <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-transparent pointer-events-none"></div>
 
@@ -129,7 +129,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="example@moe.go.th"
-                className="flex-1 text-[17px] text-[#007AFF] placeholder:text-[#c7c7cc]/80 bg-transparent outline-none text-right group-focus-within:text-left transition-all duration-300"
+                className="flex-1 text-[17px] text-[#007AFF] placeholder:text-[#c7c7cc]/80 bg-transparent outline-none text-right group-focus-within:text-left transition-all duration-300 min-w-0"
               />
             </div>
 
@@ -142,7 +142,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="จำเป็น"
-                className="flex-1 text-[17px] text-[#007AFF] placeholder:text-[#c7c7cc] bg-transparent outline-none text-right"
+                className="flex-1 text-[17px] text-[#007AFF] placeholder:text-[#c7c7cc] bg-transparent outline-none text-right min-w-0"
               />
               {isSignUp && <div className="absolute bottom-0 left-5 right-0 h-[0.5px] bg-[#c6c6c8]/40" />}
             </div>
@@ -157,7 +157,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
                   value={repeatPassword}
                   onChange={(e) => setRepeatPassword(e.target.value)}
                   placeholder="ยืนยัน"
-                  className="flex-1 text-[17px] text-[#007AFF] placeholder:text-[#c7c7cc] bg-transparent outline-none text-right"
+                  className="flex-1 text-[17px] text-[#007AFF] placeholder:text-[#c7c7cc] bg-transparent outline-none text-right min-w-0"
                 />
               </div>
             )}
@@ -166,7 +166,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
 
         {/* Forgot Password Link */}
         {!isSignUp && (
-          <div className="text-right px-2 mb-8">
+          <div className="text-right px-2 mb-6 shrink-0">
             <button type="button" className="text-[15px] text-[#007AFF] font-medium active:opacity-60">
               ลืมรหัสผ่าน?
             </button>
@@ -175,7 +175,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
 
         {/* Terms Checkbox */}
         {isSignUp && (
-          <div className="flex items-start gap-3 px-4 mb-8">
+          <div className="flex items-start gap-3 px-4 mb-6 shrink-0">
             <div className="pt-0.5">
               <input
                 type="checkbox"
@@ -194,7 +194,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
         <button
           onClick={handleSubmit as any}
           disabled={loading}
-          className="w-full py-3.5 rounded-xl bg-[#007AFF] text-white text-[17px] font-semibold active:scale-[0.98] active:opacity-90 disabled:opacity-50 transition-all shadow-md shadow-blue-500/20 mb-6"
+          className="w-full py-3.5 rounded-xl bg-[#007AFF] text-white text-[17px] font-semibold active:scale-[0.98] active:opacity-90 disabled:opacity-50 transition-all shadow-md shadow-blue-500/20 mb-6 shrink-0"
         >
           {loading ? (
             <span className="flex items-center justify-center gap-2">
@@ -207,7 +207,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
         </button>
 
         {/* Apple Style "Or" Divider */}
-        <div className="relative flex py-2 items-center mb-6">
+        <div className="relative flex py-2 items-center mb-6 shrink-0">
           <div className="flex-grow border-t border-[#c6c6c8]/60"></div>
           <span className="flex-shrink mx-4 text-gray-400 text-[13px] font-medium">หรือ</span>
           <div className="flex-grow border-t border-[#c6c6c8]/60"></div>
@@ -216,7 +216,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
         {/* Google Login Button - White Glass */}
         <button
           onClick={() => handleSocialLogin('Google')}
-          className="w-full py-3.5 rounded-xl bg-white text-[#1d1d1f] text-[17px] font-medium border border-[#c6c6c8]/50 flex items-center justify-center gap-3 active:bg-[#f2f2f7] transition-colors"
+          className="w-full py-3.5 rounded-xl bg-white text-[#1d1d1f] text-[17px] font-medium border border-[#c6c6c8]/50 flex items-center justify-center gap-3 active:bg-[#f2f2f7] transition-colors shrink-0 mb-8"
         >
           <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
           ดำเนินการต่อด้วย Google
@@ -225,7 +225,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
       </div>
 
       {/* Footer Toggle */}
-      <div className="py-8 text-center z-10 pb-12">
+      <div className="py-6 text-center z-10 shrink-0 mb-safe pb-8">
         <span className="text-[15px] text-[#86868b]">
           {isSignUp ? 'มีบัญชีอยู่แล้ว?' : 'ยังไม่มีบัญชี?'}
         </span>
@@ -269,7 +269,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
             Intelligent, Integrated and Insightful
           </h2>
           <p className="text-lg opacity-50 font-medium leading-relaxed max-w-sm mb-12">
-            ศูนย์เทคโนโลยีสารสนเทศและการสื่อสาร (ศทส. สป.) ขับเคลื่อนนวัตกรรมข้อมูลขนาดใหญ่ (Big Data) เพื่อยกระดับการศึกษาไทยสู่สากล
+            ศูนย์เทคโนโลยีสารสนเทศและการสื่อสาร (ศทก. สป.) ขับเคลื่อนนวัตกรรมข้อมูลขนาดใหญ่ (Big Data) เพื่อยกระดับการศึกษาไทยสู่สากล
           </p>
 
           <div className="mt-auto flex items-center gap-4 pt-10 border-t border-black/10">

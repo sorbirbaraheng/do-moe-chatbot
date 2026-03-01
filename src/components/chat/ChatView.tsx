@@ -191,7 +191,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                         </div>
                         <div className="transition-transform duration-300 group-hover:translate-x-0.5">
                             <h1 className="font-bold text-[17px] tracking-tight text-[#1D1D1F] group-hover:text-blue-600 transition-colors duration-300">MOE - One</h1>
-                            <p className="text-[10px] font-semibold opacity-50 uppercase tracking-[0.15em]">ศทส. • สป.</p>
+                            <p className="text-[10px] font-semibold opacity-50 uppercase tracking-[0.15em]">ศทก. • สป.</p>
                         </div>
                     </div>
                     <div className="relative z-10 px-5 mb-5">
@@ -258,7 +258,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                             </div>
                             <div>
                                 <h2 className="font-bold text-[16px] text-[#1D1D1F] tracking-tight">สนทนา</h2>
-                                <span className="text-[9px] font-black text-black/30 uppercase tracking-[0.1em] hidden sm:block">AI Assistant • ศทส.</span>
+                                <span className="text-[9px] font-black text-black/30 uppercase tracking-[0.1em] hidden sm:block">AI Assistant • ศทก.</span>
                             </div>
                         </div>
                         {isAdminAuthenticated && config.uxPolicy.showRagDebug && (
@@ -337,10 +337,10 @@ const ChatView: React.FC<ChatViewProps> = ({
                                     <div className="hidden md:block text-center mb-12 relative group w-full">
                                         <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-[320px] h-[320px] bg-gradient-to-tr from-[#7CC5FF]/35 via-[#9B8CFF]/30 to-[#C7A6FF]/25 rounded-full blur-[90px] opacity-70 group-hover:opacity-100 transition-opacity duration-1000"></div>
                                         <div className="hero-glass hero-float mx-auto max-w-2xl">
-                                            <div className="hero-badge">MOE‑One • ศทส. สป.</div>
+                                            <div className="hero-badge">MOE‑One • ศทก. สป.</div>
                                             <div className="hero-orb"><div className="hero-orb-glow"></div><div className="hero-orb-core"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-8 h-8 drop-shadow-md"><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" /></svg></div></div>
                                             <h2 className="hero-title text-[40px] font-bold text-[#1D1D1F] tracking-[-0.035em] mb-3 leading-tight">สวัสดีครับ! ผมคือ <span className="hero-title-accent">น้องดีโอ</span></h2>
-                                            <p className="hero-sub">ผู้ช่วยข้อมูลการศึกษา MOE‑One ของศูนย์เทคโนโลยีสารสนเทศเพื่อการศึกษา (ศทส.) สป.</p>
+                                            <p className="hero-sub">ผู้ช่วยข้อมูลการศึกษา MOE‑One ของศูนย์เทคโนโลยีสารสนเทศเพื่อการศึกษา (ศทก.) สป.</p>
                                             <div className="flex flex-wrap justify-center gap-3 mt-8 max-w-[600px] mx-auto">
                                                 {[
                                                     { icon: "🏫", text: "ในนครศรีธรรมราช อำเภอไหนมีโรงเรียนมากที่สุด" },

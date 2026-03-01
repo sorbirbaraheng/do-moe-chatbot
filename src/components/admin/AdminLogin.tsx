@@ -112,7 +112,7 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onCancel }) => {
 
                 {/* Footer Note */}
                 <p className="text-center text-xs text-black/30 mt-6">
-                    สำหรับเจ้าหน้าที่ ศทส. สป. เท่านั้น
+                    สำหรับเจ้าหน้าที่ ศทก. สป. เท่านั้น
                 </p>
             </div>
         </div>

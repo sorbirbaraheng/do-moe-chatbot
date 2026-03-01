@@ -16,10 +16,10 @@ export const MOE_COLORS = {
 
 export const COMMON_QUERIES = {
   [Category.General]: [
-    "แนวทางการขับเคลื่อน Digital Governance ของ ศทส.",
+    "แนวทางการขับเคลื่อน Digital Governance ของ ศทก.",
     "รายงานการใช้งาน ICT ในสถานศึกษาขนาดเล็ก",
     "วิสัยทัศน์ดิจิทัลเพื่อการศึกษาปี 2568",
-    "บทบาทของ ศทส. ในการสนับสนุนงาน สป."
+    "บทบาทของ ศทก. ในการสนับสนุนงาน สป."
   ],
   [Category.School]: [
     "ค้นหาพิกัดโรงเรียนในสังกัด สพฐ. ทั่วประเทศ",
@@ -48,7 +48,7 @@ const LAST_UPDATE_STR = getLastMonday();
 export const MOCK_STATS = [
   {
     category: Category.General,
-    label: 'ดัชนีความพร้อมดิจิทัล (ศทส. สป.)',
+    label: 'ดัชนีความพร้อมดิจิทัล (ศทก. สป.)',
     value: '84.2',
     unit: '%',
     trend: '+2.4% (ความคืบหน้าปัจจุบัน)',
