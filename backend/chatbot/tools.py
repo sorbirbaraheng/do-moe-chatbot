@@ -530,7 +530,7 @@ Before extracting entities, determine the INTENT first:
 - If user mentions TWO years (e.g. "67", "68", "2567", "2568") → MUST use `compare_years`
 - Keywords: "เปรียบเทียบ...ปี", "ต่างกัน", "เทียบปี", "ปี X กับ Y", "ปี X vs Y"
 - metric mapping: "นักเรียน" → "students", "ครู" → "teachers", "โรงเรียน" → "schools"
-- Available years: 2566 (66), 2567 (67) and 2568 (68)
+- Available years: 2565 (65), 2566 (66), 2567 (67) and 2568 (68)
 
 ### CONTEXT FROM PREVIOUS TURNS:
 {context}

@@ -127,6 +127,15 @@ PRIMARY_COLLECTION = "edu_schools_v5"
 DEFAULT_YEAR = "v5"  # ค่าเริ่มต้น ใช้ collection v5 = ข้อมูลปี 2568
 
 YEAR_COLLECTIONS = {
+    "2565": {
+        "schools": "edu_schools_2565",
+        "students": "edu_students_2565",
+        "teachers": "edu_teachers_2565",
+        "ratios": "edu_ratios_2565",
+        "grades": "edu_grade_summary_2565",
+        "gender": "edu_gender_overview_2565",
+        "systems": "edu_systems_2565",
+    },
     "2566": {
         "schools": "edu_schools_2566",
         "students": "edu_students_2566",
@@ -159,7 +168,7 @@ YEAR_ALIASES = {
 }
 
 # Available years for comparison (ปีที่มีข้อมูลจริงในระบบ)
-AVAILABLE_YEARS = ["2566", "2567", "2568"]
+AVAILABLE_YEARS = ["2565", "2566", "2567", "2568"]
 
 # =====================================================================
 # SMART COLLECTION ROUTING
