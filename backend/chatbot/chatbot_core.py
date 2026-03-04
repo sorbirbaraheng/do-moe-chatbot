@@ -660,8 +660,21 @@ class EducationChatbot(
 
                 ignore_school_context = _should_ignore_school_context(message, self.memory.last_school_name)
 
-                if self.memory.last_province:
+                # ── Province-switch guard ──────────────────────────────
+                # If the parsed query already has a province that differs from
+                # memory, inject the NEW province so the LLM Agent uses the
+                # correct scope instead of the stale one.
+                parsed_province_differs = (
+                    parsed.province
+                    and self.memory.last_province
+                    and parsed.province != self.memory.last_province
+                )
+
+                if self.memory.last_province and not parsed_province_differs:
                     rich_context_dict['last_province'] = self.memory.last_province
+                elif parsed_province_differs:
+                    rich_context_dict['last_province'] = parsed.province
+                    logger.info(f"🔀 Province switch in LLM context: '{self.memory.last_province}' → '{parsed.province}'")
                 if self.memory.last_region:
                     rich_context_dict['last_region'] = self.memory.last_region
                 if self.memory.last_school_name and not ignore_school_context:

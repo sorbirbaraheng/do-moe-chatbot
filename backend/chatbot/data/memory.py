@@ -214,6 +214,38 @@ class ConversationMemory:
         # Detect "ทุกสังกัด" or "ทั้งหมด" type queries
         is_all_agencies_query = any(p in query_lower for p in ['ทุกสังกัด', 'ทั้งหมด', 'สังกัดอื่น', 'ทุกหน่วยงาน', 'ทั้งนั้น'])
 
+        # ── Province-switch detection ──────────────────────────────────
+        # If the query explicitly mentions a DIFFERENT province/region from
+        # what's in memory, this is NOT a follow-up — it's a new scope.
+        query_mentions_province = None
+        for p in THAI_PROVINCES:
+            if p.lower() in query_lower:
+                query_mentions_province = p
+                break
+        query_mentions_region = None
+        for r in REGIONS.keys():
+            if r in query_lower:
+                query_mentions_region = r
+                break
+
+        # If user explicitly mentions a new province/region, clear stale memory
+        if query_mentions_province and self.last_province and query_mentions_province != self.last_province:
+            logger.info(f"🔀 Province switch detected: '{self.last_province}' → '{query_mentions_province}' — clearing old context")
+            self.last_province = None
+            self.last_district = None
+            self.last_school_name = None
+            self.last_active_query = None
+            return parsed  # Let parser handle the new province naturally
+
+        if query_mentions_region and self.last_region and query_mentions_region != self.last_region:
+            logger.info(f"🔀 Region switch detected: '{self.last_region}' → '{query_mentions_region}' — clearing old context")
+            self.last_region = None
+            self.last_province = None
+            self.last_district = None
+            self.last_school_name = None
+            self.last_active_query = None
+            return parsed
+
         is_follow_up = is_short_query and (has_follow_up_word or lacks_location) and not is_global_ranking_query
         
         if is_follow_up and (self.last_province or self.last_region):
