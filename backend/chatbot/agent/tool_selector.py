@@ -132,6 +132,23 @@ class ToolSelectorMixin:
             logger.info(f"⚡ Quick-path CONCEPT GROUP (EEC): metric={m}")
             return [{"name": "compare_provinces", "params": {"provinces": eec_provinces, "metrics": m}}]
 
+        # ── Quick-path: National summary ──
+        national_kws = ['ระดับประเทศ', 'ทั้งประเทศ', 'ภาพรวมทั้งประเทศ', 'สรุประดับประเทศ',
+                        'ระดับชาติ', 'ประเทศไทยทั้งหมด', 'ภาพรวมประเทศ', 'สรุปภาพรวมประเทศ']
+        if any(k in q_raw for k in national_kws):
+            ns_params = {}
+            # Extract year if present
+            import re as _re
+            year_m = _re.search(r'ปี(?:การศึกษา)?\s*(\d{2,4})', q_raw)
+            if year_m:
+                from ..core.constants import YEAR_ALIASES, AVAILABLE_YEARS
+                y = year_m.group(1)
+                y = YEAR_ALIASES.get(y, y)
+                if y in AVAILABLE_YEARS:
+                    ns_params["year"] = y
+            logger.info(f"⚡ Quick-path NATIONAL SUMMARY: {ns_params}")
+            return [{"name": "get_national_summary", "params": ns_params}]
+
         # ══════════════════════════════════════════════════════════════
         # LLM STRUCTURED EXTRACTION — primary tool selection
         # ══════════════════════════════════════════════════════════════
@@ -1026,6 +1043,13 @@ class ToolSelectorMixin:
             logger.info(f"🎓 Detected EDUCATION POLICY question (LLM will answer directly): {question[:50]}...")
             return []  # Empty = no tools needed, LLM responds directly
         
+        # 0.5. NATIONAL SUMMARY - ภาพรวมระดับประเทศ
+        national_kws = ['ระดับประเทศ', 'ทั้งประเทศ', 'ภาพรวมทั้งประเทศ', 'สรุประดับประเทศ', 'ระดับชาติ', 'ประเทศไทยทั้งหมด']
+        is_national = any(k in question for k in national_kws)
+        if is_national and not school_name and not province:
+            logger.info("🌏 Detected NATIONAL SUMMARY query")
+            return [{"name": "get_national_summary", "params": {}}]
+
         # 1. COMPARISON - เปรียบเทียบ
         # 1. COMPARISON - เปรียบเทียบ
         if any(kw in question_lower for kw in ['เปรียบเทียบ', 'เทียบ', 'ระหว่าง', 'กับ', 'vs']):

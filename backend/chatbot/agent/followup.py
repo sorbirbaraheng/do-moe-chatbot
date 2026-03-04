@@ -118,6 +118,7 @@ class FollowUpMixin:
                 "filter_schools": {"metric", "operator", "value", "province", "region", "district", "subdistrict", "limit", "year"},
                 "get_school_full_details": {"school_name", "province", "year"},
                 "get_province_summary": {"province", "year"},
+                "get_national_summary": {"year"},
                 "get_ratio": {"school_name", "province", "year"},
                 "compare_years": {"year1", "year2", "province", "region", "school_name", "metric"},
             }
@@ -291,6 +292,71 @@ class FollowUpMixin:
                 return [{"name": "count_students", "params": _prune_params_for_tool("count_students", follow_params)}]
             if any(k in text for k in ["รายละเอียด", "อยู่ที่ไหน", "พิกัด", "แผนที่"]):
                 return [{"name": "get_school_full_details", "params": _prune_params_for_tool("get_school_full_details", follow_params)}]
+
+        # ── Follow-up from summary tools (national / province) ──────
+        if tool in ["get_national_summary", "get_province_summary"]:
+            is_year_compare = any(k in text for k in ["เทียบ", "เปรียบเทียบ", "ต่างกัน", "เปลี่ยนแปลง"])
+            asks_ratio = any(k in text for k in ["อัตราส่วน", "ต่อครู", "ครูต่อนักเรียน", "ratio"])
+            asks_region = any(k in text for k in ["แยกตามภาค", "แยกภาค", "ภาคไหน", "6 ภาค", "แต่ละภาค"])
+            asks_agency = any(k in text for k in ["แยกสังกัด", "แยกตามสังกัด", "สังกัดไหน"])
+
+            if is_year_compare and year:
+                # Determine the other year from context or default latest
+                from ..core.constants import V5_YEAR, AVAILABLE_YEARS
+                # Prefer year from the original active query (e.g., user asked national summary for 2568)
+                active_year = (params.get("year") or V5_YEAR)
+                other_year = str(active_year) if str(active_year) != str(year) else V5_YEAR
+                compare_params = {"year1": str(year), "year2": other_year, "metric": "all"}
+                if tool == "get_province_summary" and params.get("province"):
+                    compare_params["province"] = params["province"]
+                return [{"name": "compare_years", "params": _prune_params_for_tool("compare_years", compare_params)}]
+
+            if asks_ratio and asks_region:
+                return [{"name": "ranking", "params": {"metric": "ratio", "order": "most", "scope": "region", "limit": 6}}]
+
+            if asks_region:
+                metric = "students"
+                if asks_teachers:
+                    metric = "teachers"
+                elif asks_schools:
+                    metric = "schools"
+                return [{"name": "ranking", "params": {"metric": metric, "order": "most", "scope": "region", "limit": 6}}]
+
+            if asks_agency:
+                rank_params = {"metric": "schools", "order": "most", "limit": 10}
+                if tool == "get_province_summary" and params.get("province"):
+                    rank_params["province"] = params["province"]
+                return [{"name": "ranking_by_agency", "params": rank_params}]
+
+            if asks_ratio:
+                ratio_params = {}
+                if tool == "get_province_summary" and params.get("province"):
+                    ratio_params["province"] = params["province"]
+                return [{"name": "get_ratio", "params": _prune_params_for_tool("get_ratio", ratio_params)}]
+
+            if asks_teachers:
+                t_params = {}
+                if tool == "get_province_summary" and params.get("province"):
+                    t_params["province"] = params["province"]
+                if person_type:
+                    t_params["person_type"] = person_type
+                return [{"name": "count_teachers", "params": _prune_params_for_tool("count_teachers", t_params)}]
+
+            if asks_students:
+                s_params = {}
+                if tool == "get_province_summary" and params.get("province"):
+                    s_params["province"] = params["province"]
+                if grade:
+                    s_params["grade"] = grade
+                return [{"name": "count_students", "params": _prune_params_for_tool("count_students", s_params)}]
+
+            if asks_schools or agency:
+                sc_params = {}
+                if tool == "get_province_summary" and params.get("province"):
+                    sc_params["province"] = params["province"]
+                if agency:
+                    sc_params["agency"] = agency
+                return [{"name": "count_schools", "params": _prune_params_for_tool("count_schools", sc_params)}]
 
         return None
 
