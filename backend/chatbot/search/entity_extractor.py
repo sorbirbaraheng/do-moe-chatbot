@@ -408,6 +408,13 @@ def extract_query_structured_via_llm(question: str, llm_client: Any, context: Op
 Context: {context_str}
 User: "{question}"
 
+⚡ PRONOUN RESOLUTION (สำคัญมาก!):
+- ถ้าผู้ใช้พูดว่า "จังหวัดนี้", "ในจังหวัดนี้", "ของจังหวัดนี้" → ให้ดึง province จาก Context ด้านบน แล้วใส่ใน params
+- ถ้าผู้ใช้พูดว่า "โรงเรียนนี้", "ของโรงเรียนนี้" → ให้ดึง school จาก Context ด้านบน แล้วใส่ใน params
+- ตัวอย่าง: Context มี province=อุบลราชธานี, User ถามว่า "สังกัดไหนมีโรงเรียนมากที่สุดในจังหวัดนี้"
+  → ใช้ ranking_by_agency(province="อุบลราชธานี", metric="schools")
+- ⚠️ ห้ามปล่อยให้ "จังหวัดนี้" เป็น null เมื่อ Context มี province อยู่
+
 เลือกเครื่องมือ (tool) และพารามิเตอร์ให้เหมาะสมที่สุด โดยตอบเป็น JSON เท่านั้น
 
 Routing hints (อ้างอิงโครงสร้าง Qdrant v5):

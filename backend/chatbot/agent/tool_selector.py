@@ -676,9 +676,33 @@ class ToolSelectorMixin:
         question_region = self._extract_region(question)
         q_text = question or ""
         q_norm = q_text.replace(" ", "")
-        follow_kws = ["แล้ว", "ต่อ", "อีก", "เพิ่ม", "ขอรายละเอียด", "รายละเอียด", "พิกัด", "ที่ไหน", "เบอร์ติดต่อ", "ครูกี่", "นักเรียนกี่", "ข้อมูล"]
-        starts_followup = q_text.startswith(("แล้ว", "งั้น", "ถ้า", "กรณี", "แล้วถ้า"))
-        is_followup = (len(q_text) <= 120 and any(k in q_text for k in follow_kws)) or starts_followup
+        follow_kws = ["แล้ว", "ต่อ", "อีก", "เพิ่ม", "ขอรายละเอียด", "รายละเอียด", "พิกัด", "ที่ไหน", "เบอร์ติดต่อ", "ครูกี่", "นักเรียนกี่", "ข้อมูล", "เฉพาะ", "แยก"]
+        starts_followup = q_text.startswith(("แล้ว", "งั้น", "ถ้า", "กรณี", "แล้วถ้า", "เอาเฉพาะ"))
+        is_followup = (len(q_text) <= 200 and any(k in q_text for k in follow_kws)) or starts_followup
+        
+        # ── Pronoun reference detection ──────────────────────────────────
+        # จังหวัดนี้ / โรงเรียนนี้ / ของจังหวัดนี้ / ในจังหวัดนี้ etc.
+        province_pronouns = ["จังหวัดนี้", "ในจังหวัดนี้", "ของจังหวัดนี้", "จ.นี้", "จังหวัดเดิม", "จังหวัดเดียวกัน"]
+        school_pronouns = ["โรงเรียนนี้", "ของโรงเรียนนี้", "ในโรงเรียนนี้", "ร.ร.นี้", "สถานศึกษานี้"]
+        has_province_pronoun = any(p in q_text for p in province_pronouns)
+        has_school_pronoun = any(p in q_text for p in school_pronouns)
+        is_pronoun_ref = has_province_pronoun or has_school_pronoun
+        
+        # Pronoun references should ALWAYS trigger context injection
+        if is_pronoun_ref:
+            is_followup = True
+        
+        # Resolve pronouns from context — inject actual names
+        ctx_province = None
+        ctx_school = None
+        if context:
+            ctx_province = context.get('last_province') or context.get('current_province')
+            ctx_school = context.get('last_school_name') or context.get('current_school')
+        
+        if has_province_pronoun and ctx_province:
+            logger.info(f"🔗 Pronoun 'จังหวัดนี้' resolved to: {ctx_province}")
+        if has_school_pronoun and ctx_school:
+            logger.info(f"🔗 Pronoun 'โรงเรียนนี้' resolved to: {ctx_school}")
         
         for tool in tool_calls:
             params = tool.get('params', {})
@@ -688,36 +712,37 @@ class ToolSelectorMixin:
             # Tools that accept ONLY province (not school_name)
             province_only_tools = ['list_schools', 'advanced_school_search', 'filter_schools']
             aggregation_tools = ['count_students', 'count_teachers', 'count_schools']
-            skip_context_tools = ['compare', 'ranking', 'general_chat']
+            # Pronoun reference → also inject into ranking/filter (not just follow-up tools)
+            skip_context_tools = ['compare', 'general_chat']
+            if not is_pronoun_ref:
+                skip_context_tools.append('ranking')
             
             # Context injection for follow-up questions ONLY
             if context and tool['name'] not in skip_context_tools and is_followup:
-                # Inject school_name from context ONLY for specific school queries
-                # NOT for list/search/filter type queries
+                _ctx_school = ctx_school
+                _ctx_province = ctx_province
                 
-                # Check for both Memory keys (last_*) and SessionContext keys (current_*)
-                ctx_school = context.get('last_school_name') or context.get('current_school')
-                ctx_province = context.get('last_province') or context.get('current_province')
-                
-                if not params.get('school_name') and ctx_school and tool['name'] in school_specific_tools:
-                    if ctx_school.replace("โรงเรียน", "").replace(" ", "") in q_norm or is_followup:
-                        params['school_name'] = ctx_school
-                        logger.info(f"💉 Injected context school_name: {ctx_school}")
+                if not params.get('school_name') and _ctx_school and tool['name'] in school_specific_tools:
+                    if _ctx_school.replace("โรงเรียน", "").replace(" ", "") in q_norm or is_followup:
+                        params['school_name'] = _ctx_school
+                        logger.info(f"💉 Injected context school_name: {_ctx_school}")
 
-                # Inject province from context
-                if not params.get('province') and ctx_province:
+                # Inject province from context (or pronoun-resolved province)
+                if not params.get('province') and _ctx_province:
                     if question_region:
                         # If user asked about a region, don't force a province from context
                         pass
+                    elif has_province_pronoun:
+                        # Pronoun reference → ALWAYS inject province regardless of tool type
+                        params['province'] = _ctx_province
+                        logger.info(f"💉 Injected province from pronoun 'จังหวัดนี้': {_ctx_province}")
                     else:
-                        # If a specific school_name is present, do NOT force province from context
-                        # This avoids incorrectly narrowing searches for named schools.
+                        # Regular follow-up: only inject for province-aware tools
                         if not params.get('school_name'):
-                            # Combine school-specific + province-only tools for province injection
                             province_aware_tools = school_specific_tools + province_only_tools + aggregation_tools
-                            if isinstance(ctx_province, str) and tool['name'] in province_aware_tools:
-                                params['province'] = ctx_province
-                                logger.info(f"💉 Injected context province: {ctx_province}")
+                            if isinstance(_ctx_province, str) and tool['name'] in province_aware_tools:
+                                params['province'] = _ctx_province
+                                logger.info(f"💉 Injected context province: {_ctx_province}")
 
             # Normalize region if LLM put it into province
             if params.get('province') and not params.get('region'):
