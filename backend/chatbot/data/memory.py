@@ -9,7 +9,7 @@ import time
 from typing import Optional, Dict, List, Any
 
 from ..core.types import ParsedQuery, QueryIntent, QueryLevel
-from ..core.constants import THAI_PROVINCES, REGIONS, YEAR_ALIASES, AVAILABLE_YEARS
+from ..core.constants import THAI_PROVINCES, REGIONS, YEAR_ALIASES, AVAILABLE_YEARS, AGENCY_ALIASES
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +245,20 @@ class ConversationMemory:
             self.last_school_name = None
             self.last_active_query = None
             return parsed
+
+        # ── Agency-switch detection ───────────────────────────────────
+        # If query mentions a different agency than memory, clear stale
+        # active_query so the LLM agent re-fetches with the new agency.
+        query_mentions_agency = None
+        for alias in AGENCY_ALIASES:
+            if alias in query_lower:
+                query_mentions_agency = AGENCY_ALIASES[alias]
+                break
+        if query_mentions_agency and self.last_agency and query_mentions_agency != self.last_agency:
+            logger.info(f"🔀 Agency switch detected: '{self.last_agency}' → '{query_mentions_agency}' — clearing active_query")
+            self.last_agency = None
+            self.last_active_query = None
+            # Keep province/region — user likely wants same location, different agency
 
         is_follow_up = is_short_query and (has_follow_up_word or lacks_location) and not is_global_ranking_query
         

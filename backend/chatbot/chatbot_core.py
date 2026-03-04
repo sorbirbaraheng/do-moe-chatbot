@@ -682,7 +682,17 @@ class EducationChatbot(
                 if self.memory.last_district:
                     rich_context_dict['last_district'] = self.memory.last_district
                 if self.memory.last_agency:
-                    rich_context_dict['last_agency'] = self.memory.last_agency
+                    # Agency-switch guard: if parsed query has a different agency, use the new one
+                    parsed_agency_differs = (
+                        parsed.agency
+                        and self.memory.last_agency
+                        and parsed.agency != self.memory.last_agency
+                    )
+                    if not parsed_agency_differs:
+                        rich_context_dict['last_agency'] = self.memory.last_agency
+                    else:
+                        rich_context_dict['last_agency'] = parsed.agency
+                        logger.info(f"🔀 Agency switch in LLM context: '{self.memory.last_agency}' → '{parsed.agency}'")
                 if self.memory.last_scope_type and not (ignore_school_context and self.memory.last_scope_type == "school"):
                     rich_context_dict['last_scope_type'] = self.memory.last_scope_type
                 if self.memory.last_scope_value:
