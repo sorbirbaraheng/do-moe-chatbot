@@ -146,6 +146,7 @@ export const useSpeechSynthesis = (isTalkMode: boolean, selectedVoiceUri: string
         const cleanedText = stripForSpeech(text);
         if (!cleanedText) return false;
 
+        // 1) If a direct URL was provided, play it immediately
         if (forceTTSUrl) {
             const audio = new Audio(forceTTSUrl);
             ttsAudioRef.current = audio;
@@ -163,7 +164,68 @@ export const useSpeechSynthesis = (isTalkMode: boolean, selectedVoiceUri: string
             return true;
         }
 
-        if (!('speechSynthesis' in window)) return false;
+        // 2) Try Edge TTS via /api/tts (neural voice — much more natural)
+        const tryEdgeTTS = async () => {
+            try {
+                // Auto-detect Flask API URL
+                const { getFlaskBaseUrl } = await import('../services/chatbot-api.js');
+                const baseUrl = getFlaskBaseUrl(5001);
+                const ttsText = cleanedText.length > 1000 ? cleanedText.slice(0, 1000) : cleanedText;
+
+                const resp = await fetch(`${baseUrl}/api/tts`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: ttsText,
+                        voice: 'th-TH-NiwatNeural',
+                        rate: '+5%',
+                        pitch: '-20Hz'
+                    }),
+                    signal: AbortSignal.timeout(15000), // 15s timeout
+                });
+
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+                if (!data.success || !data.audio) throw new Error('No audio data');
+
+                // Convert base64 to blob URL and play
+                const audioBytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
+                const blob = new Blob([audioBytes], { type: 'audio/mpeg' });
+                const blobUrl = URL.createObjectURL(blob);
+
+                const audio = new Audio(blobUrl);
+                ttsAudioRef.current = audio;
+                audio.onplay = () => setIsSpeaking(true);
+                audio.onended = () => {
+                    setIsSpeaking(false);
+                    ttsAudioRef.current = null;
+                    URL.revokeObjectURL(blobUrl);
+                };
+                audio.onerror = () => {
+                    setIsSpeaking(false);
+                    URL.revokeObjectURL(blobUrl);
+                };
+                await audio.play();
+                console.log('[TTS] 🔊 Edge TTS neural voice playing');
+            } catch (err) {
+                console.warn('[TTS] Edge TTS failed, falling back to browser voice:', err);
+                // 3) Fallback: browser SpeechSynthesis
+                fallbackBrowserVoice(cleanedText);
+            }
+        };
+
+        // Start Edge TTS attempt
+        setIsSpeaking(true);
+        tryEdgeTTS();
+        return true;
+    }, [isTalkMode, getPreferredVoice, stopSpeaking, startResumeWorkaround, stopResumeWorkaround]);
+
+    // Browser SpeechSynthesis fallback (old behavior)
+    const fallbackBrowserVoice = useCallback((cleanedText: string) => {
+        if (!('speechSynthesis' in window)) {
+            setIsSpeaking(false);
+            return;
+        }
         try {
             window.speechSynthesis.cancel();
             const utterance = new SpeechSynthesisUtterance(cleanedText);
@@ -190,13 +252,11 @@ export const useSpeechSynthesis = (isTalkMode: boolean, selectedVoiceUri: string
             speakTimerRef.current = setTimeout(() => {
                 window.speechSynthesis.speak(utterance);
             }, 50);
-            return true;
         } catch (e) {
             console.error('Speech throw:', e);
             setIsSpeaking(false);
-            return false;
         }
-    }, [isTalkMode, getPreferredVoice, stopSpeaking, startResumeWorkaround, stopResumeWorkaround]);
+    }, [getPreferredVoice, startResumeWorkaround, stopResumeWorkaround]);
 
     return {
         isSpeaking,
