@@ -24,7 +24,7 @@ class FollowUpMixin:
         if not text:
             return None
 
-        strong_followup_markers = ["แล้ว", "ล่ะ", "ละ", "ต่อ", "อีก", "เพิ่ม", "งั้น", "ถ้า", "แล้วถ้า"]
+        strong_followup_markers = ["แล้ว", "ล่ะ", "ละ", "ต่อ", "อีก", "เพิ่ม", "งั้น", "ถ้า", "แล้วถ้า", "ขอแบบ", "แยกสังกัด", "แยกตามสังกัด"]
         weak_followup_markers = ["ขอรายละเอียด", "รายละเอียดเพิ่ม", "พิกัด", "อยู่ที่ไหน", "เบอร์ติดต่อ"]
         starts_followup = text.startswith(tuple(strong_followup_markers))
         year_only_followup = bool(
@@ -36,7 +36,7 @@ class FollowUpMixin:
 
         asks_teachers = any(k in text for k in ["ครู", "อาจารย์", "บุคลากร"])
         asks_students = any(k in text for k in ["นักเรียน", "ผู้เรียน", "เด็ก", "ชั้น", "ม.", "ป.", "อนุบาล"])
-        asks_schools = any(k in text for k in ["โรงเรียน", "สถานศึกษา", "กี่โรง", "กี่แห่ง"])
+        asks_schools = any(k in text for k in ["โรงเรียน", "สถานศึกษา", "กี่โรง", "กี่แห่ง", "แยกสังกัด", "แยกตามสังกัด", "ตามสังกัด"])
 
         latest_kws = ["ปีล่าสุด", "ล่าสุด", "ปีนี้", "ปัจจุบัน"]
         is_latest = any(k in text for k in latest_kws)
@@ -110,7 +110,8 @@ class FollowUpMixin:
                 "count_students": {"school_name", "province", "district", "region", "grade", "gender", "year", "agency"},
                 "count_teachers": {"school_name", "province", "district", "region", "gender", "person_type", "year"},
                 "count_schools": {"province", "district", "subdistrict", "agency", "region", "year"},
-                "count_by_system_type": {"province", "district", "system_type", "year"},
+                "count_by_system_type": {"province", "district", "region", "system_type", "year"},
+                "analyze_gender_ratio": {"province", "district", "region", "school_name", "year"},
                 "list_schools": {"province", "district", "region", "agency", "limit", "year"},
                 "search_schools": {"school_name", "province", "district", "region", "agency", "limit", "year"},
                 "ranking": {"metric", "order", "scope", "province", "region", "district", "limit", "year", "person_type"},
@@ -118,6 +119,7 @@ class FollowUpMixin:
                 "get_school_full_details": {"school_name", "province", "year"},
                 "get_province_summary": {"province", "year"},
                 "get_ratio": {"school_name", "province", "year"},
+                "compare_years": {"year1", "year2", "province", "region", "school_name", "metric"},
             }
             keys = allow.get(tool_name)
             if not keys:
