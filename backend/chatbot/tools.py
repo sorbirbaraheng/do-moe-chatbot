@@ -210,6 +210,14 @@ EDUCATION_TOOLS: List[Tool] = [
             ToolParameter("year", "ปีการศึกษา เช่น 2567", required=False),
         ]
     ),
+
+    Tool(
+        name="get_national_summary",
+        description="สรุปภาพรวมข้อมูลการศึกษาระดับประเทศ รวมจำนวนโรงเรียน นักเรียน ครู อัตราส่วน แยกตามภูมิภาค ใช้เมื่อถามภาพรวมทั้งประเทศ หรือสรุประดับชาติ",
+        parameters=[
+            ToolParameter("year", "ปีการศึกษา เช่น 2568", required=False),
+        ]
+    ),
     
     # ============================================================
     # PHASE 2: NEW TOOLS (เพิ่มใหม่)
@@ -392,7 +400,9 @@ TOOL_SELECTION_PROMPT = '''คุณเป็น AI ผู้ช่วยวิ�
 - ถ้าถาม "ครอบคลุมอำเภอ", "เขต X มีอำเภออะไรบ้าง", "สพป./สพม. ครอบคลุม" → ใช้ get_education_area_info
 - ถ้าถาม "สพป.", "สพม.", "เขตพื้นที่การศึกษา" (ค้นหาเขต) → ใช้ search_education_areas
 - ถ้าถาม "รายละเอียดโรงเรียน", "ข้อมูลเต็ม", "พิกัด GPS" → ใช้ get_school_full_details
-- ถ้าถาม "สรุป", "ภาพรวม", "ข้อมูลการศึกษาจังหวัด" → ใช้ get_province_summary
+- ถ้าถาม "สรุป", "ภาพรวม", "ข้อมูลการศึกษาจังหวัด" (เฉพาะจังหวัด) → ใช้ get_province_summary
+- ถ้าถาม "สรุประดับประเทศ", "ภาพรวมทั้งประเทศ", "ทั้งประเทศมีโรงเรียน/นักเรียน/ครูเท่าไหร่", "ระดับชาติ" → ใช้ get_national_summary
+- ถ้าถาม "ภาคไหนมีอัตราส่วนนักเรียนต่อครูสูงที่สุด" → ใช้ ranking(metric="ratio", scope="region", order="most")
 - ถ้าถาม "ในระบบ", "นอกระบบ", "ประเภทการศึกษา" → ใช้ count_by_system_type
 - ถ้าถาม "สัดส่วนเพศ", "นักเรียนชาย", "นักเรียนหญิง" (ในภาพรวม) → ใช้ analyze_gender_ratio
 - ถ้าถาม "ระดับชั้น", "ป.1-6", "ม.1-6", "อนุบาล" (ภาพรวม) → ใช้ get_grade_distribution
@@ -481,6 +491,7 @@ Your task is to:
 | `get_education_area_info` | ดูว่าเขตพื้นที่ครอบคลุมอำเภอใดบ้าง มีกี่โรงเรียน | area_name (REQUIRED!) |
 | `find_nearby_schools` | หาโรงเรียนใกล้เคียงพิกัด GPS | latitude, longitude, radius_km |
 | `get_province_summary` | สรุปภาพรวมจังหวัด | province |
+| `get_national_summary` | สรุปภาพรวมระดับประเทศ (โรงเรียน+นักเรียน+ครู+อัตราส่วน แยกภาค) | (none) |
 | `get_district_summary` | สรุปภาพรวมอำเภอ | province, district |
 
 **💬 GENERAL:**
@@ -542,6 +553,9 @@ Return ONLY a JSON array. No explanation.
 - "โรงเรียนในปัตตานีมีกี่แห่ง" → [{{"name": "count_schools", "params": {{"province": "ปัตตานี"}}}}]
 - "โรงเรียนและครูในปัตตานีมีทั้งหมดกี่คน" → [{{"name": "get_province_summary", "params": {{"province": "ปัตตานี"}}}}]
 - "โรงเรียนในปัตตานีมีกี่แห่ง และมีครูเท่าไหร่" → [{{"name": "get_province_summary", "params": {{"province": "ปัตตานี"}}}}]
+- "สรุประดับประเทศ โรงเรียน นักเรียน ครู" → [{{"name": "get_national_summary", "params": {{}}}}]
+- "ภาพรวมทั้งประเทศ" → [{{"name": "get_national_summary", "params": {{}}}}]
+- "ภาคไหนมีอัตราส่วนนักเรียนต่อครูสูงที่สุด" → [{{"name": "ranking", "params": {{"metric": "ratio", "order": "most", "scope": "region"}}}}]
 - "ครูในภาคใต้มีเท่าไหร่" → [{{"name": "count_teachers", "params": {{"region": "ภาคใต้"}}}}]
 - "รายละเอียดครูภาคใต้" → [{{"name": "analyze_teacher_distribution", "params": {{"region": "ภาคใต้"}}}}]
 - "ครูผู้ชายในปัตตานีมีกี่คน" → [{{"name": "analyze_teacher_distribution", "params": {{"province": "ปัตตานี", "gender": "ชาย"}}}}]

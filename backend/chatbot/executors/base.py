@@ -182,6 +182,8 @@ class ExecutorBase:
                 return self._get_school_full_details(**params)
             elif tool_name == "get_province_summary":
                 return self._get_province_summary(**params)
+            elif tool_name == "get_national_summary":
+                return self._get_national_summary(**params)
             # Phase 2: New tools
             elif tool_name == "count_by_system_type":
                 return self._count_by_system_type(**params)

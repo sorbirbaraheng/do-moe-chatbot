@@ -26,11 +26,19 @@ class FollowUpMixin:
 
         strong_followup_markers = ["แล้ว", "ล่ะ", "ละ", "ต่อ", "อีก", "เพิ่ม", "งั้น", "ถ้า", "แล้วถ้า", "ขอแบบ", "แยกสังกัด", "แยกตามสังกัด"]
         weak_followup_markers = ["ขอรายละเอียด", "รายละเอียดเพิ่ม", "พิกัด", "อยู่ที่ไหน", "เบอร์ติดต่อ"]
+        context_followup_markers = [
+            "เทียบ", "เปรียบเทียบ", "เปลี่ยนแปลง", "ต่างกัน",
+            "แยกตามภูมิภาค", "แยกภาค", "ภาคไหน", "แต่ละภาค", "ทั้ง 6 ภาค", "6 ภาค"
+        ]
         starts_followup = text.startswith(tuple(strong_followup_markers))
         year_only_followup = bool(
             re.match(r'^\s*(?:แล้ว\s*)?ปี(?:การศึกษา)?\s*\d{2,4}(?:\s*(?:ละ|ล่ะ|ล่ะครับ|ละครับ|หล่ะ))?\s*$', text)
         )
-        looks_followup = starts_followup or any(k in text for k in strong_followup_markers + weak_followup_markers) or year_only_followup
+        looks_followup = (
+            starts_followup
+            or any(k in text for k in strong_followup_markers + weak_followup_markers + context_followup_markers)
+            or year_only_followup
+        )
         if len(text) > 160 or (len(text) > 50 and not looks_followup):
             return None
 
@@ -63,8 +71,14 @@ class FollowUpMixin:
                 "ข้าราชการ": "ข้าราชการครู",
             }.get(person_type, person_type)
 
-        # Don't hijack standalone explicit-scope queries into follow-up flow
-        if has_explicit_scope and not starts_followup and not year_only_followup and len(text) > 16:
+        active_tool = active.get("name") or active.get("tool")
+        summary_scope_followup = (
+            active_tool in ["get_national_summary", "get_province_summary", "compare_years", "ranking"]
+            and any(k in text for k in ["แยกตามภูมิภาค", "แยกภาค", "ภาคไหน", "6 ภาค", "ทั้ง 6 ภาค", "แต่ละภาค", "อัตราส่วน", "ต่อครู"])
+        )
+        # Don't hijack standalone explicit-scope queries into follow-up flow,
+        # except summary/compare continuity queries that intentionally pivot scope.
+        if has_explicit_scope and not starts_followup and not year_only_followup and len(text) > 16 and not summary_scope_followup:
             return None
 
         if (
@@ -82,7 +96,7 @@ class FollowUpMixin:
         ):
             return None
 
-        tool = active.get("name") or active.get("tool")
+        tool = active_tool
         params = dict(active.get("params", {}) or {})
 
         def _apply_scope_overrides(base: Dict[str, Any]) -> Dict[str, Any]:
@@ -258,7 +272,16 @@ class FollowUpMixin:
                 params["order"] = "least"
             elif any(k in text for k in ["มากที่สุด", "สูงสุด", "เยอะที่สุด", "มากสุด"]):
                 params["order"] = "most"
-            if asks_teachers:
+            ratio_kws = ["อัตราส่วน", "ครูต่อ", "ครูต่อนักเรียน", "นักเรียนต่อครู", "ต่อครู", "ratio", "ไม่ทั่วถึง", "ขาดแคลนครู"]
+            asks_ratio = any(k in text for k in ratio_kws)
+            asks_region_entity = (
+                any(k in text for k in ["ภาคไหน", "ภาคใด", "ภูมิภาคไหน", "ภูมิภาคใด"])
+                or ("ระดับภาค" in text and not any(k in text for k in ["จังหวัด", "อำเภอ", "ตำบล", "โรงเรียน"]))
+                or any(k in text for k in ["แยกตามภูมิภาค", "แยกภาค", "ทั้ง 6 ภาค", "6 ภาค", "แต่ละภาค"])
+            )
+            if asks_ratio:
+                params["metric"] = "ratio"
+            elif asks_teachers:
                 params["metric"] = "teachers"
             elif asks_students:
                 params["metric"] = "students"
@@ -270,6 +293,12 @@ class FollowUpMixin:
                 params["agency"] = agency
             if district and not params.get("district") and params.get("scope") == "subdistrict":
                 params["district"] = district
+            if asks_region_entity:
+                params["scope"] = "region"
+                # Region ranking should compare all regions, not be constrained by stale scope
+                params.pop("province", None)
+                params.pop("district", None)
+                params.pop("region", None)
             return [{"name": "ranking", "params": _prune_params_for_tool("ranking", params)}]
 
         if tool == "get_school_full_details":
@@ -292,6 +321,72 @@ class FollowUpMixin:
                 return [{"name": "count_students", "params": _prune_params_for_tool("count_students", follow_params)}]
             if any(k in text for k in ["รายละเอียด", "อยู่ที่ไหน", "พิกัด", "แผนที่"]):
                 return [{"name": "get_school_full_details", "params": _prune_params_for_tool("get_school_full_details", follow_params)}]
+
+        if tool == "compare_years":
+            is_year_compare = any(k in text for k in ["เทียบ", "เปรียบเทียบ", "ต่างกัน", "เปลี่ยนแปลง"])
+            asks_ratio = any(k in text for k in ["อัตราส่วน", "ต่อครู", "ครูต่อนักเรียน", "นักเรียนต่อครู", "ratio"])
+            asks_region = any(k in text for k in ["แยกตามภาค", "แยกภาค", "ภาคไหน", "6 ภาค", "ทั้ง 6 ภาค", "แต่ละภาค", "ระดับภาค"])
+
+            # Prefer the newer year from compare context when pivoting to single-year tools
+            latest_year = None
+            for cand in [params.get("year2"), params.get("year1")]:
+                try:
+                    latest_year = int(cand)
+                    break
+                except Exception:
+                    continue
+
+            if is_year_compare and year:
+                compare_params = {
+                    "year1": str(year),
+                    "year2": str(params.get("year2") or params.get("year1") or year),
+                    "metric": "all",
+                }
+                if params.get("province"):
+                    compare_params["province"] = params["province"]
+                elif params.get("region"):
+                    compare_params["region"] = params["region"]
+                if params.get("school_name"):
+                    compare_params["school_name"] = params["school_name"]
+                return [{"name": "compare_years", "params": _prune_params_for_tool("compare_years", compare_params)}]
+
+            if asks_ratio and asks_region:
+                rank_params = {"metric": "ratio", "order": "most", "scope": "region", "limit": 6}
+                if latest_year:
+                    rank_params["year"] = latest_year
+                return [{"name": "ranking", "params": _prune_params_for_tool("ranking", rank_params)}]
+
+            if asks_region:
+                metric = "students"
+                if asks_teachers:
+                    metric = "teachers"
+                elif asks_schools:
+                    metric = "schools"
+                rank_params = {"metric": metric, "order": "most", "scope": "region", "limit": 6}
+                if latest_year:
+                    rank_params["year"] = latest_year
+                return [{"name": "ranking", "params": _prune_params_for_tool("ranking", rank_params)}]
+
+            if asks_teachers or asks_students or asks_schools:
+                base = {}
+                if params.get("province"):
+                    base["province"] = params["province"]
+                elif params.get("region"):
+                    base["region"] = params["region"]
+                if latest_year:
+                    base["year"] = latest_year
+                if asks_teachers:
+                    if person_type:
+                        base["person_type"] = person_type
+                    return [{"name": "count_teachers", "params": _prune_params_for_tool("count_teachers", base)}]
+                if asks_students:
+                    if grade:
+                        base["grade"] = grade
+                    return [{"name": "count_students", "params": _prune_params_for_tool("count_students", base)}]
+                if asks_schools:
+                    if agency:
+                        base["agency"] = agency
+                    return [{"name": "count_schools", "params": _prune_params_for_tool("count_schools", base)}]
 
         # ── Follow-up from summary tools (national / province) ──────
         if tool in ["get_national_summary", "get_province_summary"]:
