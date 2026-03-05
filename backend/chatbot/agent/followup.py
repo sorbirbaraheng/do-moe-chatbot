@@ -135,6 +135,9 @@ class FollowUpMixin:
                 "get_national_summary": {"year"},
                 "get_ratio": {"school_name", "province", "year"},
                 "compare_years": {"year1", "year2", "province", "region", "school_name", "metric"},
+                "find_best_ratio_schools": {"province", "order", "limit"},
+                "get_district_summary": {"province", "district", "year"},
+                "ranking_subdistricts": {"province", "district", "metric", "order", "limit"},
             }
             keys = allow.get(tool_name)
             if not keys:
@@ -157,6 +160,33 @@ class FollowUpMixin:
             return [{"name": "__multi_step__", "params": {"plan": plan}}]
 
         if tool in ["count_students", "count_teachers"]:
+            # ── Year comparison follow-up ────────────────────────
+            is_year_compare = any(k in text for k in [
+                "เทียบ", "เปรียบเทียบ", "เปลี่ยนแปลง", "ต่างกัน",
+                "เปอร์เซ็นต์", "เพิ่มขึ้น", "ลดลง", "กี่%", "คิดเป็น%"
+            ])
+            if is_year_compare and year:
+                from ..core.constants import V5_YEAR
+                active_year = params.get("year", V5_YEAR)
+                compare_params = {
+                    "year1": str(year),
+                    "year2": str(active_year) if str(active_year) != str(year) else V5_YEAR,
+                    "metric": "all",
+                }
+                if params.get("province"):
+                    compare_params["province"] = params["province"]
+                if params.get("region"):
+                    compare_params["region"] = params["region"]
+                return [{"name": "compare_years", "params": _prune_params_for_tool("compare_years", compare_params)}]
+
+            # ── Region breakdown follow-up → national summary ───
+            asks_region_fu = any(k in text for k in [
+                "แยกตามภูมิภาค", "แยกภาค", "ภาคไหน", "6 ภาค",
+                "ทั้ง 6 ภาค", "แต่ละภาค"
+            ])
+            if asks_region_fu and not params.get("province"):
+                return [{"name": "get_national_summary", "params": _prune_params_for_tool("get_national_summary", {})}]
+
             if has_system_followup:
                 system_params = {
                     k: v for k, v in params.items()
@@ -193,6 +223,31 @@ class FollowUpMixin:
             return [{"name": target_tool, "params": _prune_params_for_tool(target_tool, params)}]
 
         if tool in ["count_schools", "get_ratio"]:
+            # ── Year comparison follow-up ────────────────────────
+            is_year_compare = any(k in text for k in [
+                "เทียบ", "เปรียบเทียบ", "เปลี่ยนแปลง", "ต่างกัน",
+                "เปอร์เซ็นต์", "เพิ่มขึ้น", "ลดลง", "กี่%", "คิดเป็น%"
+            ])
+            if is_year_compare and year:
+                from ..core.constants import V5_YEAR
+                active_year = params.get("year", V5_YEAR)
+                compare_params = {
+                    "year1": str(year),
+                    "year2": str(active_year) if str(active_year) != str(year) else V5_YEAR,
+                    "metric": "all",
+                }
+                if params.get("province"):
+                    compare_params["province"] = params["province"]
+                return [{"name": "compare_years", "params": _prune_params_for_tool("compare_years", compare_params)}]
+
+            # ── Region breakdown follow-up → national summary ───
+            asks_region_fu = any(k in text for k in [
+                "แยกตามภูมิภาค", "แยกภาค", "ภาคไหน", "6 ภาค",
+                "ทั้ง 6 ภาค", "แต่ละภาค"
+            ])
+            if asks_region_fu and not params.get("province"):
+                return [{"name": "get_national_summary", "params": _prune_params_for_tool("get_national_summary", {})}]
+
             if asks_teachers or asks_students:
                 converted_tool = "count_teachers" if asks_teachers else "count_students"
                 converted_params = {
@@ -214,7 +269,14 @@ class FollowUpMixin:
             return [{"name": tool, "params": _prune_params_for_tool(tool, params)}]
 
         if tool == "get_province_summary":
-            if asks_teachers or asks_students or asks_schools or agency:
+            asks_ratio_local = any(
+                k in text for k in ["อัตราส่วน", "สัดส่วน", "ต่อครู", "ครูต่อนักเรียน", "นักเรียนต่อครู", "ratio"]
+            )
+            # Prioritize ratio intent over generic teacher intent
+            # (e.g. "สัดส่วนครูต่อนักเรียน" should map to ratio, not count_teachers)
+            if (asks_teachers or asks_students or asks_schools or agency) and not any(
+                k in text for k in ["อัตราส่วน", "สัดส่วน", "ต่อครู", "ครูต่อนักเรียน", "นักเรียนต่อครู", "ratio"]
+            ):
                 converted_tool = "count_teachers" if asks_teachers else ("count_students" if asks_students else "count_schools")
                 converted_params = {
                     k: v for k, v in params.items()
@@ -229,6 +291,14 @@ class FollowUpMixin:
                 if converted_tool == "count_schools" and agency:
                     converted_params["agency"] = agency
                 return [{"name": converted_tool, "params": _prune_params_for_tool(converted_tool, converted_params)}]
+
+            if asks_ratio_local:
+                ratio_params = {}
+                if params.get("province"):
+                    ratio_params["province"] = params["province"]
+                if params.get("year"):
+                    ratio_params["year"] = params["year"]
+                return [{"name": "get_ratio", "params": _prune_params_for_tool("get_ratio", ratio_params)}]
 
             params = _apply_scope_overrides(params)
             params = _apply_year_overrides(params)
@@ -268,17 +338,103 @@ class FollowUpMixin:
         if tool == "ranking":
             params = _apply_scope_overrides(params)
             params = _apply_year_overrides(params)
-            if any(k in text for k in ["น้อยที่สุด", "ต่ำสุด", "ต่ำที่สุด", "น้อยสุด"]):
-                params["order"] = "least"
-            elif any(k in text for k in ["มากที่สุด", "สูงสุด", "เยอะที่สุด", "มากสุด"]):
-                params["order"] = "most"
+            limit_match = re.search(r'(?:top\s*(\d+))|(?:เอา\s*(\d+))|(\d+)\s*อันดับ', text.lower())
+            if limit_match:
+                try:
+                    params["limit"] = int(limit_match.group(1) or limit_match.group(2) or limit_match.group(3))
+                except Exception:
+                    pass
+
             ratio_kws = ["อัตราส่วน", "ครูต่อ", "ครูต่อนักเรียน", "นักเรียนต่อครู", "ต่อครู", "ratio", "ไม่ทั่วถึง", "ขาดแคลนครู"]
             asks_ratio = any(k in text for k in ratio_kws)
+            asks_district = any(k in text for k in ["อำเภอไหน", "อำเภอ", "district"])
+            asks_school_entity = any(k in text for k in ["โรงเรียนไหน", "โรงเรียนที่", "กี่โรง"])
+            asks_year_compare = any(k in text for k in [
+                "เทียบ", "เปรียบเทียบ", "เปลี่ยนแปลง", "ต่างกัน",
+                "เปอร์เซ็นต์", "เพิ่มขึ้น", "ลดลง", "กี่%", "คิดเป็น%"
+            ])
             asks_region_entity = (
                 any(k in text for k in ["ภาคไหน", "ภาคใด", "ภูมิภาคไหน", "ภูมิภาคใด"])
                 or ("ระดับภาค" in text and not any(k in text for k in ["จังหวัด", "อำเภอ", "ตำบล", "โรงเรียน"]))
                 or any(k in text for k in ["แยกตามภูมิภาค", "แยกภาค", "ทั้ง 6 ภาค", "6 ภาค", "แต่ละภาค"])
             )
+
+            # ── Resolve province from context for drill-down ──────
+            # Ranking at province scope won't have 'province' in params;
+            # we must pull it from the last_active_query result or memory.
+            ctx_province = params.get("province") or context.get("last_province")
+
+            # ── (1) Year compare from ranking context ──────────────
+            if asks_year_compare and (year or any(k in text for k in ["เทียบ", "เปรียบ"])):
+                from ..core.constants import V5_YEAR
+                compare_params = {
+                    "metric": "all",
+                }
+                if year:
+                    active_year = params.get("year", V5_YEAR)
+                    compare_params["year1"] = str(year)
+                    compare_params["year2"] = str(active_year) if str(active_year) != str(year) else V5_YEAR
+                else:
+                    compare_params["year1"] = "2566"
+                    compare_params["year2"] = str(params.get("year", V5_YEAR))
+                if ctx_province:
+                    compare_params["province"] = ctx_province
+                return [{"name": "compare_years", "params": _prune_params_for_tool("compare_years", compare_params)}]
+
+            # ── (2) District drill-down from province ranking ──────
+            if asks_district and ctx_province:
+                district_params = dict(params)
+                district_params["scope"] = "district"
+                district_params["province"] = ctx_province
+                if not district_params.get("limit"):
+                    district_params["limit"] = 5
+                if asks_ratio:
+                    district_params["metric"] = "ratio"
+                elif asks_teachers:
+                    district_params["metric"] = "teachers"
+                elif asks_students:
+                    district_params["metric"] = "students"
+                elif asks_schools:
+                    district_params["metric"] = "schools"
+                return [{"name": "ranking", "params": _prune_params_for_tool("ranking", district_params)}]
+
+            # ── (3) School drill-down from ratio ranking ───────────
+            is_ratio_context = params.get("metric") == "ratio" or asks_ratio
+            if asks_school_entity and is_ratio_context and ctx_province:
+                school_order = "worst"
+                if any(k in text for k in ["ดีที่สุด", "ดีสุด", "ต่ำสุด", "น้อยสุด", "best"]):
+                    school_order = "best"
+                school_limit = params.get("limit", 5)
+                return [{"name": "find_best_ratio_schools", "params": _prune_params_for_tool(
+                    "find_best_ratio_schools",
+                    {"province": ctx_province, "order": school_order, "limit": school_limit}
+                )}]
+
+            # ── (4) Standalone reverse order ("ต่ำสุดล่ะ") ─────────
+            asks_reverse_low = any(k in text for k in ["ต่ำสุด", "น้อยที่สุด", "ต่ำที่สุด", "น้อยสุด"])
+            asks_reverse_high = any(k in text for k in ["มากที่สุด", "สูงสุด", "เยอะที่สุด", "มากสุด"])
+            if asks_reverse_low or asks_reverse_high:
+                # For ratio metric, "ต่ำสุด" means best ratio (fewer students per teacher)
+                if params.get("metric") == "ratio":
+                    if asks_reverse_low:
+                        # If previous was worst, flip to best; if was best, keep
+                        new_order = "best" if params.get("order") in ["worst", "most"] else "worst"
+                    else:
+                        new_order = "worst" if params.get("order") in ["best", "least"] else "most"
+                    # Route to find_best_ratio_schools if province-scoped
+                    if ctx_province and params.get("scope") in ["province", "provinces", None]:
+                        return [{"name": "find_best_ratio_schools", "params": _prune_params_for_tool(
+                            "find_best_ratio_schools",
+                            {"province": ctx_province, "order": new_order, "limit": params.get("limit", 5)}
+                        )}]
+                    params["order"] = new_order
+                else:
+                    params["order"] = "least" if asks_reverse_low else "most"
+            elif any(k in text for k in ["น้อยที่สุด", "ต่ำสุด", "ต่ำที่สุด", "น้อยสุด"]):
+                params["order"] = "least"
+            elif any(k in text for k in ["มากที่สุด", "สูงสุด", "เยอะที่สุด", "มากสุด"]):
+                params["order"] = "most"
+
             if asks_ratio:
                 params["metric"] = "ratio"
             elif asks_teachers:
@@ -309,6 +465,8 @@ class FollowUpMixin:
             follow_params = {"school_name": school_name}
             if params.get("province"):
                 follow_params["province"] = params.get("province")
+            if params.get("year"):
+                follow_params["year"] = params.get("year")
             follow_params = _apply_year_overrides(follow_params)
 
             if asks_teachers:
@@ -323,8 +481,8 @@ class FollowUpMixin:
                 return [{"name": "get_school_full_details", "params": _prune_params_for_tool("get_school_full_details", follow_params)}]
 
         if tool == "compare_years":
-            is_year_compare = any(k in text for k in ["เทียบ", "เปรียบเทียบ", "ต่างกัน", "เปลี่ยนแปลง"])
-            asks_ratio = any(k in text for k in ["อัตราส่วน", "ต่อครู", "ครูต่อนักเรียน", "นักเรียนต่อครู", "ratio"])
+            is_year_compare = any(k in text for k in ["เทียบ", "เปรียบเทียบ", "ต่างกัน", "เปลี่ยนแปลง", "เปอร์เซ็นต์", "เพิ่มขึ้น", "ลดลง", "กี่%", "คิดเป็น%"])
+            asks_ratio = any(k in text for k in ["อัตราส่วน", "สัดส่วน", "ต่อครู", "ครูต่อนักเรียน", "นักเรียนต่อครู", "ratio"])
             asks_region = any(k in text for k in ["แยกตามภาค", "แยกภาค", "ภาคไหน", "6 ภาค", "ทั้ง 6 ภาค", "แต่ละภาค", "ระดับภาค"])
 
             # Prefer the newer year from compare context when pivoting to single-year tools
@@ -390,8 +548,8 @@ class FollowUpMixin:
 
         # ── Follow-up from summary tools (national / province) ──────
         if tool in ["get_national_summary", "get_province_summary"]:
-            is_year_compare = any(k in text for k in ["เทียบ", "เปรียบเทียบ", "ต่างกัน", "เปลี่ยนแปลง"])
-            asks_ratio = any(k in text for k in ["อัตราส่วน", "ต่อครู", "ครูต่อนักเรียน", "ratio"])
+            is_year_compare = any(k in text for k in ["เทียบ", "เปรียบเทียบ", "ต่างกัน", "เปลี่ยนแปลง", "เปอร์เซ็นต์", "เพิ่มขึ้น", "ลดลง", "กี่%", "คิดเป็น%"])
+            asks_ratio = any(k in text for k in ["อัตราส่วน", "สัดส่วน", "ต่อครู", "ครูต่อนักเรียน", "ratio"])
             asks_region = any(k in text for k in ["แยกตามภาค", "แยกภาค", "ภาคไหน", "6 ภาค", "แต่ละภาค"])
             asks_agency = any(k in text for k in ["แยกสังกัด", "แยกตามสังกัด", "สังกัดไหน"])
 
@@ -427,6 +585,8 @@ class FollowUpMixin:
                 ratio_params = {}
                 if tool == "get_province_summary" and params.get("province"):
                     ratio_params["province"] = params["province"]
+                if params.get("year"):
+                    ratio_params["year"] = params["year"]
                 return [{"name": "get_ratio", "params": _prune_params_for_tool("get_ratio", ratio_params)}]
 
             if asks_teachers:
