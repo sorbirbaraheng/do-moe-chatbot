@@ -208,7 +208,7 @@ class AnalysisToolsMixin:
                 kwargs['region'] = region
                 province = None
 
-        if region and not province and scope not in ["district", "districts"]:
+        if region and not province and scope not in ["district", "districts", "region", "regions"]:
             logger.info(f"🔄 [Ranking] Downgrading scope from '{scope}' to 'school' (region query without province)")
             scope = "school"
 
@@ -230,7 +230,7 @@ class AnalysisToolsMixin:
 
             explicit_region = kwargs.get("region")
             target_regions: List[str] = []
-            if explicit_region:
+            if explicit_region and explicit_region not in ["each_region", "all", "ทุกภาค"]:
                 normalized_region = self._normalize_region(explicit_region) or explicit_region
                 if normalized_region in REGIONS:
                     target_regions = [normalized_region]
@@ -239,9 +239,11 @@ class AnalysisToolsMixin:
             else:
                 canonical_regions = [
                     "ภาคเหนือ", "ภาคตะวันออกเฉียงเหนือ", "ภาคกลาง",
-                    "ภาคตะวันออก", "ภาคตะวันตก", "ภาคใต้",
+                    "ภาคตะวันออก", "ภาคตะวันตก", "ภาคตวันใต้", "ภาคใต้" # Ensure correct spelling of regions
                 ]
-                target_regions = [r for r in canonical_regions if REGIONS.get(r)]
+                # Filter strictly by those that exist in our constants
+                from ..core.constants import REGIONS as _REGIONS
+                target_regions = [r for r in canonical_regions if _REGIONS.get(r)]
 
             items = []
             for region_name in target_regions:
