@@ -553,11 +553,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
     const visibleTabs = tabs.filter(tab => roleRank[role] >= roleRank[tab.minRole]);
 
     return (
-        <div className="fixed inset-0 z-50 hidden md:flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-300">
-            <div className="w-full max-w-6xl h-[90vh] bg-[#F2F2F7] rounded-3xl shadow-2xl overflow-hidden flex animate-in zoom-in-95 duration-300">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-300 p-0 md:p-4">
+            <div className="w-full h-full md:max-w-6xl md:h-[90vh] bg-[#F2F2F7] md:rounded-3xl shadow-2xl overflow-hidden flex flex-col md:flex-row animate-in zoom-in-95 duration-300">
                 {/* Sidebar */}
-                <div className="w-64 bg-white/80 backdrop-blur-lg border-r border-black/5 p-4 flex flex-col">
-                    <div className="flex items-center gap-3 px-3 py-4 mb-4">
+                <div className="w-full md:w-64 bg-white/80 backdrop-blur-lg border-b md:border-b-0 md:border-r border-black/5 p-3 md:p-4 flex md:flex-col overflow-x-auto md:overflow-x-visible">
+                    <div className="hidden md:flex items-center gap-3 px-3 py-4 mb-4">
                         <div className="w-10 h-10 rounded-xl overflow-hidden shadow-md">
                             <img src="/do-mascot.png" alt="DO" className="w-full h-full object-cover" />
                         </div>
@@ -567,22 +567,22 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
                         </div>
                     </div>
 
-                    <nav className="flex-1 space-y-1">
+                    <nav className="flex md:flex-col flex-1 gap-1 md:space-y-1 overflow-x-auto md:overflow-x-visible">
                         {visibleTabs.map((tab) => (
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id)}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[13px] font-medium transition-all ${activeTab === tab.id
+                                className={`flex-shrink-0 md:w-full flex items-center gap-2 md:gap-3 px-3 md:px-4 py-2 md:py-3 rounded-xl text-[11px] md:text-[13px] font-medium transition-all whitespace-nowrap ${activeTab === tab.id
                                     ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
                                     : 'text-black/70 hover:bg-black/5'
                                     }`}
                             >
-                                {tab.icon}
-                                {tab.label}
+                                <span className="text-base md:text-lg">{tab.icon}</span>
+                                <span className="hidden sm:inline">{tab.label}</span>
                             </button>
                         ))}
 
-                        <div className="pt-4 mt-4 border-t border-black/5">
+                        <div className="hidden md:block pt-4 mt-4 border-t border-black/5">
                             <button
                                 onClick={async () => {
                                     const updatedUX = { ...draftUX, showRagDebug: true };
@@ -629,7 +629,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
                                 setIsResetting(false);
                             }
                         }}
-                        className={`w-full py-3 text-sm font-medium rounded-xl transition-all flex items-center justify-center gap-2 mb-2 ${isResetting
+                        className={`hidden md:flex w-full py-3 text-sm font-medium rounded-xl transition-all items-center justify-center gap-2 mb-2 ${isResetting
                             ? 'text-gray-400 bg-gray-100 cursor-not-allowed'
                             : 'text-orange-600 hover:bg-orange-50'
                             }`}
@@ -649,7 +649,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
 
                     <button
                         onClick={handleClose}
-                        className="w-full py-3 text-sm font-medium text-red-600 hover:bg-red-50 rounded-xl transition-all flex items-center justify-center gap-2"
+                        className="hidden md:flex w-full py-3 text-sm font-medium text-red-600 hover:bg-red-50 rounded-xl transition-all items-center justify-center gap-2"
                     >
                         {hasUnsavedChanges && <span className="w-2 h-2 bg-orange-400 rounded-full animate-pulse"></span>}
                         ปิดหน้าต่าง Admin
@@ -659,7 +659,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
                             clearAdminSession();
                             onLogout();
                         }}
-                        className="w-full py-3 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all flex items-center justify-center gap-2 mt-2"
+                        className="hidden md:flex w-full py-3 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all items-center justify-center gap-2 mt-2"
                     >
                         ออกจากระบบแอดมิน
                     </button>
@@ -667,40 +667,49 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onLogout }) => {
 
                 {/* Main Content */}
                 <div className="flex-1 flex flex-col overflow-hidden">
-                    <header className="h-16 px-6 bg-white/60 backdrop-blur-lg border-b border-black/5 flex items-center justify-between">
-                        <h1 className="text-xl font-bold text-[#1D1D1F]">
+                    <header className="h-14 md:h-16 px-3 md:px-6 bg-white/60 backdrop-blur-lg border-b border-black/5 flex items-center justify-between">
+                        <h1 className="text-lg md:text-xl font-bold text-[#1D1D1F]">
                             {tabs.find(t => t.id === activeTab)?.label}
                         </h1>
-                        <div className="flex items-center gap-3">
-                            <div className="flex flex-col items-end leading-tight">
+                        <div className="flex items-center gap-2 md:gap-3">
+                            <div className="hidden md:flex flex-col items-end leading-tight">
                                 <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded-full ${roleMeta[role].className}`}>
                                     {roleMeta[role].label}
                                 </span>
                                 <span className="text-[10px] text-black/40 mt-1">{roleMeta[role].desc}</span>
                             </div>
                             {saveMessage && (
-                                <span className="text-sm text-green-600 font-medium animate-in fade-in">{saveMessage}</span>
+                                <span className="hidden sm:inline text-sm text-green-600 font-medium animate-in fade-in">{saveMessage}</span>
                             )}
                             <button
                                 onClick={handleSave}
                                 disabled={isSaving || !canEdit}
                                 title={!canEdit ? 'สิทธิ์ Viewer ไม่สามารถบันทึกได้' : undefined}
-                                className={`px-6 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${canEdit ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
+                                className={`px-3 md:px-6 py-2 rounded-xl text-xs md:text-sm font-bold transition-all flex items-center gap-1 md:gap-2 ${canEdit ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
                             >
                                 {isSaving && (
-                                    <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24">
+                                    <svg className="animate-spin w-3 h-3 md:w-4 md:h-4" viewBox="0 0 24 24">
                                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                                     </svg>
                                 )}
                                 บันทึก
                             </button>
+                            <button
+                                onClick={handleClose}
+                                className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg text-gray-600 hover:bg-black/5 transition-all"
+                                title="ปิด"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                                </svg>
+                            </button>
                         </div>
                     </header>
 
-                    <main className="flex-1 overflow-y-auto p-6">
+                    <main className="flex-1 overflow-y-auto p-3 md:p-6">
                         {!canEdit && (
-                            <div className="mb-4 px-4 py-3 rounded-xl bg-amber-50 text-amber-700 text-sm font-medium">
+                            <div className="mb-4 px-3 md:px-4 py-2 md:py-3 rounded-xl bg-amber-50 text-amber-700 text-xs md:text-sm font-medium">
                                 โหมดอ่านอย่างเดียว (Viewer) ไม่สามารถบันทึกการเปลี่ยนแปลงได้
                             </div>
                         )}

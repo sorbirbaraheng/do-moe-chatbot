@@ -14,14 +14,14 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'operator'];
     }
 
-    // Settings collection: 
-    // - Authenticated users can READ (to get prompts/models).
+    // Settings collection:
+    // - Everyone can READ (to get prompts/models).
     // - Only admin/operator can WRITE.
     match /settings/{document=**} {
-      allow read: if request.auth != null;
+      allow read: if true;
       allow write: if isAdmin();
     }
-    
+
     // Users collection & all subcollections (sessions, messages):
     // - Self: Read/Write own data (matched by uid OR email).
     // - Admin: Read/Write EVERYONE's data.
@@ -50,17 +50,20 @@ service cloud.firestore {
     // Legacy Chat Logs collection:
     // - Authenticated users can create logs.
     // - Can read own logs or legacy logs without owner.
+    // - Can delete own logs.
     match /chat_logs/{logId} {
       allow create: if request.auth != null;
       allow read: if request.auth != null && (!('userId' in resource.data) || resource.data.userId == request.auth.uid || resource.data.userId == request.auth.token.email);
-      allow update, delete: if false; 
+      allow update: if false;
+      allow delete: if request.auth != null && (resource.data.userId == request.auth.uid || resource.data.userId == request.auth.token.email || isAdmin());
     }
 
     // Legacy Chat Sessions collection:
     match /chat_sessions/{sessionId} {
       allow read: if request.auth != null && (!('userId' in resource.data) || resource.data.userId == request.auth.uid || resource.data.userId == request.auth.token.email);
       allow create: if request.auth != null;
-      allow update, delete: if request.auth != null && (!('userId' in resource.data) || resource.data.userId == request.auth.uid || resource.data.userId == request.auth.token.email);
+      allow update: if request.auth != null && (resource.data.userId == request.auth.uid || resource.data.userId == request.auth.token.email);
+      allow delete: if request.auth != null && (resource.data.userId == request.auth.uid || resource.data.userId == request.auth.token.email || isAdmin());
     }
 
     // Default: Deny everything else

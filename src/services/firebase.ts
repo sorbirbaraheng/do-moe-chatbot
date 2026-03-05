@@ -16,7 +16,9 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = initializeFirestore(app, { experimentalForceLongPolling: true });
 // export const db = getFirestore(app);
-export const analytics = getAnalytics(app);
+
+// Initialize Analytics with auto cookie domain (won't cause errors)
+export const analytics = typeof window !== 'undefined' ? getAnalytics(app) : null as any;
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
