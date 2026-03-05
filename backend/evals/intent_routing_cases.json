@@ -204,5 +204,127 @@
       }
     },
     "expect": {"tool": "ranking", "params": {"metric": "students", "order": "least", "scope": "province", "region": "ภาคเหนือ", "limit": 5}}
+  },
+  {
+    "id": "followup-grade-switch-keeps-year",
+    "kind": "followup_active_query",
+    "question": "แล้วชั้น ม.1 ล่ะ",
+    "context": {
+      "last_active_query": {
+        "name": "count_students",
+        "params": {"province": "เชียงราย", "year": 2568}
+      }
+    },
+    "expect": {"tool": "count_students", "params": {"province": "เชียงราย", "grade": "ม.1", "year": 2568}}
+  },
+  {
+    "id": "followup-student-to-teacher-person-type",
+    "kind": "followup_active_query",
+    "question": "แล้วครูข้าราชการกี่คน",
+    "context": {
+      "last_active_query": {
+        "name": "count_students",
+        "params": {"province": "เชียงราย", "year": 2568}
+      }
+    },
+    "expect": {"tool": "count_teachers", "params": {"province": "เชียงราย", "person_type": "ข้าราชการครู", "year": 2568}}
+  },
+  {
+    "id": "followup-student-to-school-by-agency",
+    "kind": "followup_active_query",
+    "question": "แล้วสังกัด สพฐ กี่โรง",
+    "context": {
+      "last_active_query": {
+        "name": "count_students",
+        "params": {"province": "พัทลุง", "year": 2567}
+      }
+    },
+    "expect": {"tool": "count_schools", "params": {"province": "พัทลุง", "agency": "สพฐ", "year": 2567}}
+  },
+  {
+    "id": "followup-switch-agency-on-school-count",
+    "kind": "followup_active_query",
+    "question": "แล้ว สช ล่ะ",
+    "context": {
+      "last_active_query": {
+        "name": "count_schools",
+        "params": {"province": "พัทลุง", "agency": "สพฐ"}
+      }
+    },
+    "expect": {"tool": "count_schools", "params": {"province": "พัทลุง", "agency": "สช"}}
+  },
+  {
+    "id": "followup-year-only-on-teacher-count",
+    "kind": "followup_active_query",
+    "question": "ปี 67 ล่ะ",
+    "context": {
+      "last_active_query": {
+        "name": "count_teachers",
+        "params": {"province": "ขอนแก่น", "person_type": "ลูกจ้างประจำ", "year": 2568}
+      }
+    },
+    "expect": {"tool": "count_teachers", "params": {"province": "ขอนแก่น", "person_type": "ลูกจ้างประจำ", "year": 2567}}
+  },
+  {
+    "id": "followup-school-count-to-grade-count",
+    "kind": "followup_active_query",
+    "question": "แล้วนักเรียนชั้น ป.6 กี่คน",
+    "context": {
+      "last_active_query": {
+        "name": "count_schools",
+        "params": {"province": "ลำพูน"}
+      }
+    },
+    "expect": {"tool": "count_students", "params": {"province": "ลำพูน", "grade": "ป.6"}}
+  },
+  {
+    "id": "followup-year-alias-65-on-school-count",
+    "kind": "followup_active_query",
+    "question": "แล้วปี 65 ล่ะ",
+    "context": {
+      "last_active_query": {
+        "name": "count_schools",
+        "params": {"province": "ลำปาง", "agency": "สพฐ", "year": 2568}
+      }
+    },
+    "expect": {"tool": "count_schools", "params": {"province": "ลำปาง", "agency": "สพฐ", "year": 2565}}
+  },
+  {
+    "id": "followup-national-summary-to-compare-years",
+    "kind": "followup_active_query",
+    "question": "เทียบกับปี 2566 เปลี่ยนแปลงเท่าไหร่ (ทั้ง 3 ตัวชี้วัด)",
+    "context": {
+      "last_active_query": {
+        "name": "get_national_summary",
+        "params": {"year": 2568}
+      }
+    },
+    "expect": {"tool": "compare_years", "params": {"year1": "2566", "year2": "2568", "metric": "all"}}
+  },
+  {
+    "id": "followup-compare-years-to-region-ranking-students",
+    "kind": "followup_active_query",
+    "question": "แยกตามภูมิภาคทั้ง 6 ภาค ว่าภาคไหนมีนักเรียนมากที่สุด",
+    "context": {
+      "last_active_query": {
+        "name": "compare_years",
+        "params": {"year1": "2566", "year2": "2568", "metric": "all"}
+      }
+    },
+    "expect": {"tool": "ranking", "params": {"metric": "students", "order": "most", "scope": "region", "limit": 6, "year": 2568}},
+    "forbid": {"params_keys": ["province"]}
+  },
+  {
+    "id": "followup-ranking-region-to-ratio",
+    "kind": "followup_active_query",
+    "question": "ภาคไหนมีอัตราส่วนนักเรียนต่อครูสูงที่สุด",
+    "context": {
+      "last_active_query": {
+        "name": "ranking",
+        "params": {"metric": "students", "order": "most", "scope": "region", "limit": 6, "year": 2568}
+      }
+    },
+    "expect": {"tool": "ranking", "params": {"metric": "ratio", "order": "most", "scope": "region", "limit": 6, "year": 2568}},
+    "forbid": {"params_keys": ["province", "region"]}
   }
 ]

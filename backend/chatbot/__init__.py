@@ -28,7 +28,11 @@ from .core.constants import (
 # Security
 from .core.security import (
     InputSanitizer,
-    input_sanitizer
+    input_sanitizer,
+    BruteForceProtection,
+    brute_force_guard,
+    UserRateLimiter,
+    user_rate_limiter
 )
 
 # LLM
@@ -90,6 +94,10 @@ __all__ = [
     # Security
     'InputSanitizer',
     'input_sanitizer',
+    'BruteForceProtection',
+    'brute_force_guard',
+    'UserRateLimiter',
+    'user_rate_limiter',
     # LLM
     'MultiProviderLLM',
     # Cache

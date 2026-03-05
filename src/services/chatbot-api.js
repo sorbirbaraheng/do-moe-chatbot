@@ -129,6 +129,21 @@ class ChatbotAPI {
             if (!response.ok) {
                 const errorText = await response.text();
                 console.error('[ChatbotAPI] HTTP Error:', response.status, errorText);
+
+                // Per-user rate limit exceeded
+                if (response.status === 429) {
+                    try {
+                        const errData = JSON.parse(errorText);
+                        return {
+                            success: false,
+                            error: errData.error || 'คุณส่งข้อความเร็วเกินไป กรุณารอสักครู่',
+                            rateLimited: true,
+                            retryAfter: errData.retry_after || 60,
+                            quota: errData.quota || {},
+                        };
+                    } catch (_) { /* fall through */ }
+                }
+
                 return {
                     success: false,
                     error: `HTTP ${response.status}: ${errorText}`,
@@ -197,7 +212,22 @@ class ChatbotAPI {
             });
 
 
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            if (!response.ok) {
+                // Per-user rate limit exceeded
+                if (response.status === 429) {
+                    try {
+                        const errData = await response.json();
+                        return {
+                            success: false,
+                            error: errData.error || 'คุณส่งข้อความเร็วเกินไป กรุณารอสักครู่',
+                            rateLimited: true,
+                            retryAfter: errData.retry_after || 60,
+                            quota: errData.quota || {},
+                        };
+                    } catch (_) { /* fall through */ }
+                }
+                throw new Error(`HTTP ${response.status}`);
+            }
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
@@ -456,6 +486,26 @@ class ChatbotAPI {
             return data;
         } catch (error) {
             console.error('[ChatbotAPI] getSchoolList Error:', error);
+            return { success: false, error: error.message };
+        }
+    }
+    /**
+     * Get user's current rate limit quota
+     * @param {string} sessionId - Session/user ID
+     * @returns {Promise<{success: boolean, role?: string, daily_limit?: number, daily_used?: number, daily_remaining?: number, hourly_limit?: number, hourly_used?: number, hourly_remaining?: number}>}
+     */
+    async getQuota(sessionId = 'default') {
+        try {
+            const response = await fetch(`${this.apiUrl}/api/quota?session_id=${encodeURIComponent(sessionId)}`, {
+                method: 'GET',
+                headers: this._getHeaders(),
+            });
+            if (!response.ok) {
+                return { success: false, error: `HTTP ${response.status}` };
+            }
+            return await response.json();
+        } catch (error) {
+            console.error('[ChatbotAPI] getQuota Error:', error);
             return { success: false, error: error.message };
         }
     }

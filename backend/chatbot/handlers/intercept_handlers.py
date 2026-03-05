@@ -350,14 +350,22 @@ class InterceptHandlersMixin:
                         school_name = None
                 break
         
-        # Extract metric
-        metric = "all"
-        if "นักเรียน" in msg or "นร" in msg or "เด็ก" in msg:
+        # Extract metric — if user mentions 2+ metrics, use "all"
+        has_student_kw = any(kw in msg for kw in ["นักเรียน", "นร", "เด็ก"])
+        has_teacher_kw = any(kw in msg for kw in ["ครู", "อาจารย์"])
+        has_school_kw = "โรงเรียน" in msg and not school_name
+        metric_count = sum([has_student_kw, has_teacher_kw, has_school_kw])
+
+        if metric_count >= 2:
+            metric = "all"
+        elif has_student_kw:
             metric = "students"
-        elif "ครู" in msg or "อาจารย์" in msg:
+        elif has_teacher_kw:
             metric = "teachers"
-        elif "โรงเรียน" in msg and not school_name:
+        elif has_school_kw:
             metric = "schools"
+        else:
+            metric = "all"
         
         logger.info(f"📅 [YearIntercept] Params: province={province}, school={school_name}, metric={metric}")
         

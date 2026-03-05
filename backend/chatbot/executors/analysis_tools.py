@@ -208,7 +208,7 @@ class AnalysisToolsMixin:
                 kwargs['region'] = region
                 province = None
 
-        if region and not province and scope not in ["district", "districts"]:
+        if region and not province and scope not in ["district", "districts", "region", "regions"]:
             logger.info(f"🔄 [Ranking] Downgrading scope from '{scope}' to 'school' (region query without province)")
             scope = "school"
 
@@ -230,7 +230,7 @@ class AnalysisToolsMixin:
 
             explicit_region = kwargs.get("region")
             target_regions: List[str] = []
-            if explicit_region:
+            if explicit_region and explicit_region not in ["each_region", "all", "ทุกภาค"]:
                 normalized_region = self._normalize_region(explicit_region) or explicit_region
                 if normalized_region in REGIONS:
                     target_regions = [normalized_region]
@@ -239,9 +239,11 @@ class AnalysisToolsMixin:
             else:
                 canonical_regions = [
                     "ภาคเหนือ", "ภาคตะวันออกเฉียงเหนือ", "ภาคกลาง",
-                    "ภาคตะวันออก", "ภาคตะวันตก", "ภาคใต้",
+                    "ภาคตะวันออก", "ภาคตะวันตก", "ภาคตวันใต้", "ภาคใต้" # Ensure correct spelling of regions
                 ]
-                target_regions = [r for r in canonical_regions if REGIONS.get(r)]
+                # Filter strictly by those that exist in our constants
+                from ..core.constants import REGIONS as _REGIONS
+                target_regions = [r for r in canonical_regions if _REGIONS.get(r)]
 
             items = []
             for region_name in target_regions:
@@ -924,6 +926,61 @@ class AnalysisToolsMixin:
             "tool": "get_province_summary",
             "query": {"province": province},
             "summary": summary
+        }
+
+    def _get_national_summary(self, **kwargs) -> Dict[str, Any]:
+        """Get comprehensive national-level education summary (all 3 key metrics + ratio + per-region breakdown)"""
+        # ── Core totals ─────────────────────────────────
+        school_data = self._count_schools()
+        student_data = self._count_students()
+        teacher_data = self._count_teachers()
+
+        total_schools = school_data.get("total_schools", 0)
+        total_students = student_data.get("total_students", 0)
+        total_teachers = teacher_data.get("total_teachers", 0)
+        ratio = round(total_students / total_teachers, 2) if total_teachers else 0
+
+        # ── Per-region breakdown ─────────────────────────
+        canonical_regions = [
+            "ภาคเหนือ", "ภาคตะวันออกเฉียงเหนือ", "ภาคกลาง",
+            "ภาคตะวันออก", "ภาคตะวันตก", "ภาคใต้",
+        ]
+        by_region = []
+        for region_name in canonical_regions:
+            if not REGIONS.get(region_name):
+                continue
+            s = self._get_region_data(region_name, "students")
+            t = self._get_region_data(region_name, "teachers")
+            sch = self._get_region_data(region_name, "schools")
+            r_students = s.get("total", 0)
+            r_teachers = t.get("total", 0)
+            r_schools = sch.get("total", 0)
+            r_ratio = round(r_students / r_teachers, 2) if r_teachers else 0
+            by_region.append({
+                "region": region_name,
+                "schools": r_schools,
+                "students": r_students,
+                "teachers": r_teachers,
+                "ratio": r_ratio,
+            })
+
+        return {
+            "tool": "get_national_summary",
+            "summary": {
+                "total_schools": total_schools,
+                "total_students": total_students,
+                "total_teachers": total_teachers,
+                "ratio": ratio,
+                "by_gender_students": student_data.get("by_gender", {}),
+                "by_gender_teachers": teacher_data.get("by_gender", {}),
+                "by_agency": school_data.get("by_agency", {}),
+                "by_region": by_region,
+            },
+            "guidance": (
+                "REQUIRED: Present a clear national overview table with the 3 metrics "
+                "(schools, students, teachers) and the ratio. Also include a per-region "
+                "breakdown table. Use Thai language."
+            ),
         }
 
     def _get_district_summary(self, province: str, district: str, **kwargs) -> Dict[str, Any]:

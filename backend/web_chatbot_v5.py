@@ -62,7 +62,8 @@ from chatbot import (
     EducationChatbot,
     ConversationMemory,
     COLLECTIONS,
-    input_sanitizer
+    input_sanitizer,
+    user_rate_limiter
 )
 
 try:
@@ -661,6 +662,28 @@ def create_flask_api():
     def health():
         return jsonify({'status': 'healthy', 'version': '5.0.0'})
 
+    @app.route('/api/quota', methods=['GET', 'POST', 'OPTIONS'])
+    @limiter.exempt
+    def user_quota():
+        """Get current user's rate limit quota status"""
+        if request.method == 'OPTIONS':
+            return '', 204
+        # POST: read session_id from body; GET: from query param
+        if request.method == 'POST':
+            data = request.json or {}
+            session_id = data.get('session_id', '')
+        else:
+            session_id = request.args.get('session_id', '')
+        
+        user_key = session_id if session_id and session_id != 'default' else _get_client_ip()
+        user_role = "user" if session_id and session_id != 'default' else "anonymous"
+        req_role = _get_request_role()
+        if req_role == "admin":
+            user_role = "admin"
+        
+        info = user_rate_limiter.get_quota_info(user_key, user_role)
+        return jsonify({'success': True, **info})
+
     # ------------------------------------------------------------------
     # TTS — Edge TTS (Microsoft Neural) for น้องดีโอ voice
     # ------------------------------------------------------------------
@@ -793,6 +816,27 @@ def create_flask_api():
         session_id = data.get('session_id', 'default')
         category = data.get('category', 'general')
         
+        # ── Per-user rate limit ──────────────────────────────────
+        user_key = session_id if session_id and session_id != 'default' else _get_client_ip()
+        user_role = "user" if session_id and session_id != 'default' else "anonymous"
+        # Admin token holders bypass rate limit
+        req_role = _get_request_role()
+        if req_role == "admin":
+            user_role = "admin"
+        rl = user_rate_limiter.check_and_increment(user_key, user_role)
+        if not rl["allowed"]:
+            resp = jsonify({
+                'error': rl['message'],
+                'retry_after': rl['retry_after'],
+                'quota': {
+                    'daily_remaining': rl.get('daily_remaining', 0),
+                    'hourly_remaining': rl.get('hourly_remaining', 0),
+                }
+            })
+            resp.headers['Retry-After'] = str(rl['retry_after'])
+            resp.headers['X-RateLimit-Remaining'] = str(min(rl.get('daily_remaining', 0), rl.get('hourly_remaining', 0)))
+            return resp, 429
+
         # NEW: Extract parsed query metadata from frontend
         intent = data.get('intent')
         school_name = data.get('school_name')
@@ -903,6 +947,26 @@ def create_flask_api():
         session_id = data.get('session_id', 'default')
         category = data.get('category', 'general')
         
+        # ── Per-user rate limit ──────────────────────────────────
+        user_key = session_id if session_id and session_id != 'default' else _get_client_ip()
+        user_role = "user" if session_id and session_id != 'default' else "anonymous"
+        req_role = _get_request_role()
+        if req_role == "admin":
+            user_role = "admin"
+        rl = user_rate_limiter.check_and_increment(user_key, user_role)
+        if not rl["allowed"]:
+            resp = jsonify({
+                'error': rl['message'],
+                'retry_after': rl['retry_after'],
+                'quota': {
+                    'daily_remaining': rl.get('daily_remaining', 0),
+                    'hourly_remaining': rl.get('hourly_remaining', 0),
+                }
+            })
+            resp.headers['Retry-After'] = str(rl['retry_after'])
+            resp.headers['X-RateLimit-Remaining'] = str(min(rl.get('daily_remaining', 0), rl.get('hourly_remaining', 0)))
+            return resp, 429
+
         mem_data = session_db.get_session_data(session_id)
         if mem_data:
             memory = ConversationMemory.from_dict(mem_data)
