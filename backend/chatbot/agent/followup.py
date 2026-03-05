@@ -480,6 +480,50 @@ class FollowUpMixin:
             if any(k in text for k in ["รายละเอียด", "อยู่ที่ไหน", "พิกัด", "แผนที่"]):
                 return [{"name": "get_school_full_details", "params": _prune_params_for_tool("get_school_full_details", follow_params)}]
 
+        # ── Follow-up from find_best_ratio_schools ──────────────
+        if tool == "find_best_ratio_schools":
+            ctx_province = params.get("province") or context.get("last_province")
+            prev_order = params.get("order", "worst")
+
+            # Year compare from ratio context
+            is_year_compare = any(k in text for k in [
+                "เทียบ", "เปรียบเทียบ", "เปลี่ยนแปลง", "ต่างกัน",
+                "เปอร์เซ็นต์", "เพิ่มขึ้น", "ลดลง", "กี่%", "คิดเป็น%"
+            ])
+            if is_year_compare:
+                from ..core.constants import V5_YEAR
+                compare_params = {"metric": "all"}
+                if year:
+                    compare_params["year1"] = str(year)
+                    compare_params["year2"] = V5_YEAR
+                else:
+                    compare_params["year1"] = "2566"
+                    compare_params["year2"] = V5_YEAR
+                if ctx_province:
+                    compare_params["province"] = ctx_province
+                return [{"name": "compare_years", "params": _prune_params_for_tool("compare_years", compare_params)}]
+
+            # Reverse order: "ต่ำสุดล่ะ" → flip worst↔best
+            asks_flip_low = any(k in text for k in ["ต่ำสุด", "น้อยที่สุด", "ต่ำที่สุด", "น้อยสุด", "ดีที่สุด", "ดีสุด"])
+            asks_flip_high = any(k in text for k in ["มากที่สุด", "สูงสุด", "เยอะที่สุด", "มากสุด", "แย่ที่สุด", "แย่สุด", "หนักสุด"])
+            if asks_flip_low or asks_flip_high:
+                if asks_flip_low:
+                    new_order = "best" if prev_order == "worst" else "worst"
+                else:
+                    new_order = "worst" if prev_order == "best" else "best"
+                flip_params = {"order": new_order, "limit": params.get("limit", 5)}
+                if ctx_province:
+                    flip_params["province"] = ctx_province
+                return [{"name": "find_best_ratio_schools", "params": _prune_params_for_tool("find_best_ratio_schools", flip_params)}]
+
+            # District drill-down
+            asks_district_local = any(k in text for k in ["อำเภอไหน", "อำเภอ", "district"])
+            if asks_district_local and ctx_province:
+                return [{"name": "ranking", "params": _prune_params_for_tool("ranking", {
+                    "metric": "ratio", "order": "worst", "scope": "district",
+                    "province": ctx_province, "limit": 5
+                })}]
+
         if tool == "compare_years":
             is_year_compare = any(k in text for k in ["เทียบ", "เปรียบเทียบ", "ต่างกัน", "เปลี่ยนแปลง", "เปอร์เซ็นต์", "เพิ่มขึ้น", "ลดลง", "กี่%", "คิดเป็น%"])
             asks_ratio = any(k in text for k in ["อัตราส่วน", "สัดส่วน", "ต่อครู", "ครูต่อนักเรียน", "นักเรียนต่อครู", "ratio"])
