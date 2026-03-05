@@ -124,9 +124,6 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
         // Check if URL is a production URL (should NOT be overwritten)
         const isProductionUrl = (url: string | undefined) => {
             if (!url) return false;
-            // If current page is HTTPS but the stored URL is HTTP → NOT valid (Mixed Content)
-            const pageIsHttps = window.location.protocol === 'https:';
-            if (pageIsHttps && url.startsWith('http://')) return false;
             // Production URLs: https:// or any domain that's not localhost/127.x/private IP
             if (url.startsWith('https://')) return true;
             // Check for real domains (not localhost, 127.x, 192.168.x, 10.x)
@@ -155,16 +152,13 @@ export const AdminConfigProvider: React.FC<{ children: ReactNode }> = ({ childre
         );
 
         if (needsAutoDetect) {
-            // If page is served via HTTPS (nginx proxy), use relative URL
-            // nginx handles /api/ → backend:5001 internally
-            const pageIsHttps = window.location.protocol === 'https:';
-            const detectedUrl = pageIsHttps
-                ? ''  // relative URL — nginx proxies /api/ to backend
-                : isLan
-                    ? `http://${currentHost}:5001`
-                    : 'http://127.0.0.1:5001';
+            // Always store real IP for display/config — actual API calls use
+            // getFlaskBaseUrl() which handles relative URL for nginx proxy separately
+            const detectedUrl = isLan
+                ? `http://${currentHost}:5001`
+                : 'http://127.0.0.1:5001';
 
-            console.log(`[Auto IP] Detected Flask API URL: ${detectedUrl || '(relative/nginx)'} (LAN: ${isLan}, HTTPS: ${pageIsHttps})`);
+            console.log(`[Auto IP] Detected Flask API URL: ${detectedUrl} (LAN: ${isLan})`);
 
             // Update both categories (don't persist to Firestore — keep it dynamic)
             updateApiKeys('school', { flaskApiUrl: detectedUrl }, { persist: false });
