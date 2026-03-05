@@ -125,6 +125,49 @@ class AgentBase:
                     else:
                         logger.warning("❌ Reflection try also yielded empty data. Falling through to original.")
 
+            # --- Inject Data into Active Query Params for Follow-up Memory ---
+            if tool_calls and results:
+                try:
+                    active_query = tool_calls[0]  # Ensure active_query points to the final tool_call used
+                    for t_call, t_res in zip(tool_calls, results):
+                        t_name = t_call.get("name")
+                        if not isinstance(t_res, dict):
+                            continue
+                            
+                        if t_name == "ranking" and t_res.get("ranking") and len(t_res["ranking"]) > 0:
+                            top_item = t_res["ranking"][0]["name"]
+                            scope = t_res.get("scope", "")
+                            
+                            # Safely modify the params dict
+                            if "params" not in t_call or not isinstance(t_call["params"], dict):
+                                t_call["params"] = {}
+                                
+                            if scope in ["province", "provinces"]:
+                                t_call["params"]["province"] = top_item
+                            elif scope in ["district", "districts"]:
+                                dist_name = top_item
+                                if " - " in dist_name:
+                                    parts = dist_name.split(" - ", 1)
+                                    if len(parts) == 2:
+                                        t_call["params"]["province"] = parts[0]
+                                        dist_name = parts[1]
+                                t_call["params"]["district"] = dist_name
+                            elif scope in ["school", "schools"]:
+                                t_call["params"]["school_name"] = top_item
+                            elif scope in ["region", "regions"]:
+                                t_call["params"]["region"] = top_item
+                                
+                        elif t_name == "find_best_ratio_schools" and t_res.get("schools") and len(t_res["schools"]) > 0:
+                            top_school = t_res["schools"][0]["school_name"]
+                            top_prov = t_res["schools"][0].get("province")
+                            if "params" not in t_call or not isinstance(t_call["params"], dict):
+                                t_call["params"] = {}
+                            t_call["params"]["school_name"] = top_school
+                            if top_prov:
+                                t_call["params"]["province"] = top_prov
+                except Exception as mem_e:
+                    logger.warning(f"⚠️ Failed to inject top result into active query: {mem_e}")
+
             # Step 3: Generate Response
             use_deterministic = os.getenv("ENABLE_DETERMINISTIC_RESPONSES", "1") == "1"
             if should_use_deterministic and len(results) == 1 and use_deterministic:
